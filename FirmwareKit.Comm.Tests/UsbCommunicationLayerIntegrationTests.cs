@@ -1,4 +1,3 @@
-using FirmwareKit.Comm.Usb;
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Core;
 
@@ -19,7 +18,9 @@ public sealed class UsbCommunicationLayerIntegrationTests
     [Fact]
     public void EnumerateDevices_WithFilter_DoesNotThrow()
     {
-        var layer = new UsbCommunicationLayer();
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("custom", () => new EmptyProvider());
+
         var filter = new UsbDeviceFilter
         {
             VendorId = 0xFFFF,
@@ -28,13 +29,18 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         var devices = layer.EnumerateDevices(UsbApiKind.Auto, filter);
         Assert.NotNull(devices);
+        Assert.Empty(devices);
     }
 
     [Fact]
     public async Task EnumerateDevicesAsync_DoesNotThrow()
     {
-        var devices = await UsbComm.EnumerateDevicesAsync(UsbApiKind.Auto, new UsbDeviceFilter());
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("custom", () => new EmptyProvider());
+
+        var devices = await layer.EnumerateDevicesAsync(UsbApiKind.Auto, new UsbDeviceFilter());
         Assert.NotNull(devices);
+        Assert.Empty(devices);
     }
 
     [Fact]
