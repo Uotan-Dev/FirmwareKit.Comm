@@ -10,6 +10,8 @@ internal abstract class UsbDevice : IDisposable
 
     public abstract byte[] Read(int length);
 
+    public virtual byte[] Read(int length, int timeoutMs) => Read(length);
+
     public virtual int ReadInto(byte[] buffer, int offset, int length)
     {
         if (length <= 0) return 0;
@@ -24,7 +26,10 @@ internal abstract class UsbDevice : IDisposable
         return data.Length;
     }
 
+    public virtual int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => ReadInto(buffer, offset, length);
+
     public abstract long Write(byte[] data, int length);
+    public virtual long Write(byte[] data, int length, int timeoutMs) => Write(data, length);
     public abstract int GetSerialNumber();
     public abstract int CreateHandle();
     public abstract void Reset();

@@ -6,6 +6,8 @@ namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
 internal class LibUsbDevice : UsbDevice
 {
+    private const int DefaultTimeoutMs = 5000;
+
     private UsbContext? context;
     private IUsbDevice? usbDevice;
     private UsbEndpointReader? reader;
@@ -236,10 +238,15 @@ internal class LibUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
+        return Read(length, DefaultTimeoutMs);
+    }
+
+    public override byte[] Read(int length, int timeoutMs)
+    {
         if (length <= 0) return Array.Empty<byte>();
 
         byte[] buffer = new byte[length];
-        int count = ReadInto(buffer, 0, length);
+        int count = ReadInto(buffer, 0, length, timeoutMs);
         if (count == length) return buffer;
         if (count == 0) return Array.Empty<byte>();
 
@@ -250,12 +257,19 @@ internal class LibUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
+        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+    }
+
+    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    {
         if (reader == null) return 0;
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
+
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         const int maxLenToRead = 1048576;
         int lenRemaining = length;
@@ -266,7 +280,7 @@ internal class LibUsbDevice : UsbDevice
             int lenToRead = Math.Min(lenRemaining, maxLenToRead);
             int read_len;
 
-            reader.Read(buffer, offset + count, lenToRead, 5000, out read_len);
+            reader.Read(buffer, offset + count, lenToRead, effectiveTimeoutMs, out read_len);
 
             if (read_len <= 0) break;
 
@@ -281,11 +295,18 @@ internal class LibUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
+        return Write(data, length, DefaultTimeoutMs);
+    }
+
+    public override long Write(byte[] data, int length, int timeoutMs)
+    {
         if (writer == null)
         {
             UsbTrace.Log("LibUsbDevice: writer is null");
             return -1;
         }
+
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         const int maxLenToSend = 1048576;
         int lenRemaining = length;
@@ -296,7 +317,7 @@ internal class LibUsbDevice : UsbDevice
         if (length == 0)
         {
             int transferred;
-            var errorCode = writer.Write(data, 0, 0, 5000, out transferred);
+            var errorCode = writer.Write(data, 0, 0, effectiveTimeoutMs, out transferred);
             UsbTrace.Log($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
             return transferred;
         }
@@ -305,7 +326,7 @@ internal class LibUsbDevice : UsbDevice
         {
             int lenToSend = Math.Min(lenRemaining, maxLenToSend);
             int transferred;
-            var errorCode = writer.Write(data, count, lenToSend, 5000, out transferred);
+            var errorCode = writer.Write(data, count, lenToSend, effectiveTimeoutMs, out transferred);
 
             if (errorCode != 0) // UsbError.Success is 0
             {

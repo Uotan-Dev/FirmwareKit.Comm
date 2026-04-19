@@ -6,6 +6,8 @@ namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
 internal class LinuxUsbDevice : UsbDevice
 {
+    private const int DefaultTimeoutMs = 5000;
+
     private int fd = -1;
     public byte ep_in { get; set; }
     public byte ep_out { get; set; }
@@ -115,10 +117,15 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
+        return Read(length, DefaultTimeoutMs);
+    }
+
+    public override byte[] Read(int length, int timeoutMs)
+    {
         if (length <= 0) return Array.Empty<byte>();
 
         byte[] buffer = new byte[length];
-        int count = ReadInto(buffer, 0, length);
+        int count = ReadInto(buffer, 0, length, timeoutMs);
         if (count == length) return buffer;
         if (count == 0) return Array.Empty<byte>();
 
@@ -129,6 +136,11 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
+        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+    }
+
+    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    {
         const uint MAX_USBFS_BULK_SIZE = 16384;
         const int MAX_RETRIES = 5;
 
@@ -137,6 +149,8 @@ internal class LinuxUsbDevice : UsbDevice
         {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
+
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         int count = 0;
         GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
@@ -149,7 +163,7 @@ internal class LinuxUsbDevice : UsbDevice
                 {
                     ep = ep_in,
                     len = (uint)xfer,
-                    timeout = 5000,
+                    timeout = (uint)effectiveTimeoutMs,
                     data = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count)
                 };
 
@@ -189,9 +203,15 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
+        return Write(data, length, DefaultTimeoutMs);
+    }
+
+    public override long Write(byte[] data, int length, int timeoutMs)
+    {
         const uint MAX_USBFS_BULK_SIZE = 16384;
         const int MAX_RETRIES = 5;
         int count = 0;
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         if (length == 0)
         {
@@ -209,7 +229,7 @@ internal class LinuxUsbDevice : UsbDevice
                 {
                     ep = ep_out,
                     len = (uint)xfer,
-                    timeout = 5000,
+                    timeout = (uint)effectiveTimeoutMs,
                     data = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + count)
                 };
 

@@ -5,6 +5,8 @@ namespace FirmwareKit.Comm.Usb.Backend.macOS;
 
 internal class MacOSUsbDevice : UsbDevice
 {
+    private const int DefaultTimeoutMs = 5000;
+
     private IntPtr devicePtr;
     private IntPtr interfacePtr;
     public ulong RegistryEntryId { get; set; }
@@ -165,10 +167,15 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
+        return Read(length, DefaultTimeoutMs);
+    }
+
+    public override byte[] Read(int length, int timeoutMs)
+    {
         if (length <= 0) return Array.Empty<byte>();
 
         byte[] buffer = new byte[length];
-        int count = ReadInto(buffer, 0, length);
+        int count = ReadInto(buffer, 0, length, timeoutMs);
         if (count == length) return buffer;
         if (count == 0) return Array.Empty<byte>();
 
@@ -179,12 +186,19 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
+        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+    }
+
+    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    {
         if (interfacePtr == IntPtr.Zero || bulkIn == 0) return 0;
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
+
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         const int maxLenToRead = 1048576;
         int lenRemaining = length;
@@ -200,7 +214,7 @@ internal class MacOSUsbDevice : UsbDevice
                 IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count);
                 uint size = (uint)lenToRead;
 
-                int kr = readPipe(interfacePtr, bulkIn, ptr, ref size, 5000, 5000);
+                int kr = readPipe(interfacePtr, bulkIn, ptr, ref size, (uint)effectiveTimeoutMs, (uint)effectiveTimeoutMs);
                 if (kr != 0)
                 {
                     if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
@@ -226,7 +240,14 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
+        return Write(data, length, DefaultTimeoutMs);
+    }
+
+    public override long Write(byte[] data, int length, int timeoutMs)
+    {
         if (interfacePtr == IntPtr.Zero || bulkOut == 0) return -1;
+
+        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
 
         const int maxLenToSend = 1048576;
         int lenRemaining = length;
@@ -241,7 +262,7 @@ internal class MacOSUsbDevice : UsbDevice
                 int lenToSend = Math.Min(lenRemaining, maxLenToSend);
                 IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + count);
 
-                int kr = writePipe(interfacePtr, bulkOut, ptr, (uint)lenToSend, 5000, 5000);
+                int kr = writePipe(interfacePtr, bulkOut, ptr, (uint)lenToSend, (uint)effectiveTimeoutMs, (uint)effectiveTimeoutMs);
                 if (kr != 0)
                 {
                     if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)

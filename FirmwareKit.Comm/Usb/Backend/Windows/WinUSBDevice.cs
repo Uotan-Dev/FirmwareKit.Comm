@@ -7,6 +7,8 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 
 internal class WinUSBDevice : UsbDevice
 {
+    private const int DefaultTimeoutMs = 60000;
+
     private byte InterfaceNum;
     private byte ReadBulkID, WriteBulkID;
     private byte ReadBulkIndex, WriteBulkIndex;
@@ -106,6 +108,18 @@ internal class WinUSBDevice : UsbDevice
 
     public IntPtr Handle => WinUSBHandle != IntPtr.Zero ? WinUSBHandle : FileHandle;
 
+    private void SetPipeTimeout(int timeoutMs)
+    {
+        if (WinUSBHandle == IntPtr.Zero || timeoutMs <= 0)
+        {
+            return;
+        }
+
+        uint timeout = (uint)timeoutMs;
+        WinUsb_SetPipePolicy(WinUSBHandle, ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
+        WinUsb_SetPipePolicy(WinUSBHandle, WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
+    }
+
     public override void Reset()
     {
         if (WinUSBHandle != IntPtr.Zero)
@@ -137,10 +151,15 @@ internal class WinUSBDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
+        return Read(length, DefaultTimeoutMs);
+    }
+
+    public override byte[] Read(int length, int timeoutMs)
+    {
         if (length <= 0) return Array.Empty<byte>();
 
         byte[] data = new byte[length];
-        int totalBytesRead = ReadInto(data, 0, length);
+        int totalBytesRead = ReadInto(data, 0, length, timeoutMs);
         if (totalBytesRead == length) return data;
         if (totalBytesRead == 0) return Array.Empty<byte>();
 
@@ -151,12 +170,19 @@ internal class WinUSBDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
+        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+    }
+
+    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    {
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
+
+        SetPipeTimeout(timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs);
 
         const int MaxChunkSize = 1024 * 1024;
         int totalBytesRead = 0;
@@ -191,7 +217,14 @@ internal class WinUSBDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
+        return Write(data, length, DefaultTimeoutMs);
+    }
+
+    public override long Write(byte[] data, int length, int timeoutMs)
+    {
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
+
+        SetPipeTimeout(timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs);
 
         if (length == 0)
         {

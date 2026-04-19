@@ -26,9 +26,15 @@ internal sealed class FastbootUsbDeviceSession : IUsbDeviceSession
 
     public byte[] Read(int length) => _device.Read(length);
 
+    public byte[] Read(int length, int timeoutMs) => _device.Read(length, timeoutMs);
+
     public int ReadInto(byte[] buffer, int offset, int length) => _device.ReadInto(buffer, offset, length);
 
+    public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => _device.ReadInto(buffer, offset, length, timeoutMs);
+
     public long Write(byte[] data, int length) => _device.Write(data, length);
+
+    public long Write(byte[] data, int length, int timeoutMs) => _device.Write(data, length, timeoutMs);
 
     public void Reset() => _device.Reset();
 
