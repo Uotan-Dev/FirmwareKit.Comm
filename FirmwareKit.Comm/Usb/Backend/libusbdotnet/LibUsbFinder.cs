@@ -1,30 +1,53 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using LibUsbDotNet.LibUsb;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
 internal class LibUsbFinder
 {
-    private static bool HasFastbootInterface(LibUsbDotNet.LibUsb.UsbDevice device)
+    private static bool TryGetBulkInterface(LibUsbDotNet.LibUsb.UsbDevice device, UsbDeviceFilter? filter, out byte interfaceId, out byte inEndpoint, out byte outEndpoint)
     {
+        interfaceId = 0;
+        inEndpoint = 0;
+        outEndpoint = 0;
+
         try
         {
             foreach (var config in device.Configs)
             {
                 foreach (var ifc in config.Interfaces)
                 {
-                    bool isFastboot = (int)ifc.Class == 0xff && (int)ifc.SubClass == 0x42 && (int)ifc.Protocol == 0x03;
-                    if (!isFastboot) continue;
+                    if (filter?.InterfaceClass is byte c && (byte)ifc.Class != c) continue;
+                    if (filter?.InterfaceSubClass is byte s && (byte)ifc.SubClass != s) continue;
+                    if (filter?.InterfaceProtocol is byte p && (byte)ifc.Protocol != p) continue;
 
                     bool hasIn = false;
                     bool hasOut = false;
+                    byte candidateIn = 0;
+                    byte candidateOut = 0;
                     foreach (var endpoint in ifc.Endpoints)
                     {
-                        if ((endpoint.EndpointAddress & 0x80) != 0) hasIn = true;
-                        else hasOut = true;
+                        if ((endpoint.Attributes & 0x03) != 0x02) continue;
+
+                        if ((endpoint.EndpointAddress & 0x80) != 0)
+                        {
+                            hasIn = true;
+                            if (candidateIn == 0) candidateIn = endpoint.EndpointAddress;
+                        }
+                        else
+                        {
+                            hasOut = true;
+                            if (candidateOut == 0) candidateOut = endpoint.EndpointAddress;
+                        }
                     }
 
                     if (hasIn && hasOut)
+                    {
+                        interfaceId = (byte)ifc.Number;
+                        inEndpoint = candidateIn;
+                        outEndpoint = candidateOut;
                         return true;
+                    }
                 }
             }
         }
@@ -36,7 +59,7 @@ internal class LibUsbFinder
         return false;
     }
 
-    public static List<UsbDevice> FindDevice()
+    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
         using (var context = new UsbContext())
@@ -47,29 +70,34 @@ internal class LibUsbFinder
             {
                 var libUsbDevice = device as LibUsbDotNet.LibUsb.UsbDevice;
                 if (libUsbDevice == null) continue;
-                if (!HasFastbootInterface(libUsbDevice)) continue;
+                if (filter?.VendorId is ushort filterVid && (ushort)device.VendorId != filterVid) continue;
+                if (filter?.ProductId is ushort filterPid && (ushort)device.ProductId != filterPid) continue;
+
+                if (!TryGetBulkInterface(libUsbDevice, filter, out byte interfaceId, out byte readEndpoint, out byte writeEndpoint)) continue;
 
                 byte busNumber = libUsbDevice?.BusNumber ?? 0;
                 byte address = libUsbDevice?.Address ?? 0;
 
-                var fastbootDevice = new LibUsbDevice
+                var usbDevice = new LibUsbDevice
                 {
                     Vid = (ushort)device.VendorId,
                     Pid = (ushort)device.ProductId,
                     BusNumber = busNumber,
                     DeviceAddress = address,
-                    InterfaceId = 0,
+                    InterfaceId = interfaceId,
+                    ReadEndpointId = readEndpoint,
+                    WriteEndpointId = writeEndpoint,
                     DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
                     UsbDeviceType = UsbDeviceType.LibUSB
                 };
 
-                if (fastbootDevice.CreateHandle() == 0)
+                if (usbDevice.CreateHandle() == 0)
                 {
-                    devices.Add(fastbootDevice);
+                    devices.Add(usbDevice);
                 }
                 else
                 {
-                    fastbootDevice.Dispose();
+                    usbDevice.Dispose();
                 }
             }
         }

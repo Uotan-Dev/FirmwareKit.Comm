@@ -37,6 +37,24 @@ public sealed class UsbDeviceFilter
     public UsbApiKind? SourceApiKind { get; set; }
 
     /// <summary>
+    /// Gets or sets the required USB interface class code.
+    /// 获取或设置要求的 USB 接口类代码。
+    /// </summary>
+    public byte? InterfaceClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the required USB interface subclass code.
+    /// 获取或设置要求的 USB 接口子类代码。
+    /// </summary>
+    public byte? InterfaceSubClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the required USB interface protocol code.
+    /// 获取或设置要求的 USB 接口协议代码。
+    /// </summary>
+    public byte? InterfaceProtocol { get; set; }
+
+    /// <summary>
     /// Determines whether the supplied metadata matches this filter.
     /// 判断给定元数据是否匹配当前过滤器。
     /// </summary>

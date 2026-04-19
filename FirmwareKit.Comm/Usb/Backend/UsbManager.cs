@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 using FirmwareKit.Comm.Usb.Backend.Linux;
 using FirmwareKit.Comm.Usb.Backend.macOS;
@@ -10,13 +11,13 @@ internal static class UsbManager
 {
     public static bool ForceLibUsb { get; set; } = RuntimeInformation.IsOSPlatform(OSPlatform.Linux);
 
-    public static List<UsbDevice> GetAllDevices()
+    public static List<UsbDevice> GetAllDevices(UsbDeviceFilter? filter = null)
     {
         if (ForceLibUsb)
         {
             try
             {
-                return LibUsbFinder.FindDevice();
+                return LibUsbFinder.FindDevice(filter);
             }
             catch (Exception ex)
             {
@@ -26,19 +27,19 @@ internal static class UsbManager
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
         {
-            return WinUSBFinder.FindDevice();
+            return WinUSBFinder.FindDevice(filter);
         }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            return LinuxUsbFinder.FindDevice();
+            return LinuxUsbFinder.FindDevice(filter);
         }
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            return MacOSUsbFinder.FindDevice();
+            return MacOSUsbFinder.FindDevice(filter);
         }
         try
         {
-            return LibUsbFinder.FindDevice();
+            return LibUsbFinder.FindDevice(filter);
         }
         catch (Exception ex)
         {

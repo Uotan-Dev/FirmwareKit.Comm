@@ -26,17 +26,17 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider
         if (!IsSupportedOnCurrentPlatform) return Array.Empty<IUsbDeviceSession>();
 
         List<UsbDevice> devices = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? WinUSBFinder.FindDevice()
+            ? WinUSBFinder.FindDevice(filter)
             : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                ? LinuxUsbFinder.FindDevice()
+                ? LinuxUsbFinder.FindDevice(filter)
                 : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                    ? MacOSUsbFinder.FindDevice()
+                    ? MacOSUsbFinder.FindDevice(filter)
                     : new List<UsbDevice>();
 
         var sessions = new List<IUsbDeviceSession>(devices.Count);
         foreach (var device in devices)
         {
-            var session = new FastbootUsbDeviceSession(ApiName, ApiKind, device);
+            var session = new UsbDeviceSession(ApiName, ApiKind, device);
             if (filter == null || filter.Matches(session.DeviceInfo))
             {
                 sessions.Add(session);

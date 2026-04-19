@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using System.Text;
 using static FirmwareKit.Comm.Usb.Backend.macOS.MacOSUsbAPI;
 
@@ -5,7 +6,7 @@ namespace FirmwareKit.Comm.Usb.Backend.macOS;
 
 internal class MacOSUsbFinder
 {
-    public static List<UsbDevice> FindDevice()
+    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
         IntPtr matchingDict = IOServiceMatching("IOUSBDevice");
@@ -48,11 +49,21 @@ internal class MacOSUsbFinder
                     getVendor(deviceInterface, out vid);
                     getProduct(deviceInterface, out pid);
 
+                    if (filter?.VendorId is ushort filterVid && vid != filterVid)
+                    {
+                        continue;
+                    }
+
+                    if (filter?.ProductId is ushort filterPid && pid != filterPid)
+                    {
+                        continue;
+                    }
+
                     IOUSBFindInterfaceRequest request = new IOUSBFindInterfaceRequest
                     {
-                        bInterfaceClass = 0xff,
-                        bInterfaceSubClass = 0x42,
-                        bInterfaceProtocol = 0x03,
+                        bInterfaceClass = filter?.InterfaceClass ?? kIOUSBFindInterfaceDontCare,
+                        bInterfaceSubClass = filter?.InterfaceSubClass ?? kIOUSBFindInterfaceDontCare,
+                        bInterfaceProtocol = filter?.InterfaceProtocol ?? kIOUSBFindInterfaceDontCare,
                         bAlternateSetting = kIOUSBFindInterfaceDontCare
                     };
 
@@ -96,7 +107,7 @@ internal class MacOSUsbFinder
 
                                             if (bulkIn != 0 && bulkOut != 0)
                                             {
-                                                devices.Add(new MacOSUsbDevice
+                                                var dev = new MacOSUsbDevice
                                                 {
                                                     RegistryEntryId = registryEntryId,
                                                     DevicePath = devicePath,
@@ -105,7 +116,16 @@ internal class MacOSUsbFinder
                                                     bulkIn = bulkIn,
                                                     bulkOut = bulkOut,
                                                     UsbDeviceType = UsbDeviceType.MacOS
-                                                });
+                                                };
+
+                                                if (dev.CreateHandle() == 0)
+                                                {
+                                                    devices.Add(dev);
+                                                }
+                                                else
+                                                {
+                                                    dev.Dispose();
+                                                }
                                             }
                                         }
                                         finally { GetDelegate<ReleaseDelegate>(ifcIntf, Offset_IUnknown_Release)(ifcIntf); }

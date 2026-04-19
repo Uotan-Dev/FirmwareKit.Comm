@@ -1,5 +1,7 @@
-using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 namespace FirmwareKit.Comm.Usb.Backend.Windows
 {
@@ -13,7 +15,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
             new Guid("4D36E978-E325-11CE-BFC1-08002BE10318")  // Ports
         };
 
-        public static List<UsbDevice> FindDevice()
+        public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
         {
             var devices = new List<UsbDevice>();
             foreach (var guid in KnownInterfaceGUIDs)
@@ -45,11 +47,16 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                                 string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + 4)) ?? "";
                                 string lowerPath = path.ToLower();
 
+                                if (!PathMatchesFilter(path, filter))
+                                {
+                                    continue;
+                                }
+
                                 // Ϊ Google �豸�Ż�����Щ�豸ͨ����ѡ WinUSB
-                                bool isGoogleFastboot = lowerPath.Contains("vid_18d1&pid_d00d");
+                                bool isGoogleWinUsb = lowerPath.Contains("vid_18d1&pid_d00d");
 
                                 UsbDevice? device = null;
-                                if (isGoogleFastboot)
+                                if (isGoogleWinUsb)
                                 {
                                     UsbTrace.Log($"Prefers WinUSB for Google device: {path}");
                                     device = TryOpenWinUSB(path);
@@ -83,6 +90,57 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                 }
             }
             return devices;
+        }
+
+        private static bool PathMatchesFilter(string path, UsbDeviceFilter? filter)
+        {
+            if (filter == null) return true;
+
+            if (!string.IsNullOrWhiteSpace(filter.DevicePathContains) &&
+                path.IndexOf(filter.DevicePathContains, StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            if (!filter.VendorId.HasValue && !filter.ProductId.HasValue)
+            {
+                return true;
+            }
+
+            (ushort? vid, ushort? pid) = TryParseVidPid(path);
+
+            if (filter.VendorId.HasValue && (!vid.HasValue || vid.Value != filter.VendorId.Value))
+            {
+                return false;
+            }
+
+            if (filter.ProductId.HasValue && (!pid.HasValue || pid.Value != filter.ProductId.Value))
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        private static (ushort? vid, ushort? pid) TryParseVidPid(string path)
+        {
+            Match vidMatch = Regex.Match(path, @"VID_([0-9A-Fa-f]{4})", RegexOptions.IgnoreCase);
+            Match pidMatch = Regex.Match(path, @"PID_([0-9A-Fa-f]{4})", RegexOptions.IgnoreCase);
+
+            ushort? vid = null;
+            ushort? pid = null;
+
+            if (vidMatch.Success && ushort.TryParse(vidMatch.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, null, out ushort parsedVid))
+            {
+                vid = parsedVid;
+            }
+
+            if (pidMatch.Success && ushort.TryParse(pidMatch.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, null, out ushort parsedPid))
+            {
+                pid = parsedPid;
+            }
+
+            return (vid, pid);
         }
 
         private static UsbDevice? ProbeDevice(string path)

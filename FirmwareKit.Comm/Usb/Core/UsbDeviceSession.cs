@@ -3,11 +3,11 @@ using FirmwareKit.Comm.Usb.Backend;
 
 namespace FirmwareKit.Comm.Usb.Core;
 
-internal sealed class FastbootUsbDeviceSession : IUsbDeviceSession
+internal sealed class UsbDeviceSession : IUsbDeviceSession
 {
     private readonly UsbDevice _device;
 
-    public FastbootUsbDeviceSession(string apiName, UsbApiKind kind, UsbDevice device)
+    public UsbDeviceSession(string apiName, UsbApiKind kind, UsbDevice device)
     {
         _device = device;
         DeviceInfo = new UsbDeviceInfo

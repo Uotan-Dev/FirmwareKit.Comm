@@ -9,9 +9,21 @@
 
 - 跨平台 USB 抽象：支持系统原生实现与 `LibUsbDotNet` 后端。
 - 设备发现与过滤：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath` 等过滤设备。
+- 可选接口级过滤：可按 `InterfaceClass`、`InterfaceSubClass`、`InterfaceProtocol` 约束底层接口匹配。
 - 可扩展：可通过 `RegisterUsbApi` 注册自定义 USB API 提供器。
 - 简洁的门面 API：`IFirmwareKitComm` / `FirmwareKitComm`，便于在上层工具或应用中使用。
 - 自带轻量 CLI：项目 `FirmwareKit.Comm.CLI` 提供 `apis` 与 `devices` 命令。
+
+## 设计边界
+
+FirmwareKit.Comm 专注于跨平台原生 USB 传输能力：
+
+- 设备发现与筛选
+- 会话管理
+- 统一读写与超时控制
+- 传输层复位
+
+协议层（例如 Sahara、Firehose、Fastboot、自定义二进制协议）不在本库中实现，由调用程序基于统一会话接口自行实现。
 
 ## 安装
 
@@ -39,6 +51,15 @@ foreach (var api in comm.GetAvailableUsbApis())
 var devices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter { VendorId = 0x18D1 });
 foreach (var d in devices)
  Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
+
+// 可选：按USB接口类过滤（例如 Qualcomm EDL 常见为 0xFF/0xFF/0xFF）
+var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
+{
+ VendorId = 0x05C6,
+ InterfaceClass = 0xFF,
+ InterfaceSubClass = 0xFF,
+ InterfaceProtocol = 0xFF
+});
 
 // 异步枚举
 var asyncDevices = await comm.EnumerateUsbDevicesAsync(UsbApiKind.LibUsbDotNet);

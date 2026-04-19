@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
 
@@ -5,7 +6,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
 internal class LinuxUsbFinder
 {
-    public static List<UsbDevice> FindDevice()
+    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
         const string base_path = "/dev/bus/usb";
@@ -35,6 +36,16 @@ internal class LinuxUsbFinder
                     ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
                     byte iSerialNumber = desc[14];
 
+                    if (filter?.VendorId is ushort filterVid && idVendor != filterVid)
+                    {
+                        continue;
+                    }
+
+                    if (filter?.ProductId is ushort filterPid && idProduct != filterPid)
+                    {
+                        continue;
+                    }
+
                     int pos = desc[0];
                     while (pos < n - 1)
                     {
@@ -50,7 +61,7 @@ internal class LinuxUsbFinder
                             byte ifcProtocol = desc[pos + 7];
                             byte ifcId = desc[pos + 2];
 
-                            if (ifcClass == 0xff && ifcSubClass == 0x42 && ifcProtocol == 0x03)
+                            if (InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter))
                             {
                                 byte numEpts = desc[pos + 4];
                                 byte epIn = 0, epOut = 0;
@@ -122,6 +133,14 @@ internal class LinuxUsbFinder
             }
         }
         return devices;
+    }
+
+    private static bool InterfaceMatchesFilter(byte interfaceClass, byte interfaceSubClass, byte interfaceProtocol, UsbDeviceFilter? filter)
+    {
+        if (filter?.InterfaceClass is byte c && interfaceClass != c) return false;
+        if (filter?.InterfaceSubClass is byte s && interfaceSubClass != s) return false;
+        if (filter?.InterfaceProtocol is byte p && interfaceProtocol != p) return false;
+        return true;
     }
 
 

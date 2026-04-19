@@ -1,6 +1,6 @@
+using FirmwareKit.Comm.Usb.Diagnostics;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
-using FirmwareKit.Comm.Usb.Diagnostics;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
@@ -17,11 +17,13 @@ internal class LibUsbDevice : UsbDevice
     public byte BusNumber { get; set; }
     public byte DeviceAddress { get; set; }
     public byte InterfaceId { get; set; } = 0;
+    public byte ReadEndpointId { get; set; }
+    public byte WriteEndpointId { get; set; }
 
     private static string BuildDevicePath(LibUsbDotNet.LibUsb.UsbDevice device)
         => $"Bus {device.BusNumber} Device {device.Address}: {device.VendorId:X4}:{device.ProductId:X4}";
 
-    private static bool HasFastbootInterface(LibUsbDotNet.LibUsb.UsbDevice device)
+    private static bool HasBulkInterface(LibUsbDotNet.LibUsb.UsbDevice device)
     {
         try
         {
@@ -29,13 +31,11 @@ internal class LibUsbDevice : UsbDevice
             {
                 foreach (var ifc in config.Interfaces)
                 {
-                    bool isFastbootInterface = (int)ifc.Class == 0xff && (int)ifc.SubClass == 0x42 && (int)ifc.Protocol == 0x03;
-                    if (!isFastbootInterface) continue;
-
                     bool hasIn = false;
                     bool hasOut = false;
                     foreach (var endpoint in ifc.Endpoints)
                     {
+                        if ((endpoint.Attributes & 0x03) != 0x02) continue;
                         if ((endpoint.EndpointAddress & 0x80) != 0) hasIn = true;
                         else hasOut = true;
                     }
@@ -75,7 +75,7 @@ internal class LibUsbDevice : UsbDevice
             device = candidates.FirstOrDefault(d =>
                 d.VendorId == Vid &&
                 d.ProductId == Pid &&
-                HasFastbootInterface(d));
+                HasBulkInterface(d));
         }
 
         if (device == null)
@@ -103,40 +103,42 @@ internal class LibUsbDevice : UsbDevice
         catch { }
 
         byte targetInterfaceId = InterfaceId;
-        byte inEndpoint = 0;
-        byte outEndpoint = 0;
+        byte inEndpoint = ReadEndpointId;
+        byte outEndpoint = WriteEndpointId;
 
-        foreach (var config in usbDevice.Configs)
+        if (inEndpoint == 0 || outEndpoint == 0)
         {
-            foreach (var ifc in config.Interfaces)
+            foreach (var config in usbDevice.Configs)
             {
-                bool isFastbootInterface = (int)ifc.Class == 0xff && (int)ifc.SubClass == 0x42 && (int)ifc.Protocol == 0x03;
-                if (!isFastbootInterface) continue;
-
-                byte candidateIn = 0;
-                byte candidateOut = 0;
-                foreach (var endpoint in ifc.Endpoints)
+                foreach (var ifc in config.Interfaces)
                 {
-                    if ((endpoint.EndpointAddress & 0x80) != 0)
+                    byte candidateIn = 0;
+                    byte candidateOut = 0;
+                    foreach (var endpoint in ifc.Endpoints)
                     {
-                        if (candidateIn == 0) candidateIn = endpoint.EndpointAddress;
+                        if ((endpoint.Attributes & 0x03) != 0x02) continue;
+
+                        if ((endpoint.EndpointAddress & 0x80) != 0)
+                        {
+                            if (candidateIn == 0) candidateIn = endpoint.EndpointAddress;
+                        }
+                        else
+                        {
+                            if (candidateOut == 0) candidateOut = endpoint.EndpointAddress;
+                        }
                     }
-                    else
+
+                    if (candidateIn != 0 && candidateOut != 0)
                     {
-                        if (candidateOut == 0) candidateOut = endpoint.EndpointAddress;
+                        targetInterfaceId = (byte)ifc.Number;
+                        inEndpoint = candidateIn;
+                        outEndpoint = candidateOut;
+                        break;
                     }
                 }
 
-                if (candidateIn != 0 && candidateOut != 0)
-                {
-                    targetInterfaceId = (byte)ifc.Number;
-                    inEndpoint = candidateIn;
-                    outEndpoint = candidateOut;
-                    break;
-                }
+                if (inEndpoint != 0 && outEndpoint != 0) break;
             }
-
-            if (inEndpoint != 0 && outEndpoint != 0) break;
         }
 
         if (inEndpoint == 0 || outEndpoint == 0)

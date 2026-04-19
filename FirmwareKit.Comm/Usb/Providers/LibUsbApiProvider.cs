@@ -20,7 +20,7 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider
         List<UsbDevice> devices;
         try
         {
-            devices = LibUsbFinder.FindDevice();
+            devices = LibUsbFinder.FindDevice(filter);
         }
         catch
         {
@@ -30,7 +30,7 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider
         var sessions = new List<IUsbDeviceSession>(devices.Count);
         foreach (var device in devices)
         {
-            var session = new FastbootUsbDeviceSession(ApiName, ApiKind, device);
+            var session = new UsbDeviceSession(ApiName, ApiKind, device);
             if (filter == null || filter.Matches(session.DeviceInfo))
             {
                 sessions.Add(session);
