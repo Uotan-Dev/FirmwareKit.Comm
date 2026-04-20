@@ -9,7 +9,26 @@ namespace FirmwareKit.Comm;
 /// </summary>
 public sealed class FirmwareKitComm : IFirmwareKitComm
 {
-    private readonly UsbCommunicationLayer _usb = new();
+    private readonly UsbCommunicationLayer _usb;
+
+    /// <summary>
+    /// Initializes a new facade with the default USB communication layer.
+    /// 使用默认 USB 通信层初始化门面。
+    /// </summary>
+    public FirmwareKitComm()
+    {
+        _usb = new UsbCommunicationLayer();
+    }
+
+    /// <summary>
+    /// Initializes a new facade with a caller-provided USB communication layer.
+    /// 使用调用方提供的 USB 通信层初始化门面。
+    /// </summary>
+    /// <param name="usb">The USB communication layer. USB 通信层。</param>
+    public FirmwareKitComm(UsbCommunicationLayer usb)
+    {
+        _usb = usb ?? throw new ArgumentNullException(nameof(usb));
+    }
 
     /// <summary>
     /// Gets the names of the registered USB APIs.

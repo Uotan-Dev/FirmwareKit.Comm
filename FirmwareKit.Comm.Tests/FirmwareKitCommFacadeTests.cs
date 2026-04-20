@@ -1,5 +1,6 @@
 using FirmwareKit.Comm;
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Core;
 using FirmwareKit.Comm.Usb.Diagnostics;
 
 namespace FirmwareKit.Comm.Tests;
@@ -43,7 +44,7 @@ public sealed class FirmwareKitCommFacadeTests
     [Fact]
     public void FirmwareKitComm_CanOpenSessionsFromRegisteredProvider()
     {
-        IFirmwareKitComm comm = new FirmwareKitComm();
+        IFirmwareKitComm comm = CreateIsolatedFacade();
         _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
 
         using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
@@ -63,7 +64,7 @@ public sealed class FirmwareKitCommFacadeTests
     [Fact]
     public async Task FirmwareKitComm_CustomSession_CanUseAsyncAdapter()
     {
-        IFirmwareKitComm comm = new FirmwareKitComm();
+        IFirmwareKitComm comm = CreateIsolatedFacade();
         _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
 
         using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
@@ -135,6 +136,13 @@ public sealed class FirmwareKitCommFacadeTests
             session.Dispose();
             return Array.Empty<IUsbDeviceSession>();
         }
+    }
+
+    private static IFirmwareKitComm CreateIsolatedFacade()
+    {
+        var registry = new UsbApiRegistry();
+        var layer = new UsbCommunicationLayer(registry);
+        return new FirmwareKitComm(layer);
     }
 
     private sealed class FacadeSession : IUsbDeviceSession
