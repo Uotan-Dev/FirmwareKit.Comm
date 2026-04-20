@@ -101,6 +101,7 @@ comm.RegisterUsbApi("my-custom", () => new MyCustomUsbApiProvider());
 
 - `apis`：列出可用的 USB API。
 - `devices`：枚举设备并可用下列参数过滤。
+- `all-devices`：列出当前平台可识别的全部 USB 设备（默认使用 native 后端）。
 
 用法示例：
 
@@ -110,6 +111,9 @@ dotnet run --project FirmwareKit.Comm.CLI -- apis
 
 # 列出设备（使用 libusb、按 VID/PID 过滤）
 dotnet run --project FirmwareKit.Comm.CLI -- devices --api libusb --vid 0x18D1 --pid 0x4E11
+
+# 列出当前平台可识别的全部 USB 设备
+dotnet run --project FirmwareKit.Comm.CLI -- all-devices
 ```
 
 支持的 `devices` 参数：
@@ -119,6 +123,9 @@ dotnet run --project FirmwareKit.Comm.CLI -- devices --api libusb --vid 0x18D1 -
 - `--pid <hex>`：产品 ID（十六进制或十进制）。
 - `--serial <text>`：设备序列号。
 - `--path-contains <text>`：设备路径包含文本。
+- `--if-class <hex|dec>`：接口类代码过滤。
+- `--if-subclass <hex|dec>`：接口子类代码过滤。
+- `--if-protocol <hex|dec>`：接口协议代码过滤。
 
 ## 许可
 
