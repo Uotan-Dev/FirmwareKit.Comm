@@ -44,6 +44,18 @@ public static class UsbComm
         DefaultLayer.EnumerateDevicesAsync(apiKind, filter, cancellationToken);
 
     /// <summary>
+    /// Opens matching device sessions for direct read/write operations.
+    /// 打开匹配设备会话，用于直接读写操作。
+    /// </summary>
+    /// <param name="apiKind">The backend selection mode. 后端选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <returns>A wrapped collection of opened sessions. 封装后的已打开会话集合。</returns>
+    public static UsbSessionCollection OpenDeviceSessions(
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null) =>
+        DefaultLayer.OpenDeviceSessions(apiKind, filter);
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// 注册自定义 USB API 提供器。
     /// </summary>

@@ -60,43 +60,117 @@ internal class MacOSUsbDevice : UsbDevice
 
                     IOUSBFindInterfaceRequest request = new IOUSBFindInterfaceRequest
                     {
-                        bInterfaceClass = 0xff,
-                        bInterfaceSubClass = 0x42,
-                        bInterfaceProtocol = 0x03,
+                        bInterfaceClass = kIOUSBFindInterfaceDontCare,
+                        bInterfaceSubClass = kIOUSBFindInterfaceDontCare,
+                        bInterfaceProtocol = kIOUSBFindInterfaceDontCare,
                         bAlternateSetting = kIOUSBFindInterfaceDontCare
                     };
 
                     IntPtr interfaceIter;
                     if (createIter(devicePtr, ref request, out interfaceIter) == 0 && interfaceIter != IntPtr.Zero)
                     {
-                        IntPtr ifcService = IOIteratorNext(interfaceIter);
-                        if (ifcService != IntPtr.Zero)
+                        IntPtr ifcService;
+                        while ((ifcService = IOIteratorNext(interfaceIter)) != IntPtr.Zero)
                         {
                             IntPtr ifcPlugin = IntPtr.Zero;
                             if (IOCreatePlugInInterfaceForService(ifcService, kIOUSBInterfaceUserClientTypeID, kIOCFPlugInInterfaceID, out ifcPlugin, out score) == 0 && ifcPlugin != IntPtr.Zero)
                             {
                                 try
                                 {
-                                    if (TryQueryInterface(ifcPlugin, out interfacePtr, kIOUSBInterfaceInterfaceID197, kIOUSBInterfaceInterfaceID190, kIOUSBInterfaceInterfaceID))
+                                    IntPtr candidateInterface;
+                                    if (TryQueryInterface(ifcPlugin, out candidateInterface, kIOUSBInterfaceInterfaceID197, kIOUSBInterfaceInterfaceID190, kIOUSBInterfaceInterfaceID))
                                     {
-                                        var ifcOpen = GetDelegate<USBInterfaceOpenDelegate>(interfacePtr, Offset_USBInterfaceOpen);
-                                        kr = ifcOpen(interfacePtr);
-                                        if (kr == 0)
+                                        try
                                         {
+                                            var getNumEpts = GetDelegate<GetNumEndpointsDelegate>(candidateInterface, Offset_GetNumEndpoints);
+                                            var getPipeProps = GetDelegate<GetPipePropertiesDelegate>(candidateInterface, Offset_GetPipeProperties);
+
+                                            byte numEpts;
+                                            if (getNumEpts(candidateInterface, out numEpts) != 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            byte candidateBulkIn = 0;
+                                            byte candidateBulkOut = 0;
+                                            for (byte i = 1; i <= numEpts; i++)
+                                            {
+                                                byte direction, number, transferType, interval;
+                                                ushort maxPacketSize;
+                                                if (getPipeProps(candidateInterface, i, out direction, out number, out transferType, out maxPacketSize, out interval) != 0)
+                                                {
+                                                    continue;
+                                                }
+
+                                                if (transferType != 0x02)
+                                                {
+                                                    continue;
+                                                }
+
+                                                if (direction == 1)
+                                                {
+                                                    if (candidateBulkIn == 0)
+                                                    {
+                                                        candidateBulkIn = i;
+                                                    }
+                                                }
+                                                else
+                                                {
+                                                    if (candidateBulkOut == 0)
+                                                    {
+                                                        candidateBulkOut = i;
+                                                    }
+                                                }
+                                            }
+
+                                            if (candidateBulkIn == 0 || candidateBulkOut == 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            if (bulkIn != 0 && bulkIn != candidateBulkIn)
+                                            {
+                                                continue;
+                                            }
+
+                                            if (bulkOut != 0 && bulkOut != candidateBulkOut)
+                                            {
+                                                continue;
+                                            }
+
+                                            var ifcOpen = GetDelegate<USBInterfaceOpenDelegate>(candidateInterface, Offset_USBInterfaceOpen);
+                                            kr = ifcOpen(candidateInterface);
+                                            if (kr != 0)
+                                            {
+                                                continue;
+                                            }
+
+                                            bulkIn = candidateBulkIn;
+                                            bulkOut = candidateBulkOut;
+                                            interfacePtr = candidateInterface;
+
                                             var ifcClear = GetDelegate<ClearPipeStallBothEndsDelegate>(interfacePtr, Offset_ClearPipeStallBothEnds);
                                             if (bulkIn != 0) ifcClear(interfacePtr, bulkIn);
                                             if (bulkOut != 0) ifcClear(interfacePtr, bulkOut);
+                                            candidateInterface = IntPtr.Zero;
+                                            break;
                                         }
-                                        else
+                                        finally
                                         {
-                                            GetDelegate<ReleaseDelegate>(interfacePtr, Offset_IUnknown_Release)(interfacePtr);
-                                            interfacePtr = IntPtr.Zero;
+                                            if (candidateInterface != IntPtr.Zero)
+                                            {
+                                                GetDelegate<ReleaseDelegate>(candidateInterface, Offset_IUnknown_Release)(candidateInterface);
+                                            }
                                         }
                                     }
                                 }
                                 finally { GetDelegate<ReleaseDelegate>(ifcPlugin, Offset_Plugin_Release)(ifcPlugin); }
                             }
                             IOObjectRelease(ifcService);
+                            if (interfacePtr != IntPtr.Zero)
+                            {
+                                break;
+                            }
                         }
                         IOObjectRelease(interfaceIter);
                     }

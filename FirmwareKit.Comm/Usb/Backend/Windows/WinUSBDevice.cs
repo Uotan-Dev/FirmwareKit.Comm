@@ -42,6 +42,10 @@ internal class WinUSBDevice : UsbDevice
         if (!WinUsb_QueryInterfaceSettings(WinUSBHandle, InterfaceNum, out USBDeviceInterfaceDescriptor))
             return Marshal.GetLastWin32Error();
 
+        InterfaceClass = USBDeviceInterfaceDescriptor.bInterfaceClass;
+        InterfaceSubClass = USBDeviceInterfaceDescriptor.bInterfaceSubClass;
+        InterfaceProtocol = USBDeviceInterfaceDescriptor.bInterfaceProtocol;
+
         for (byte endpoint = 0; endpoint < USBDeviceInterfaceDescriptor.bNumEndpoints; endpoint++)
         {
             WinUSBPipeInfo pipeInfo;

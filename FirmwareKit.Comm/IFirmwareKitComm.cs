@@ -1,4 +1,5 @@
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Core;
 
 namespace FirmwareKit.Comm;
 
@@ -33,6 +34,15 @@ public interface IFirmwareKitComm
     /// <param name="cancellationToken">A cancellation token. 取消令牌。</param>
     /// <returns>A task that resolves to the matched USB device descriptors. 返回匹配 USB 设备描述信息的任务。</returns>
     Task<IReadOnlyList<UsbDeviceInfo>> EnumerateUsbDevicesAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Opens matching USB device sessions for direct read/write operations.
+    /// 打开匹配的 USB 设备会话，用于直接读写操作。
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <returns>A disposable collection of opened sessions. 已打开会话的可释放集合。</returns>
+    UsbSessionCollection OpenUsbDeviceSessions(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
     /// Registers a custom USB API provider.

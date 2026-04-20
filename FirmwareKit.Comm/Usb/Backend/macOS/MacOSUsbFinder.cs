@@ -113,6 +113,9 @@ internal class MacOSUsbFinder
                                                     DevicePath = devicePath,
                                                     VendorId = vid,
                                                     ProductId = pid,
+                                                    InterfaceClass = filter?.InterfaceClass,
+                                                    InterfaceSubClass = filter?.InterfaceSubClass,
+                                                    InterfaceProtocol = filter?.InterfaceProtocol,
                                                     bulkIn = bulkIn,
                                                     bulkOut = bulkOut,
                                                     UsbDeviceType = UsbDeviceType.MacOS

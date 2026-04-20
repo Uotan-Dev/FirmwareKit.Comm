@@ -8,7 +8,6 @@ namespace FirmwareKit.Comm.Usb.Core;
 /// </summary>
 public sealed class UsbSessionCollection : IDisposable
 {
-    private readonly IReadOnlyList<IUsbDeviceSession> _sessions;
 
     /// <summary>
     /// Initializes a new session collection.
@@ -17,21 +16,21 @@ public sealed class UsbSessionCollection : IDisposable
     /// <param name="sessions">The sessions to wrap. 需要封装的会话集合。</param>
     public UsbSessionCollection(IReadOnlyList<IUsbDeviceSession> sessions)
     {
-        _sessions = sessions;
+        Sessions = sessions;
     }
 
     /// <summary>
     /// Gets the wrapped sessions.
     /// 获取已封装的会话列表。
     /// </summary>
-    public IReadOnlyList<IUsbDeviceSession> Sessions => _sessions;
+    public IReadOnlyList<IUsbDeviceSession> Sessions { get; }
 
     /// <summary>
     /// Returns an enumerator over the wrapped sessions.
     /// 返回封装会话的枚举器。
     /// </summary>
     /// <returns>An enumerator over the sessions. 会话枚举器。</returns>
-    public IEnumerator<IUsbDeviceSession> GetEnumerator() => _sessions.GetEnumerator();
+    public IEnumerator<IUsbDeviceSession> GetEnumerator() => Sessions.GetEnumerator();
 
     /// <summary>
     /// Disposes every wrapped session.
@@ -39,7 +38,7 @@ public sealed class UsbSessionCollection : IDisposable
     /// </summary>
     public void Dispose()
     {
-        foreach (var session in _sessions)
+        foreach (var session in Sessions)
         {
             session.Dispose();
         }

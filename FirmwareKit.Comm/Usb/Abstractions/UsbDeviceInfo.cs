@@ -47,4 +47,22 @@ public sealed class UsbDeviceInfo
     /// 获取或设置产品 ID。
     /// </summary>
     public ushort ProductId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB interface class code when available.
+    /// 获取或设置 USB 接口类代码（若可用）。
+    /// </summary>
+    public byte? InterfaceClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB interface subclass code when available.
+    /// 获取或设置 USB 接口子类代码（若可用）。
+    /// </summary>
+    public byte? InterfaceSubClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB interface protocol code when available.
+    /// 获取或设置 USB 接口协议代码（若可用）。
+    /// </summary>
+    public byte? InterfaceProtocol { get; set; }
 }

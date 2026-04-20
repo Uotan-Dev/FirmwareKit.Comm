@@ -6,6 +6,9 @@ internal abstract class UsbDevice : IDisposable
     public string? SerialNumber { get; set; }
     public ushort VendorId { get; set; }
     public ushort ProductId { get; set; }
+    public byte? InterfaceClass { get; set; }
+    public byte? InterfaceSubClass { get; set; }
+    public byte? InterfaceProtocol { get; set; }
     public UsbDeviceType UsbDeviceType { get; set; }
 
     public abstract byte[] Read(int length);

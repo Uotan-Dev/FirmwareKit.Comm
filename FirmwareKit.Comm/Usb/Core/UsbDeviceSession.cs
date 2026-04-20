@@ -18,7 +18,10 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession
             DevicePath = device.DevicePath,
             SerialNumber = device.SerialNumber,
             VendorId = device.VendorId,
-            ProductId = device.ProductId
+            ProductId = device.ProductId,
+            InterfaceClass = device.InterfaceClass,
+            InterfaceSubClass = device.InterfaceSubClass,
+            InterfaceProtocol = device.InterfaceProtocol
         };
     }
 

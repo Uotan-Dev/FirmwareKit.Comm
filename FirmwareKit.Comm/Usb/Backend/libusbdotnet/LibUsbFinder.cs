@@ -5,11 +5,22 @@ namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
 internal class LibUsbFinder
 {
-    private static bool TryGetBulkInterface(LibUsbDotNet.LibUsb.UsbDevice device, UsbDeviceFilter? filter, out byte interfaceId, out byte inEndpoint, out byte outEndpoint)
+    private static bool TryGetBulkInterface(
+        LibUsbDotNet.LibUsb.UsbDevice device,
+        UsbDeviceFilter? filter,
+        out byte interfaceId,
+        out byte inEndpoint,
+        out byte outEndpoint,
+        out byte interfaceClass,
+        out byte interfaceSubClass,
+        out byte interfaceProtocol)
     {
         interfaceId = 0;
         inEndpoint = 0;
         outEndpoint = 0;
+        interfaceClass = 0;
+        interfaceSubClass = 0;
+        interfaceProtocol = 0;
 
         try
         {
@@ -46,6 +57,9 @@ internal class LibUsbFinder
                         interfaceId = (byte)ifc.Number;
                         inEndpoint = candidateIn;
                         outEndpoint = candidateOut;
+                        interfaceClass = (byte)ifc.Class;
+                        interfaceSubClass = (byte)ifc.SubClass;
+                        interfaceProtocol = (byte)ifc.Protocol;
                         return true;
                     }
                 }
@@ -73,7 +87,15 @@ internal class LibUsbFinder
                 if (filter?.VendorId is ushort filterVid && (ushort)device.VendorId != filterVid) continue;
                 if (filter?.ProductId is ushort filterPid && (ushort)device.ProductId != filterPid) continue;
 
-                if (!TryGetBulkInterface(libUsbDevice, filter, out byte interfaceId, out byte readEndpoint, out byte writeEndpoint)) continue;
+                if (!TryGetBulkInterface(
+                    libUsbDevice,
+                    filter,
+                    out byte interfaceId,
+                    out byte readEndpoint,
+                    out byte writeEndpoint,
+                    out byte interfaceClass,
+                    out byte interfaceSubClass,
+                    out byte interfaceProtocol)) continue;
 
                 byte busNumber = libUsbDevice?.BusNumber ?? 0;
                 byte address = libUsbDevice?.Address ?? 0;
@@ -87,6 +109,9 @@ internal class LibUsbFinder
                     InterfaceId = interfaceId,
                     ReadEndpointId = readEndpoint,
                     WriteEndpointId = writeEndpoint,
+                    InterfaceClass = interfaceClass,
+                    InterfaceSubClass = interfaceSubClass,
+                    InterfaceProtocol = interfaceProtocol,
                     DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
                     UsbDeviceType = UsbDeviceType.LibUSB
                 };

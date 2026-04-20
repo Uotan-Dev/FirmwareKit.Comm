@@ -50,7 +50,12 @@ foreach (var api in comm.GetAvailableUsbApis())
 // 同步枚举设备并过滤 VendorId（示例：0x18D1）
 var devices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter { VendorId = 0x18D1 });
 foreach (var d in devices)
- Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
+{
+ var ifClass = d.InterfaceClass.HasValue ? $"0x{d.InterfaceClass.Value:X2}" : "--";
+ var ifSubClass = d.InterfaceSubClass.HasValue ? $"0x{d.InterfaceSubClass.Value:X2}" : "--";
+ var ifProto = d.InterfaceProtocol.HasValue ? $"0x{d.InterfaceProtocol.Value:X2}" : "--";
+ Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} if={ifClass}/{ifSubClass}/{ifProto} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
+}
 
 // 可选：按USB接口类过滤（例如 Qualcomm EDL 常见为 0xFF/0xFF/0xFF）
 var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
@@ -63,6 +68,25 @@ var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilt
 
 // 异步枚举
 var asyncDevices = await comm.EnumerateUsbDevicesAsync(UsbApiKind.LibUsbDotNet);
+
+// 打开会话并执行统一读写（协议解析由调用方实现）
+using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
+{
+ VendorId = 0x05C6,
+ ProductId = 0x9008,
+ InterfaceClass = 0xFF,
+ InterfaceSubClass = 0xFF,
+ InterfaceProtocol = 0xFF
+});
+
+var session = sessions.Sessions.FirstOrDefault();
+if (session != null)
+{
+ // 仅示例：具体命令/协议包由上层自己定义
+ _ = session.Write(new byte[] { 0x7E, 0x00 }, 2, 3000);
+ var response = session.Read(512, 3000);
+ Console.WriteLine($"response bytes: {response.Length}");
+}
 ```
 
 注册自定义 USB API 的示例：

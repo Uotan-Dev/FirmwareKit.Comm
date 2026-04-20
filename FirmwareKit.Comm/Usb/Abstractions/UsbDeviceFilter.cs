@@ -70,6 +70,9 @@ public sealed class UsbDeviceFilter
             (string.IsNullOrWhiteSpace(info.DevicePath) ||
              info.DevicePath.IndexOf(DevicePathContains, StringComparison.OrdinalIgnoreCase) < 0)) return false;
         if (SourceApiKind.HasValue && info.SourceApiKind != SourceApiKind.Value) return false;
+        if (InterfaceClass.HasValue && info.InterfaceClass != InterfaceClass.Value) return false;
+        if (InterfaceSubClass.HasValue && info.InterfaceSubClass != InterfaceSubClass.Value) return false;
+        if (InterfaceProtocol.HasValue && info.InterfaceProtocol != InterfaceProtocol.Value) return false;
 
         return true;
     }

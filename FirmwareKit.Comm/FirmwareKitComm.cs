@@ -38,6 +38,15 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     public Task<IReadOnlyList<UsbDeviceInfo>> EnumerateUsbDevicesAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, CancellationToken cancellationToken = default) => _usb.EnumerateDevicesAsync(apiKind, filter, cancellationToken);
 
     /// <summary>
+    /// Opens matching USB device sessions for direct read/write operations.
+    /// 打开匹配的 USB 设备会话，用于直接读写操作。
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <returns>A disposable collection of opened sessions. 已打开会话的可释放集合。</returns>
+    public UsbSessionCollection OpenUsbDeviceSessions(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null) => _usb.OpenDeviceSessions(apiKind, filter);
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// 注册自定义 USB API 提供器。
     /// </summary>
