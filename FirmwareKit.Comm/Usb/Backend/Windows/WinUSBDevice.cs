@@ -1,5 +1,7 @@
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using static FirmwareKit.Comm.Usb.Backend.Windows.Win32API;
 using static FirmwareKit.Comm.Usb.Backend.Windows.WinUSBAPI;
 
@@ -7,7 +9,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 
 internal class WinUSBDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = 60000;
+    private const int DefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
 
     private byte InterfaceNum;
     private byte ReadBulkID, WriteBulkID;
@@ -33,6 +35,8 @@ internal class WinUSBDevice : UsbDevice
         if (!WinUsb_GetDescriptor(WinUSBHandle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceDescriptor>(), out bytesTransfered))
             return Marshal.GetLastWin32Error();
         USBDeviceDescriptor = Marshal.PtrToStructure<USBDeviceDescriptor>(ptr);
+        VendorId = USBDeviceDescriptor.idVendor;
+        ProductId = USBDeviceDescriptor.idProduct;
         Marshal.FreeHGlobal(ptr);
         ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceConfigDescriptor>());
         if (!WinUsb_GetDescriptor(WinUSBHandle, USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransfered))
@@ -169,6 +173,11 @@ internal class WinUSBDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        var effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
@@ -176,9 +185,9 @@ internal class WinUSBDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        SetPipeTimeout(timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs);
+        SetPipeTimeout(effectiveTimeoutMs);
 
-        const int MaxChunkSize = 1024 * 1024;
+        const int MaxChunkSize = UsbTransferPolicies.MaxChunkSize;
         int totalBytesRead = 0;
         byte[] chunkBuffer = new byte[Math.Min(length, MaxChunkSize)];
 
@@ -201,10 +210,37 @@ internal class WinUSBDevice : UsbDevice
             else
             {
                 int err = Marshal.GetLastWin32Error();
-                if (err == 121) break;
+                if (err == 121)
+                {
+                    lastError = err;
+                    outcome = UsbTransferOutcome.Timeout;
+                    break;
+                }
+
+                lastError = err;
+                outcome = UsbTransferOutcome.FatalError;
                 throw new Win32Exception(err);
             }
         }
+
+        if (outcome == UsbTransferOutcome.Success && totalBytesRead > 0 && totalBytesRead < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "winusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Read,
+            RequestedBytes = length,
+            TransferredBytes = totalBytesRead,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
 
         return totalBytesRead;
     }
@@ -216,12 +252,29 @@ internal class WinUSBDevice : UsbDevice
 
     public override long Write(byte[] data, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        var effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int? lastError = null;
+
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
 
-        SetPipeTimeout(timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs);
+        SetPipeTimeout(effectiveTimeoutMs);
 
         if (length == 0)
         {
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "winusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = 0,
+                TransferredBytes = 0,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = null,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = UsbTransferOutcome.Success
+            });
             return 0;
         }
 
@@ -241,8 +294,37 @@ internal class WinUSBDevice : UsbDevice
         }
         else
         {
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+            lastError = Marshal.GetLastWin32Error();
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "winusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = length,
+                TransferredBytes = (int)totalBytesWritten,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = lastError,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = UsbTransferOutcome.FatalError
+            });
+
+            throw new Win32Exception(lastError.Value);
         }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "winusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Write,
+            RequestedBytes = length,
+            TransferredBytes = (int)totalBytesWritten,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = null,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = totalBytesWritten < length ? UsbTransferOutcome.ShortTransfer : UsbTransferOutcome.Success
+        });
 
         return (long)totalBytesWritten;
     }

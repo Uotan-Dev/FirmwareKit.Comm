@@ -1,12 +1,14 @@
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Diagnostics;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
 
 namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
 internal class LinuxUsbDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = 5000;
+    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private int fd = -1;
     public byte ep_in { get; set; }
@@ -141,8 +143,12 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
     {
-        const uint MAX_USBFS_BULK_SIZE = 16384;
-        const int MAX_RETRIES = 5;
+        const uint MAX_USBFS_BULK_SIZE = UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
+        const int MAX_RETRIES = UsbTransferPolicies.LinuxMaxRetries;
+        var stopwatch = Stopwatch.StartNew();
+        int retryCount = 0;
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
 
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
@@ -150,7 +156,7 @@ internal class LinuxUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
         int count = 0;
         GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
@@ -176,14 +182,34 @@ internal class LinuxUsbDevice : UsbDevice
                     if (n < 0)
                     {
                         int err = Marshal.GetLastWin32Error();
+                        lastError = err;
                         if (err == EINTR || err == EAGAIN) continue;
-                        if (err == ETIMEDOUT) break;
+                        if (err == ETIMEDOUT)
+                        {
+                            outcome = UsbTransferOutcome.Timeout;
+                            break;
+                        }
                         if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
                         {
+                            outcome = UsbTransferOutcome.FatalError;
+                            UsbTrace.EmitTransfer(new UsbTransferEvent
+                            {
+                                Backend = "linux-usbfs",
+                                DevicePath = DevicePath,
+                                Operation = UsbTransferOperation.Read,
+                                RequestedBytes = length,
+                                TransferredBytes = count,
+                                TimeoutMs = effectiveTimeoutMs,
+                                RetryCount = retryCount,
+                                NativeErrorCode = err,
+                                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                                Outcome = outcome
+                            });
                             throw new IOException($"USB read failed with fatal error: {err}");
                         }
 
                         if (++retry > MAX_RETRIES) break;
+                        retryCount++;
                         Thread.Sleep(500);
                     }
                 } while (n < 0);
@@ -198,6 +224,32 @@ internal class LinuxUsbDevice : UsbDevice
             handle.Free();
         }
 
+        if (outcome == UsbTransferOutcome.Success)
+        {
+            if (lastError == ETIMEDOUT)
+            {
+                outcome = UsbTransferOutcome.Timeout;
+            }
+            else if (count > 0 && count < length)
+            {
+                outcome = UsbTransferOutcome.ShortTransfer;
+            }
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "linux-usbfs",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Read,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = retryCount,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
+
         return count;
     }
 
@@ -208,23 +260,40 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length, int timeoutMs)
     {
-        const uint MAX_USBFS_BULK_SIZE = 16384;
-        const int MAX_RETRIES = 5;
+        const uint MAX_USBFS_BULK_SIZE = UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
+        const int MAX_RETRIES = UsbTransferPolicies.LinuxMaxRetries;
+        var stopwatch = Stopwatch.StartNew();
+        int retryCount = 0;
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
         int count = 0;
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
         if (length == 0)
         {
             // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "linux-usbfs",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = 0,
+                TransferredBytes = 0,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = null,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = UsbTransferOutcome.Success
+            });
             return 0;
         }
 
-        while (count < length)
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
         {
-            int xfer = (length - count > (int)MAX_USBFS_BULK_SIZE) ? (int)MAX_USBFS_BULK_SIZE : (length - count);
-            GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            try
+            while (count < length)
             {
+                int xfer = (length - count > (int)MAX_USBFS_BULK_SIZE) ? (int)MAX_USBFS_BULK_SIZE : (length - count);
                 usbdevfs_bulktransfer bulk = new usbdevfs_bulktransfer
                 {
                     ep = ep_out,
@@ -242,27 +311,85 @@ internal class LinuxUsbDevice : UsbDevice
                     if (n < 0)
                     {
                         int err = Marshal.GetLastWin32Error();
+                        lastError = err;
                         if (err == EINTR || err == EAGAIN) continue;
-                        if (err == ETIMEDOUT) break;
+                        if (err == ETIMEDOUT)
+                        {
+                            outcome = UsbTransferOutcome.Timeout;
+                            break;
+                        }
                         if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
                         {
+                            outcome = UsbTransferOutcome.FatalError;
+                            UsbTrace.EmitTransfer(new UsbTransferEvent
+                            {
+                                Backend = "linux-usbfs",
+                                DevicePath = DevicePath,
+                                Operation = UsbTransferOperation.Write,
+                                RequestedBytes = length,
+                                TransferredBytes = count,
+                                TimeoutMs = effectiveTimeoutMs,
+                                RetryCount = retryCount,
+                                NativeErrorCode = err,
+                                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                                Outcome = outcome
+                            });
                             throw new IOException($"USB write failed with fatal error: {err}");
                         }
 
                         if (++retry > MAX_RETRIES) break;
+                        retryCount++;
                         Thread.Sleep(500);
                     }
                 } while (n < 0);
 
-                if (n < 0) return (count > 0) ? count : -1;
+                if (n < 0)
+                {
+                    outcome = outcome == UsbTransferOutcome.Success && lastError.HasValue ? UsbTransferOutcome.Timeout : outcome;
+                    var partial = (count > 0) ? count : -1;
+                    UsbTrace.EmitTransfer(new UsbTransferEvent
+                    {
+                        Backend = "linux-usbfs",
+                        DevicePath = DevicePath,
+                        Operation = UsbTransferOperation.Write,
+                        RequestedBytes = length,
+                        TransferredBytes = Math.Max(count, 0),
+                        TimeoutMs = effectiveTimeoutMs,
+                        RetryCount = retryCount,
+                        NativeErrorCode = lastError,
+                        ElapsedMs = stopwatch.ElapsedMilliseconds,
+                        Outcome = outcome == UsbTransferOutcome.Success ? UsbTransferOutcome.Timeout : outcome
+                    });
+                    return partial;
+                }
                 count += n;
                 if (n < (int)xfer) break;
             }
-            finally
-            {
-                handle.Free();
-            }
         }
+        finally
+        {
+            handle.Free();
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "linux-usbfs",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Write,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = retryCount,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
+
         return count;
     }
 

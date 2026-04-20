@@ -1,4 +1,5 @@
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using FirmwareKit.Comm.Usb.Providers;
 
 namespace FirmwareKit.Comm.Usb.Core;
@@ -39,8 +40,53 @@ public sealed class UsbCommunicationLayer
         UsbApiKind apiKind = UsbApiKind.Auto,
         UsbDeviceFilter? filter = null)
     {
-        using var sessions = OpenDeviceSessions(apiKind, filter);
-        return sessions.Sessions.Select(session => session.DeviceInfo).ToList();
+        return EnumerateDevicesCore(apiKind, filter, cancellationToken: default);
+    }
+
+    /// <summary>
+    /// Enumerates devices for the selected backend with cancellation support.
+    /// 按选定后端枚举设备，并支持取消。
+    /// </summary>
+    /// <param name="apiKind">The backend selection mode. 后端选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <param name="cancellationToken">A cancellation token. 取消令牌。</param>
+    /// <returns>A read-only list of matched devices. 匹配设备只读列表。</returns>
+    public IReadOnlyList<UsbDeviceInfo> EnumerateDevices(
+        UsbApiKind apiKind,
+        UsbDeviceFilter? filter,
+        CancellationToken cancellationToken)
+    {
+        return EnumerateDevicesCore(apiKind, filter, cancellationToken);
+    }
+
+    private IReadOnlyList<UsbDeviceInfo> EnumerateDevicesCore(
+        UsbApiKind apiKind,
+        UsbDeviceFilter? filter,
+        CancellationToken cancellationToken)
+    {
+        var providers = ResolveProviders(apiKind);
+        var devices = new List<UsbDeviceInfo>();
+
+        foreach (var provider in providers)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            if (!provider.IsSupportedOnCurrentPlatform)
+            {
+                continue;
+            }
+
+            if (provider is IUsbApiDiscoveryProvider discoveryProvider)
+            {
+                devices.AddRange(discoveryProvider.EnumerateDeviceInfos(filter));
+                continue;
+            }
+
+            using var sessions = new UsbSessionCollection(provider.EnumerateDeviceSessions(filter));
+            devices.AddRange(sessions.Sessions.Select(session => session.DeviceInfo));
+        }
+
+        return devices;
     }
 
     /// <summary>
@@ -56,7 +102,9 @@ public sealed class UsbCommunicationLayer
         UsbDeviceFilter? filter = null,
         CancellationToken cancellationToken = default)
     {
-        return await Task.Run(() => EnumerateDevices(apiKind, filter), cancellationToken);
+        await Task.Yield();
+        cancellationToken.ThrowIfCancellationRequested();
+        return EnumerateDevicesCore(apiKind, filter, cancellationToken);
     }
 
     /// <summary>
@@ -76,11 +124,57 @@ public sealed class UsbCommunicationLayer
             throw new ArgumentNullException(nameof(onDeviceFound));
         }
 
-        using var sessions = OpenDeviceSessions(apiKind, filter);
-        foreach (var session in sessions.Sessions)
+        var devices = EnumerateDevices(apiKind, filter);
+        foreach (var device in devices)
         {
-            onDeviceFound(session.DeviceInfo);
+            onDeviceFound(device);
         }
+    }
+
+    /// <summary>
+    /// Monitors USB device additions and removals by polling snapshots.
+    /// 通过轮询快照监视 USB 设备新增与移除。
+    /// </summary>
+    /// <param name="onChanged">Change callback. 设备变化回调。</param>
+    /// <param name="apiKind">The backend selection mode. 后端选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
+    /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
+    /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
+    public IDisposable MonitorDevices(
+        Action<IReadOnlyList<UsbDeviceChange>> onChanged,
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null,
+        TimeSpan? pollInterval = null,
+        bool fireInitialSnapshot = false)
+    {
+        if (onChanged == null)
+        {
+            throw new ArgumentNullException(nameof(onChanged));
+        }
+
+        var interval = pollInterval ?? TimeSpan.FromSeconds(1);
+        if (interval <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(pollInterval));
+        }
+
+        return new UsbDeviceMonitor(
+            () =>
+            {
+                try
+                {
+                    return EnumerateDevicesCore(apiKind, filter, cancellationToken: default);
+                }
+                catch (Exception ex)
+                {
+                    UsbTrace.Log($"MonitorDevices enumerate failed: {ex.GetType().Name}: {ex.Message}");
+                    return Array.Empty<UsbDeviceInfo>();
+                }
+            },
+            onChanged,
+            interval,
+            fireInitialSnapshot);
     }
 
     /// <summary>

@@ -1,12 +1,13 @@
 using FirmwareKit.Comm.Usb.Diagnostics;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
+using System.Diagnostics;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
-internal class LibUsbDevice : UsbDevice
+internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 {
-    private const int DefaultTimeoutMs = 5000;
+    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private UsbContext? context;
     private IUsbDevice? usbDevice;
@@ -46,6 +47,7 @@ internal class LibUsbDevice : UsbDevice
         }
         catch
         {
+            UsbTrace.Log("LibUsbDevice.HasBulkInterface: failed to enumerate interface endpoints.");
             return false;
         }
 
@@ -100,7 +102,10 @@ internal class LibUsbDevice : UsbDevice
         {
             usbDevice.SetConfiguration(1);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            UsbTrace.Log($"LibUsbDevice.SetConfiguration ignored: {ex.GetType().Name}: {ex.Message}");
+        }
 
         byte targetInterfaceId = InterfaceId;
         byte inEndpoint = ReadEndpointId;
@@ -160,7 +165,10 @@ internal class LibUsbDevice : UsbDevice
                 (usbDevice as LibUsbDotNet.LibUsb.UsbDevice)?.DetachKernelDriver(targetInterfaceId);
                 usbDevice.ClaimInterface(targetInterfaceId);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                UsbTrace.Log($"LibUsbDevice.ClaimInterface fallback failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         reader = null;
@@ -234,7 +242,10 @@ internal class LibUsbDevice : UsbDevice
             {
                 usbDevice.ResetDevice();
             }
-            catch { }
+            catch (Exception ex)
+            {
+                UsbTrace.Log($"LibUsbDevice.Reset failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
     }
 
@@ -264,6 +275,10 @@ internal class LibUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
         if (reader == null) return 0;
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
@@ -271,9 +286,9 @@ internal class LibUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
-        const int maxLenToRead = 1048576;
+        const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
         int count = 0;
 
@@ -284,13 +299,36 @@ internal class LibUsbDevice : UsbDevice
 
             reader.Read(buffer, offset + count, lenToRead, effectiveTimeoutMs, out read_len);
 
-            if (read_len <= 0) break;
+            if (read_len <= 0)
+            {
+                outcome = UsbTransferOutcome.Timeout;
+                break;
+            }
 
             count += read_len;
             lenRemaining -= read_len;
 
             if (read_len < lenToRead) break;
         }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "libusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Read,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
 
         return count;
     }
@@ -302,15 +340,32 @@ internal class LibUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
         if (writer == null)
         {
             UsbTrace.Log("LibUsbDevice: writer is null");
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "libusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = length,
+                TransferredBytes = 0,
+                TimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = null,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = UsbTransferOutcome.NotReady
+            });
             return -1;
         }
 
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
-        const int maxLenToSend = 1048576;
+        const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
         int count = 0;
 
@@ -321,6 +376,19 @@ internal class LibUsbDevice : UsbDevice
             int transferred;
             var errorCode = writer.Write(data, 0, 0, effectiveTimeoutMs, out transferred);
             UsbTrace.Log($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "libusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = 0,
+                TransferredBytes = transferred,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = (int)errorCode,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = errorCode == 0 ? UsbTransferOutcome.Success : UsbTransferOutcome.FatalError
+            });
             return transferred;
         }
 
@@ -333,11 +401,18 @@ internal class LibUsbDevice : UsbDevice
             if (errorCode != 0) // UsbError.Success is 0
             {
                 UsbTrace.Log($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
+                lastError = (int)errorCode;
+                outcome = UsbTransferOutcome.FatalError;
             }
 
             if (transferred <= 0)
             {
                 UsbTrace.Log($"LibUsbDevice: Write returned non-positive transferred: {transferred}, errorCode: {errorCode}");
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.Timeout;
+                    lastError = (int)errorCode;
+                }
                 break;
             }
 
@@ -347,11 +422,34 @@ internal class LibUsbDevice : UsbDevice
             if (transferred < lenToSend)
             {
                 UsbTrace.Log($"LibUsbDevice: Short write - transferred {transferred} < requested {lenToSend}");
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.ShortTransfer;
+                }
                 break;
             }
         }
 
         UsbTrace.Log($"LibUsbDevice: Write finished - total count: {count}");
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "libusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Write,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
+
         return count > 0 ? count : (length == 0 ? 0 : -1);
     }
 }

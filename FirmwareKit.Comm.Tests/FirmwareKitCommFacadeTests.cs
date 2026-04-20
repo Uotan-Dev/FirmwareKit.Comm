@@ -1,5 +1,6 @@
 using FirmwareKit.Comm;
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Diagnostics;
 
 namespace FirmwareKit.Comm.Tests;
 
@@ -57,6 +58,62 @@ public sealed class FirmwareKitCommFacadeTests
 
         Assert.Equal(16, read.Length);
         Assert.Equal(4, written);
+    }
+
+    [Fact]
+    public async Task FirmwareKitComm_CustomSession_CanUseAsyncAdapter()
+    {
+        IFirmwareKitComm comm = new FirmwareKitComm();
+        _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
+
+        using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
+        {
+            VendorId = 0x1F3A,
+            ProductId = 0xEFE8
+        });
+
+        var session = Assert.Single(sessions.Sessions);
+        var asyncSession = session.AsAsync();
+
+        var read = await asyncSession.ReadAsync(8, 1000);
+        var written = await asyncSession.WriteAsync(new byte[] { 1, 2, 3 }, 3, 1000);
+
+        Assert.Equal(8, read.Length);
+        Assert.Equal(3, written);
+    }
+
+    [Fact]
+    public void UsbTrace_TransferObserved_CanReceiveStructuredEvent()
+    {
+        UsbTransferEvent? captured = null;
+        Action<UsbTransferEvent> handler = evt => captured = evt;
+
+        try
+        {
+            UsbTrace.TransferObserved += handler;
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "test",
+                DevicePath = "mock://trace",
+                Operation = UsbTransferOperation.Read,
+                RequestedBytes = 16,
+                TransferredBytes = 8,
+                TimeoutMs = 1000,
+                RetryCount = 1,
+                NativeErrorCode = 110,
+                ElapsedMs = 12,
+                Outcome = UsbTransferOutcome.ShortTransfer,
+                Message = "short packet"
+            });
+        }
+        finally
+        {
+            UsbTrace.TransferObserved -= handler;
+        }
+
+        Assert.NotNull(captured);
+        Assert.Equal("test", captured!.Backend);
+        Assert.Equal(UsbTransferOutcome.ShortTransfer, captured.Outcome);
     }
 
     private sealed class FacadeProvider : IUsbApiProvider

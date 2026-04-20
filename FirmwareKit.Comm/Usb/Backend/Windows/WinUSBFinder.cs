@@ -18,6 +18,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
         public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
         {
             var devices = new List<UsbDevice>();
+            var uniqueKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var guid in KnownInterfaceGUIDs)
             {
                 Win32API.GUID apiGuid = ToApiGuid(guid);
@@ -69,12 +70,16 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
 
                                 if (device != null)
                                 {
-                                    if (!string.IsNullOrEmpty(device.SerialNumber) && !devices.Any(d => d.SerialNumber == device.SerialNumber))
+                                    var key = BuildDeviceKey(device);
+                                    if (uniqueKeys.Add(key))
                                     {
-                                        UsbTrace.Log($"Confirmed device added: {device.SerialNumber} using {(device is WinUSBDevice ? "WinUSB" : "Legacy")}");
+                                        UsbTrace.Log($"Confirmed device added: key={key} using {(device is WinUSBDevice ? "WinUSB" : "Legacy")}");
                                         devices.Add(device);
                                     }
-                                    else device.Dispose();
+                                    else
+                                    {
+                                        device.Dispose();
+                                    }
                                 }
                             }
                         }
@@ -145,6 +150,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
 
         private static UsbDevice? ProbeDevice(string path)
         {
+            (ushort? vid, ushort? pid) = TryParseVidPid(path);
             IntPtr hDevice = Win32API.SimpleCreateHandle(path);
             if (hDevice == Win32API.INVALID_HANDLE_VALUE) return null;
 
@@ -165,13 +171,23 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
 
             if (isLegacy)
             {
-                var dev = new LegacyUsbDevice { DevicePath = path };
+                var dev = new LegacyUsbDevice
+                {
+                    DevicePath = path,
+                    VendorId = vid ?? 0,
+                    ProductId = pid ?? 0
+                };
                 if (dev.CreateHandle() == 0) return dev;
                 dev.Dispose();
             }
             else
             {
-                var dev = new WinUSBDevice { DevicePath = path };
+                var dev = new WinUSBDevice
+                {
+                    DevicePath = path,
+                    VendorId = vid ?? 0,
+                    ProductId = pid ?? 0
+                };
                 if (dev.CreateHandle() == 0) return dev;
                 dev.Dispose();
             }
@@ -181,10 +197,27 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
 
         private static UsbDevice? TryOpenWinUSB(string path)
         {
-            var dev = new WinUSBDevice { DevicePath = path };
+            (ushort? vid, ushort? pid) = TryParseVidPid(path);
+            var dev = new WinUSBDevice
+            {
+                DevicePath = path,
+                VendorId = vid ?? 0,
+                ProductId = pid ?? 0
+            };
             if (dev.CreateHandle() == 0) return dev;
             dev.Dispose();
             return null;
+        }
+
+        private static string BuildDeviceKey(UsbDevice device)
+        {
+            if (!string.IsNullOrWhiteSpace(device.SerialNumber))
+            {
+                return $"serial:{device.SerialNumber}";
+            }
+
+            // Fallback for devices that do not expose serial numbers.
+            return $"path:{device.DevicePath}|vid:{device.VendorId:X4}|pid:{device.ProductId:X4}|type:{device.GetType().Name}";
         }
 
         private static Win32API.GUID ToApiGuid(Guid guid)

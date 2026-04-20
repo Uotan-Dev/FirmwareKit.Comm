@@ -1,4 +1,5 @@
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using LibUsbDotNet.LibUsb;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
@@ -67,15 +68,16 @@ internal class LibUsbFinder
         }
         catch
         {
+            UsbTrace.Log("LibUsbFinder: failed to inspect interface descriptors.");
             return false;
         }
 
         return false;
     }
 
-    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
+    public static List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
-        List<UsbDevice> devices = new List<UsbDevice>();
+        List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice> devices = new List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice>();
         using (var context = new UsbContext())
         {
             var deviceList = context.List();
@@ -113,7 +115,7 @@ internal class LibUsbFinder
                     InterfaceSubClass = interfaceSubClass,
                     InterfaceProtocol = interfaceProtocol,
                     DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
-                    UsbDeviceType = UsbDeviceType.LibUSB
+                    UsbDeviceType = global::FirmwareKit.Comm.Usb.Backend.UsbDeviceType.LibUSB
                 };
 
                 if (usbDevice.CreateHandle() == 0)
@@ -127,6 +129,24 @@ internal class LibUsbFinder
             }
         }
         return devices;
+    }
+
+    public static bool IsRuntimeAvailable(out string? reason)
+    {
+        reason = null;
+
+        try
+        {
+            using var context = new UsbContext();
+            _ = context.List();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            reason = ex.Message;
+            UsbTrace.Log($"LibUsb runtime probe failed: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
 

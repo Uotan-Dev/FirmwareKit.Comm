@@ -18,6 +18,12 @@ public sealed class UsbApiRegistry
     public event Action<IUsbApiProvider>? ProviderRegistered;
 
     /// <summary>
+    /// Occurs when an API name is registered.
+    /// 当 API 名称注册时触发。
+    /// </summary>
+    public event Action<string>? ProviderNameRegistered;
+
+    /// <summary>
     /// Registers a provider factory under the specified API name.
     /// 在指定 API 名称下注册提供器工厂。
     /// </summary>
@@ -36,7 +42,8 @@ public sealed class UsbApiRegistry
         }
 
         _factories[apiName] = factory;
-        ProviderRegistered?.Invoke(factory());
+        ProviderNameRegistered?.Invoke(apiName);
+        ProviderRegistered?.Invoke(new RegisteredProviderPlaceholder(apiName));
     }
 
     /// <summary>
@@ -86,5 +93,24 @@ public sealed class UsbApiRegistry
         registry.Register(NativeUsbApiProvider.ApiNameConst, () => new NativeUsbApiProvider());
         registry.Register(LibUsbApiProvider.ApiNameConst, () => new LibUsbApiProvider());
         return registry;
+    }
+
+    private sealed class RegisteredProviderPlaceholder : IUsbApiProvider
+    {
+        public RegisteredProviderPlaceholder(string apiName)
+        {
+            ApiName = apiName;
+        }
+
+        public string ApiName { get; }
+
+        public UsbApiKind ApiKind => UsbApiKind.Custom;
+
+        public bool IsSupportedOnCurrentPlatform => true;
+
+        public IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter = null)
+        {
+            return Array.Empty<IUsbDeviceSession>();
+        }
     }
 }

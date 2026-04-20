@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Providers;
 
-internal sealed class NativeUsbApiProvider : IUsbApiProvider
+internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider
 {
     public const string ApiNameConst = "native";
 
@@ -25,13 +25,7 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider
     {
         if (!IsSupportedOnCurrentPlatform) return Array.Empty<IUsbDeviceSession>();
 
-        List<UsbDevice> devices = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? WinUSBFinder.FindDevice(filter)
-            : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                ? LinuxUsbFinder.FindDevice(filter)
-                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                    ? MacOSUsbFinder.FindDevice(filter)
-                    : new List<UsbDevice>();
+        var devices = EnumerateBackendDevices(filter);
 
         var sessions = new List<IUsbDeviceSession>(devices.Count);
         foreach (var device in devices)
@@ -48,5 +42,55 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider
         }
 
         return sessions;
+    }
+
+    public IReadOnlyList<UsbDeviceInfo> EnumerateDeviceInfos(UsbDeviceFilter? filter = null)
+    {
+        if (!IsSupportedOnCurrentPlatform) return Array.Empty<UsbDeviceInfo>();
+
+        var devices = EnumerateBackendDevices(filter);
+        var infos = new List<UsbDeviceInfo>(devices.Count);
+
+        foreach (var device in devices)
+        {
+            try
+            {
+                var info = new UsbDeviceInfo
+                {
+                    ApiName = ApiName,
+                    SourceApiKind = ApiKind,
+                    SourceDeviceType = device.GetType().Name,
+                    DevicePath = device.DevicePath,
+                    SerialNumber = device.SerialNumber,
+                    VendorId = device.VendorId,
+                    ProductId = device.ProductId,
+                    InterfaceClass = device.InterfaceClass,
+                    InterfaceSubClass = device.InterfaceSubClass,
+                    InterfaceProtocol = device.InterfaceProtocol
+                };
+
+                if (filter == null || filter.Matches(info))
+                {
+                    infos.Add(info);
+                }
+            }
+            finally
+            {
+                device.Dispose();
+            }
+        }
+
+        return infos;
+    }
+
+    private static List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter)
+    {
+        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+            ? WinUSBFinder.FindDevice(filter)
+            : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                ? LinuxUsbFinder.FindDevice(filter)
+                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
+                    ? MacOSUsbFinder.FindDevice(filter)
+                    : new List<UsbDevice>();
     }
 }

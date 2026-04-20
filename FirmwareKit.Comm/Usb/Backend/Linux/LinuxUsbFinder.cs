@@ -1,4 +1,5 @@
 using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
 
@@ -126,7 +127,10 @@ internal class LinuxUsbFinder
                         pos += len;
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    UsbTrace.Log($"LinuxUsbFinder failed for path '{dev_path}': {ex.GetType().Name}: {ex.Message}");
+                }
                 finally
                 {
                     Marshal.FreeHGlobal(ptr);

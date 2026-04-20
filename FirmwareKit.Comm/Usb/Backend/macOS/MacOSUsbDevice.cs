@@ -1,11 +1,13 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using static FirmwareKit.Comm.Usb.Backend.macOS.MacOSUsbAPI;
 
 namespace FirmwareKit.Comm.Usb.Backend.macOS;
 
 internal class MacOSUsbDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = 5000;
+    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private IntPtr devicePtr;
     private IntPtr interfacePtr;
@@ -175,7 +177,10 @@ internal class MacOSUsbDevice : UsbDevice
                         IOObjectRelease(interfaceIter);
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    UsbTrace.Log($"MacOSUsbDevice.CreateHandle failed: {ex.GetType().Name}: {ex.Message}");
+                }
             }
             finally { GetDelegate<ReleaseDelegate>(pluginInterface, Offset_Plugin_Release)(pluginInterface); }
         }
@@ -265,6 +270,10 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
         if (interfacePtr == IntPtr.Zero || bulkIn == 0) return 0;
         if (length <= 0) return 0;
         if (offset < 0 || length < 0 || offset + length > buffer.Length)
@@ -272,9 +281,9 @@ internal class MacOSUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
-        const int maxLenToRead = 1048576;
+        const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
         int count = 0;
         var readPipe = GetDelegate<ReadPipeTODelegate>(interfacePtr, Offset_ReadPipeTO);
@@ -291,9 +300,28 @@ internal class MacOSUsbDevice : UsbDevice
                 int kr = readPipe(interfacePtr, bulkIn, ptr, ref size, (uint)effectiveTimeoutMs, (uint)effectiveTimeoutMs);
                 if (kr != 0)
                 {
+                    lastError = kr;
                     if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
                     {
+                        outcome = UsbTransferOutcome.FatalError;
+                        UsbTrace.EmitTransfer(new UsbTransferEvent
+                        {
+                            Backend = "macos-iokit",
+                            DevicePath = DevicePath,
+                            Operation = UsbTransferOperation.Read,
+                            RequestedBytes = length,
+                            TransferredBytes = count,
+                            TimeoutMs = effectiveTimeoutMs,
+                            RetryCount = 0,
+                            NativeErrorCode = kr,
+                            ElapsedMs = stopwatch.ElapsedMilliseconds,
+                            Outcome = outcome
+                        });
                         throw new IOException($"USB read failed with fatal error: 0x{kr:X}");
+                    }
+                    if (kr == kIOReturnTimeout)
+                    {
+                        outcome = UsbTransferOutcome.Timeout;
                     }
                     break;
                 }
@@ -303,6 +331,25 @@ internal class MacOSUsbDevice : UsbDevice
 
                 if (size < lenToRead) break;
             }
+
+            if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+            {
+                outcome = UsbTransferOutcome.ShortTransfer;
+            }
+
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "macos-iokit",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Read,
+                RequestedBytes = length,
+                TransferredBytes = count,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = lastError,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = outcome
+            });
 
             return count;
         }
@@ -319,11 +366,15 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length, int timeoutMs)
     {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
         if (interfacePtr == IntPtr.Zero || bulkOut == 0) return -1;
 
-        int effectiveTimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
 
-        const int maxLenToSend = 1048576;
+        const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
         int count = 0;
         var writePipe = GetDelegate<WritePipeTODelegate>(interfacePtr, Offset_WritePipeTO);
@@ -339,9 +390,28 @@ internal class MacOSUsbDevice : UsbDevice
                 int kr = writePipe(interfacePtr, bulkOut, ptr, (uint)lenToSend, (uint)effectiveTimeoutMs, (uint)effectiveTimeoutMs);
                 if (kr != 0)
                 {
+                    lastError = kr;
                     if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
                     {
+                        outcome = UsbTransferOutcome.FatalError;
+                        UsbTrace.EmitTransfer(new UsbTransferEvent
+                        {
+                            Backend = "macos-iokit",
+                            DevicePath = DevicePath,
+                            Operation = UsbTransferOperation.Write,
+                            RequestedBytes = length,
+                            TransferredBytes = count,
+                            TimeoutMs = effectiveTimeoutMs,
+                            RetryCount = 0,
+                            NativeErrorCode = kr,
+                            ElapsedMs = stopwatch.ElapsedMilliseconds,
+                            Outcome = outcome
+                        });
                         throw new IOException($"USB write failed with fatal error: 0x{kr:X}");
+                    }
+                    if (kr == kIOReturnTimeout)
+                    {
+                        outcome = UsbTransferOutcome.Timeout;
                     }
                     break;
                 }
@@ -349,6 +419,26 @@ internal class MacOSUsbDevice : UsbDevice
                 lenRemaining -= lenToSend;
                 count += lenToSend;
             }
+
+            if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+            {
+                outcome = UsbTransferOutcome.ShortTransfer;
+            }
+
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "macos-iokit",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = length,
+                TransferredBytes = count,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = lastError,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = outcome
+            });
+
             // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
             return count > 0 ? count : (length == 0 ? 0 : -1);
         }

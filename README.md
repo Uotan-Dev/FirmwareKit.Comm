@@ -10,6 +10,9 @@
 - 跨平台 USB 抽象：支持系统原生实现与 `LibUsbDotNet` 后端。
 - 设备发现与过滤：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath` 等过滤设备。
 - 可选接口级过滤：可按 `InterfaceClass`、`InterfaceSubClass`、`InterfaceProtocol` 约束底层接口匹配。
+- 异步会话能力：支持 `IAsyncUsbDeviceSession`，并提供 `AsAsync()` 适配器用于自定义同步会话。
+- 设备变化监视：支持 `MonitorUsbDevices` / `MonitorDevices` 轮询监视新增与移除事件。
+- 结构化传输诊断：支持 `UsbTrace.TransferObserved`，统一输出读写操作的耗时、错误码、重试次数和结果。
 - 可扩展：可通过 `RegisterUsbApi` 注册自定义 USB API 提供器。
 - 简洁的门面 API：`IFirmwareKitComm` / `FirmwareKitComm`，便于在上层工具或应用中使用。
 - 自带轻量 CLI：项目 `FirmwareKit.Comm.CLI` 提供 `apis` 与 `devices` 命令。
@@ -22,6 +25,9 @@ FirmwareKit.Comm 专注于跨平台原生 USB 传输能力：
 - 会话管理
 - 统一读写与超时控制
 - 传输层复位
+
+设备发现默认优先走“元数据发现”路径，避免为仅枚举场景建立长期读写会话；
+真正的数据收发会在调用 `OpenUsbDeviceSessions` 后进行。
 
 协议层（例如 Sahara、Firehose、Fastboot、自定义二进制协议）不在本库中实现，由调用程序基于统一会话接口自行实现。
 
@@ -86,7 +92,31 @@ if (session != null)
  _ = session.Write(new byte[] { 0x7E, 0x00 }, 2, 3000);
  var response = session.Read(512, 3000);
  Console.WriteLine($"response bytes: {response.Length}");
+
+ // 异步会话（若后端不直接实现异步接口，可用 AsAsync() 适配）
+ var asyncSession = session.AsAsync();
+ var asyncResponse = await asyncSession.ReadAsync(512, 3000);
+ Console.WriteLine($"async response bytes: {asyncResponse.Length}");
 }
+
+// 设备变化监视（记得在适当时机释放）
+using var monitor = comm.MonitorUsbDevices(
+ changes =>
+ {
+  foreach (var change in changes)
+  {
+   Console.WriteLine($"device {change.Kind}: {change.Device.ApiName} {change.Device.DevicePath}");
+  }
+ },
+ UsbApiKind.Auto,
+ pollInterval: TimeSpan.FromSeconds(1),
+ fireInitialSnapshot: false);
+
+// 结构化诊断事件（可用于指标上报/日志聚合）
+UsbTrace.TransferObserved += evt =>
+{
+ Console.WriteLine($"usb {evt.Operation} backend={evt.Backend} outcome={evt.Outcome} bytes={evt.TransferredBytes}/{evt.RequestedBytes} retry={evt.RetryCount} err={evt.NativeErrorCode}");
+};
 ```
 
 注册自定义 USB API 的示例：

@@ -31,11 +31,52 @@ internal abstract class UsbDevice : IDisposable
 
     public virtual int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => ReadInto(buffer, offset, length);
 
+    public virtual Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Read(length, timeoutMs);
+        }, cancellationToken);
+    }
+
+    public virtual Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ReadInto(buffer, offset, length, timeoutMs);
+        }, cancellationToken);
+    }
+
     public abstract long Write(byte[] data, int length);
     public virtual long Write(byte[] data, int length, int timeoutMs) => Write(data, length);
+
+    public virtual Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Write(data, length, timeoutMs);
+        }, cancellationToken);
+    }
+
     public abstract int GetSerialNumber();
     public abstract int CreateHandle();
     public abstract void Reset();
+    public virtual Task ResetAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Reset();
+        }, cancellationToken);
+    }
+
     public abstract void Dispose();
 }
 

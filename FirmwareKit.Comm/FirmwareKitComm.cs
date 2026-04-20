@@ -38,6 +38,24 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     public Task<IReadOnlyList<UsbDeviceInfo>> EnumerateUsbDevicesAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, CancellationToken cancellationToken = default) => _usb.EnumerateDevicesAsync(apiKind, filter, cancellationToken);
 
     /// <summary>
+    /// Monitors USB device additions and removals by polling snapshots.
+    /// 通过轮询快照监视 USB 设备新增与移除。
+    /// </summary>
+    /// <param name="onChanged">Change callback. 设备变化回调。</param>
+    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
+    /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
+    /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
+    public IDisposable MonitorUsbDevices(
+        Action<IReadOnlyList<UsbDeviceChange>> onChanged,
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null,
+        TimeSpan? pollInterval = null,
+        bool fireInitialSnapshot = false) =>
+        _usb.MonitorDevices(onChanged, apiKind, filter, pollInterval, fireInitialSnapshot);
+
+    /// <summary>
     /// Opens matching USB device sessions for direct read/write operations.
     /// 打开匹配的 USB 设备会话，用于直接读写操作。
     /// </summary>
