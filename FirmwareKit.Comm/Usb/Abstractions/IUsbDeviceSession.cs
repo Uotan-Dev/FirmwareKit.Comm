@@ -7,6 +7,12 @@ namespace FirmwareKit.Comm.Usb.Abstractions;
 public interface IUsbDeviceSession : IDisposable
 {
     /// <summary>
+    /// Gets the default timeout used by this session, if the caller omits one.
+    /// 获取该会话在调用方未显式指定超时时使用的默认超时。
+    /// </summary>
+    int DefaultTimeoutMs { get; }
+
+    /// <summary>
     /// Gets the device metadata.
     /// 获取设备元数据。
     /// </summary>

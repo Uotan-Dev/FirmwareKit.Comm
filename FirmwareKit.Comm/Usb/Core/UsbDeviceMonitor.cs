@@ -141,6 +141,11 @@ internal sealed class UsbDeviceMonitor : IDisposable
 
     private static string BuildIdentityKey(UsbDeviceInfo device)
     {
+        if (!string.IsNullOrWhiteSpace(device.DeviceKey))
+        {
+            return device.DeviceKey;
+        }
+
         return string.Join("|", new[]
         {
             device.ApiName,

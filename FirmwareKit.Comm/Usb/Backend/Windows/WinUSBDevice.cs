@@ -9,7 +9,8 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 
 internal class WinUSBDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
+    private const int WinUsbDefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
+    public override int DefaultTimeoutMs => WinUsbDefaultTimeoutMs;
 
     private byte InterfaceNum;
     private byte ReadBulkID, WriteBulkID;

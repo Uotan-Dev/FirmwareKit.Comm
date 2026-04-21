@@ -7,6 +7,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 internal class LegacyUsbDevice : UsbDevice
 {
     private const int IoTimeoutMs = 30000;
+    public override int DefaultTimeoutMs => IoTimeoutMs;
     public static uint IoGetSerialCode => CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS);
     public static uint IoGetDescriptorCode => CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS);
 

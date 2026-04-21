@@ -68,6 +68,7 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
                     InterfaceSubClass = device.InterfaceSubClass,
                     InterfaceProtocol = device.InterfaceProtocol
                 };
+                info.DeviceKey = UsbDeviceIdentity.BuildKey(info);
 
                 if (filter == null || filter.Matches(info))
                 {

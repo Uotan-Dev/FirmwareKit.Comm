@@ -8,13 +8,15 @@ namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
 internal class LinuxUsbDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
+    private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private int fd = -1;
     public byte ep_in { get; set; }
     public byte ep_out { get; set; }
     public int InterfaceId { get; set; }
     public byte iSerialNumber { get; set; }
+
+    public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     public override int CreateHandle()
     {
@@ -119,7 +121,7 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
-        return Read(length, DefaultTimeoutMs);
+        return Read(length, PlatformDefaultTimeoutMs);
     }
 
     public override byte[] Read(int length, int timeoutMs)
@@ -138,7 +140,7 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
-        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+        return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
@@ -156,7 +158,7 @@ internal class LinuxUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         int count = 0;
         GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
@@ -255,7 +257,7 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
-        return Write(data, length, DefaultTimeoutMs);
+        return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
     public override long Write(byte[] data, int length, int timeoutMs)
@@ -267,7 +269,7 @@ internal class LinuxUsbDevice : UsbDevice
         int? lastError = null;
         var outcome = UsbTransferOutcome.Success;
         int count = 0;
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         if (length == 0)
         {

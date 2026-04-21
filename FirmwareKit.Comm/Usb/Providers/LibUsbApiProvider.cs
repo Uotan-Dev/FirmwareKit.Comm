@@ -62,6 +62,7 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvi
                     InterfaceSubClass = device.InterfaceSubClass,
                     InterfaceProtocol = device.InterfaceProtocol
                 };
+                info.DeviceKey = UsbDeviceIdentity.BuildKey(info);
 
                 if (filter == null || filter.Matches(info))
                 {

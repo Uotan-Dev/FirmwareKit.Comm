@@ -62,6 +62,25 @@ public sealed class FirmwareKitCommFacadeTests
     }
 
     [Fact]
+    public void FirmwareKitComm_CanOpenSingleSessionFromRegisteredProvider()
+    {
+        IFirmwareKitComm comm = CreateIsolatedFacade();
+        _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
+
+        var session = comm.OpenUsbDeviceSession(UsbApiKind.Auto, new UsbDeviceFilter
+        {
+            VendorId = 0x1F3A,
+            ProductId = 0xEFE8
+        });
+
+        Assert.NotNull(session);
+        Assert.Equal("mock://facade-primary", session!.DeviceInfo.DevicePath);
+        Assert.Equal(2500, session.DefaultTimeoutMs);
+
+        session.Dispose();
+    }
+
+    [Fact]
     public async Task FirmwareKitComm_CustomSession_CanUseAsyncAdapter()
     {
         IFirmwareKitComm comm = CreateIsolatedFacade();
@@ -127,14 +146,29 @@ public sealed class FirmwareKitCommFacadeTests
 
         public IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter = null)
         {
-            var session = new FacadeSession();
-            if (filter == null || filter.Matches(session.DeviceInfo))
+            var primary = new FacadeSession("mock://facade-primary", "facade-primary");
+            var secondary = new FacadeSession("mock://facade-secondary", "facade-secondary", 0x1234, 0x5678);
+
+            var sessions = new List<IUsbDeviceSession>();
+            if (filter == null || filter.Matches(primary.DeviceInfo))
             {
-                return new[] { (IUsbDeviceSession)session };
+                sessions.Add(primary);
+            }
+            else
+            {
+                primary.Dispose();
             }
 
-            session.Dispose();
-            return Array.Empty<IUsbDeviceSession>();
+            if (filter == null || filter.Matches(secondary.DeviceInfo))
+            {
+                sessions.Add(secondary);
+            }
+            else
+            {
+                secondary.Dispose();
+            }
+
+            return sessions;
         }
     }
 
@@ -142,22 +176,31 @@ public sealed class FirmwareKitCommFacadeTests
     {
         var registry = new UsbApiRegistry();
         var layer = new UsbCommunicationLayer(registry);
-        return new FirmwareKitComm(layer);
+        var facadeType = typeof(IFirmwareKitComm).Assembly.GetType("FirmwareKit.Comm.FirmwareKitComm", throwOnError: true)!;
+        return (IFirmwareKitComm)Activator.CreateInstance(facadeType, layer)!;
     }
 
     private sealed class FacadeSession : IUsbDeviceSession
     {
-        public UsbDeviceInfo DeviceInfo { get; } = new()
+        public FacadeSession(string devicePath, string deviceKey, ushort vendorId = 0x1F3A, ushort productId = 0xEFE8)
         {
-            ApiName = "custom-facade",
-            SourceApiKind = UsbApiKind.Custom,
-            DevicePath = "mock://facade",
-            VendorId = 0x1F3A,
-            ProductId = 0xEFE8,
-            InterfaceClass = 0xFF,
-            InterfaceSubClass = 0xFF,
-            InterfaceProtocol = 0xFF
-        };
+            DeviceInfo = new UsbDeviceInfo
+            {
+                ApiName = "custom-facade",
+                SourceApiKind = UsbApiKind.Custom,
+                DevicePath = devicePath,
+                DeviceKey = deviceKey,
+                VendorId = vendorId,
+                ProductId = productId,
+                InterfaceClass = 0xFF,
+                InterfaceSubClass = 0xFF,
+                InterfaceProtocol = 0xFF
+            };
+        }
+
+        public int DefaultTimeoutMs => 2500;
+
+        public UsbDeviceInfo DeviceInfo { get; }
 
         public byte[] Read(int length) => new byte[length];
 

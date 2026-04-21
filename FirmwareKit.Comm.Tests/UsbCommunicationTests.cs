@@ -92,6 +92,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Equal(3, written);
 
         var timeoutSession = Assert.IsType<TimeoutSession>(session);
+        Assert.Equal(1234, timeoutSession.DefaultTimeoutMs);
         Assert.Equal(1234, timeoutSession.LastReadTimeoutMs);
         Assert.Equal(4321, timeoutSession.LastReadIntoTimeoutMs);
         Assert.Equal(987, timeoutSession.LastWriteTimeoutMs);
@@ -123,6 +124,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Equal(3, written);
 
         var timeoutSession = Assert.IsType<TimeoutSession>(session);
+        Assert.Equal(1234, timeoutSession.DefaultTimeoutMs);
         Assert.Equal(2000, timeoutSession.LastAsyncReadTimeoutMs);
         Assert.Equal(3000, timeoutSession.LastAsyncReadIntoTimeoutMs);
         Assert.Equal(4000, timeoutSession.LastAsyncWriteTimeoutMs);
@@ -375,6 +377,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
     private sealed class TimeoutSession : IUsbDeviceSession, IAsyncUsbDeviceSession
     {
+        public int DefaultTimeoutMs => 1234;
+
         public int LastReadTimeoutMs { get; private set; }
 
         public int LastReadIntoTimeoutMs { get; private set; }

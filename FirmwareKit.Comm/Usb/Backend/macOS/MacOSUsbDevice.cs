@@ -7,13 +7,15 @@ namespace FirmwareKit.Comm.Usb.Backend.macOS;
 
 internal class MacOSUsbDevice : UsbDevice
 {
-    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
+    private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private IntPtr devicePtr;
     private IntPtr interfacePtr;
     public ulong RegistryEntryId { get; set; }
     public byte bulkIn { get; set; }
     public byte bulkOut { get; set; }
+
+    public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     public override int CreateHandle()
     {
@@ -250,7 +252,7 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
-        return Read(length, DefaultTimeoutMs);
+        return Read(length, PlatformDefaultTimeoutMs);
     }
 
     public override byte[] Read(int length, int timeoutMs)
@@ -269,7 +271,7 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
-        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+        return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
@@ -285,7 +287,7 @@ internal class MacOSUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
@@ -365,7 +367,7 @@ internal class MacOSUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
-        return Write(data, length, DefaultTimeoutMs);
+        return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
     public override long Write(byte[] data, int length, int timeoutMs)
@@ -376,7 +378,7 @@ internal class MacOSUsbDevice : UsbDevice
 
         if (interfacePtr == IntPtr.Zero || bulkOut == 0) return -1;
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;

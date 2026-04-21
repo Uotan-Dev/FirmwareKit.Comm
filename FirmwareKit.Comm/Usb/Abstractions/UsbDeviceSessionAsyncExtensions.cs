@@ -36,6 +36,8 @@ public static class UsbDeviceSessionAsyncExtensions
             _session = session;
         }
 
+        public int DefaultTimeoutMs => _session.DefaultTimeoutMs;
+
         public Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

@@ -62,6 +62,15 @@ public interface IFirmwareKitComm
     UsbSessionCollection OpenUsbDeviceSessions(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
+    /// Opens the first matching USB device session for direct read/write operations.
+    /// 打开第一个匹配的 USB 设备会话，用于直接读写操作。
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <returns>The first matching session, or <c>null</c> if none was found. 第一个匹配会话；如果没有则返回 <c>null</c>。</returns>
+    IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// 注册自定义 USB API 提供器。
     /// </summary>

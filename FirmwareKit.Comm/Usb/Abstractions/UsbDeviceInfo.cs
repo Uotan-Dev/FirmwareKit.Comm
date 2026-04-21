@@ -31,6 +31,12 @@ public sealed class UsbDeviceInfo
     public string DevicePath { get; set; } = string.Empty;
 
     /// <summary>
+    /// Gets or sets the stable identity key for the device.
+    /// 获取或设置设备的稳定标识键。
+    /// </summary>
+    public string DeviceKey { get; set; } = string.Empty;
+
+    /// <summary>
     /// Gets or sets the serial number.
     /// 获取或设置设备序列号。
     /// </summary>

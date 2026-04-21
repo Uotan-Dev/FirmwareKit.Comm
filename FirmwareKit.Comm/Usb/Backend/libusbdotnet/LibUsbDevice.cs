@@ -7,7 +7,7 @@ namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
 internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 {
-    private const int DefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
+    private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
     private UsbContext? context;
     private IUsbDevice? usbDevice;
@@ -20,6 +20,8 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
     public byte InterfaceId { get; set; } = 0;
     public byte ReadEndpointId { get; set; }
     public byte WriteEndpointId { get; set; }
+
+    public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     private static string BuildDevicePath(LibUsbDotNet.LibUsb.UsbDevice device)
         => $"Bus {device.BusNumber} Device {device.Address}: {device.VendorId:X4}:{device.ProductId:X4}";
@@ -251,7 +253,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
     public override byte[] Read(int length)
     {
-        return Read(length, DefaultTimeoutMs);
+        return Read(length, PlatformDefaultTimeoutMs);
     }
 
     public override byte[] Read(int length, int timeoutMs)
@@ -270,7 +272,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
     public override int ReadInto(byte[] buffer, int offset, int length)
     {
-        return ReadInto(buffer, offset, length, DefaultTimeoutMs);
+        return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
     public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
@@ -286,7 +288,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;
@@ -335,7 +337,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
     public override long Write(byte[] data, int length)
     {
-        return Write(data, length, DefaultTimeoutMs);
+        return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
     public override long Write(byte[] data, int length, int timeoutMs)
@@ -354,7 +356,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
                 Operation = UsbTransferOperation.Write,
                 RequestedBytes = length,
                 TransferredBytes = 0,
-                TimeoutMs = timeoutMs > 0 ? timeoutMs : DefaultTimeoutMs,
+                TimeoutMs = timeoutMs > 0 ? timeoutMs : PlatformDefaultTimeoutMs,
                 RetryCount = 0,
                 NativeErrorCode = null,
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
@@ -363,7 +365,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
             return -1;
         }
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
         const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
         int lenRemaining = length;

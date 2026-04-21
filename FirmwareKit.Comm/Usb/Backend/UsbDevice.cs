@@ -2,6 +2,8 @@ namespace FirmwareKit.Comm.Usb.Backend;
 
 internal abstract class UsbDevice : IDisposable
 {
+    public virtual int DefaultTimeoutMs => UsbTransferPolicies.DefaultTimeoutMs;
+
     public string DevicePath { get; set; } = string.Empty;
     public string? SerialNumber { get; set; }
     public ushort VendorId { get; set; }

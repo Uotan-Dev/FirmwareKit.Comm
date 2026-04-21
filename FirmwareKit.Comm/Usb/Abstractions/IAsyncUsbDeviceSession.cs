@@ -7,6 +7,12 @@ namespace FirmwareKit.Comm.Usb.Abstractions;
 public interface IAsyncUsbDeviceSession
 {
     /// <summary>
+    /// Gets the default timeout used by this session, if the caller omits one.
+    /// 获取该会话在调用方未显式指定超时时使用的默认超时。
+    /// </summary>
+    int DefaultTimeoutMs { get; }
+
+    /// <summary>
     /// Reads up to the specified number of bytes asynchronously.
     /// 异步读取最多指定字节数的数据。
     /// </summary>

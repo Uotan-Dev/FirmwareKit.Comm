@@ -201,6 +201,44 @@ public sealed class UsbCommunicationLayer
     }
 
     /// <summary>
+    /// Opens the first matching USB device session for the selected backend.
+    /// 打开选定后端中第一个匹配的 USB 设备会话。
+    /// </summary>
+    /// <param name="apiKind">The backend selection mode. 后端选择模式。</param>
+    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
+    /// <returns>The first matching session, or <c>null</c> if none was found. 返回第一个匹配会话；如果没有则返回 <c>null</c>。</returns>
+    public IUsbDeviceSession? OpenDeviceSession(
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null)
+    {
+        var providers = ResolveProviders(apiKind);
+
+        foreach (var provider in providers)
+        {
+            if (!provider.IsSupportedOnCurrentPlatform)
+            {
+                continue;
+            }
+
+            var sessions = provider.EnumerateDeviceSessions(filter);
+            if (sessions.Count == 0)
+            {
+                continue;
+            }
+
+            var firstSession = sessions[0];
+            for (var index = 1; index < sessions.Count; index++)
+            {
+                sessions[index].Dispose();
+            }
+
+            return firstSession;
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// 注册自定义 USB API 提供器。
     /// </summary>

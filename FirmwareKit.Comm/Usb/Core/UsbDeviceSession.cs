@@ -23,7 +23,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
             InterfaceSubClass = device.InterfaceSubClass,
             InterfaceProtocol = device.InterfaceProtocol
         };
+
+        DeviceInfo.DeviceKey = UsbDeviceIdentity.BuildKey(DeviceInfo);
     }
+
+    public int DefaultTimeoutMs => _device.DefaultTimeoutMs;
 
     public UsbDeviceInfo DeviceInfo { get; }
 
