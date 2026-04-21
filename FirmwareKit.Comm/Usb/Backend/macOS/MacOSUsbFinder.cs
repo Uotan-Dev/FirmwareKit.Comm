@@ -4,7 +4,7 @@ using static FirmwareKit.Comm.Usb.Backend.macOS.MacOSUsbAPI;
 
 namespace FirmwareKit.Comm.Usb.Backend.macOS;
 
-internal class MacOSUsbFinder
+internal static class MacOSUsbFinder
 {
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
@@ -124,6 +124,7 @@ internal class MacOSUsbFinder
                                                     InterfaceClass = filter?.InterfaceClass,
                                                     InterfaceSubClass = filter?.InterfaceSubClass,
                                                     InterfaceProtocol = filter?.InterfaceProtocol,
+                                                    InterfaceMetadataObserved = false,
                                                     bulkIn = bulkIn,
                                                     bulkOut = bulkOut,
                                                     UsbDeviceType = UsbDeviceType.MacOS

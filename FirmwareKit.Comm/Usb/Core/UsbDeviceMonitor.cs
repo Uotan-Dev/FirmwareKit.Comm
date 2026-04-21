@@ -178,17 +178,6 @@ internal sealed class UsbDeviceMonitor : IDisposable
             return device.DeviceKey;
         }
 
-        return string.Join("|", new[]
-        {
-            device.ApiName,
-            device.SourceApiKind.ToString(),
-            device.VendorId.ToString("X4"),
-            device.ProductId.ToString("X4"),
-            device.InterfaceClass?.ToString("X2") ?? string.Empty,
-            device.InterfaceSubClass?.ToString("X2") ?? string.Empty,
-            device.InterfaceProtocol?.ToString("X2") ?? string.Empty,
-            device.SerialNumber ?? string.Empty,
-            device.DevicePath ?? string.Empty
-        });
+        return UsbDeviceIdentity.BuildKey(device);
     }
 }

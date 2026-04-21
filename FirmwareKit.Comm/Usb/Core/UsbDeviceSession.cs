@@ -10,21 +10,7 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
     public UsbDeviceSession(string apiName, UsbApiKind kind, UsbDevice device)
     {
         _device = device;
-        DeviceInfo = new UsbDeviceInfo
-        {
-            ApiName = apiName,
-            SourceApiKind = kind,
-            SourceDeviceType = device.GetType().Name,
-            DevicePath = device.DevicePath,
-            SerialNumber = device.SerialNumber,
-            VendorId = device.VendorId,
-            ProductId = device.ProductId,
-            InterfaceClass = device.InterfaceClass,
-            InterfaceSubClass = device.InterfaceSubClass,
-            InterfaceProtocol = device.InterfaceProtocol
-        };
-
-        DeviceInfo.DeviceKey = UsbDeviceIdentity.BuildKey(DeviceInfo);
+        DeviceInfo = UsbDeviceInfoFactory.FromBackendDevice(apiName, kind, device);
     }
 
     public int DefaultTimeoutMs => _device.DefaultTimeoutMs;

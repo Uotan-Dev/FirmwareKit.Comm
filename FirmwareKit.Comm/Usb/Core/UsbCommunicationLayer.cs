@@ -315,7 +315,7 @@ public sealed class UsbCommunicationLayer
             IsSupportedOnCurrentPlatform = provider.IsSupportedOnCurrentPlatform,
             SupportsNativeDiscovery = provider is IUsbApiDiscoveryProvider,
             SupportsDeviceSessions = true,
-            SupportsControlTransfers = false,
+            SupportsControlTransfers = true,
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = false,

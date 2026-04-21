@@ -5,7 +5,7 @@ using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
 
 namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
-internal class LinuxUsbFinder
+internal static class LinuxUsbFinder
 {
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
@@ -102,6 +102,7 @@ internal class LinuxUsbFinder
                                         InterfaceClass = ifcClass,
                                         InterfaceSubClass = ifcSubClass,
                                         InterfaceProtocol = ifcProtocol,
+                                        InterfaceMetadataObserved = true,
                                         ep_in = epIn,
                                         ep_out = epOut,
                                         InterfaceId = ifcId,

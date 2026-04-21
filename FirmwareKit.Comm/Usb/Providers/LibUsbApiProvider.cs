@@ -6,7 +6,7 @@ using FirmwareKit.Comm.Usb.Diagnostics;
 
 namespace FirmwareKit.Comm.Usb.Providers;
 
-internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider
+internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider, IUsbApiCapabilityProvider
 {
     private static readonly Lazy<bool> RuntimeAvailable =
         new(() => LibUsbFinder.IsRuntimeAvailable(out _), isThreadSafe: true);
@@ -22,60 +22,13 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvi
     public IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter = null)
     {
         var devices = EnumerateBackendDevices(filter);
-
-        var sessions = new List<IUsbDeviceSession>(devices.Count);
-        foreach (var device in devices)
-        {
-            var session = new UsbDeviceSession(ApiName, ApiKind, device);
-            if (filter == null || filter.Matches(session.DeviceInfo))
-            {
-                sessions.Add(session);
-            }
-            else
-            {
-                session.Dispose();
-            }
-        }
-
-        return sessions;
+        return UsbProviderProjection.ToSessions(ApiName, ApiKind, devices, filter);
     }
 
     public IReadOnlyList<UsbDeviceInfo> EnumerateDeviceInfos(UsbDeviceFilter? filter = null)
     {
         var devices = EnumerateBackendDevices(filter);
-        var infos = new List<UsbDeviceInfo>(devices.Count);
-
-        foreach (var device in devices)
-        {
-            try
-            {
-                var info = new UsbDeviceInfo
-                {
-                    ApiName = ApiName,
-                    SourceApiKind = ApiKind,
-                    SourceDeviceType = device.GetType().Name,
-                    DevicePath = device.DevicePath,
-                    SerialNumber = device.SerialNumber,
-                    VendorId = device.VendorId,
-                    ProductId = device.ProductId,
-                    InterfaceClass = device.InterfaceClass,
-                    InterfaceSubClass = device.InterfaceSubClass,
-                    InterfaceProtocol = device.InterfaceProtocol
-                };
-                info.DeviceKey = UsbDeviceIdentity.BuildKey(info);
-
-                if (filter == null || filter.Matches(info))
-                {
-                    infos.Add(info);
-                }
-            }
-            finally
-            {
-                device.Dispose();
-            }
-        }
-
-        return infos;
+        return UsbProviderProjection.ToInfos(ApiName, ApiKind, devices, filter);
     }
 
     public UsbApiCapabilities GetCapabilities()
@@ -88,10 +41,10 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvi
             SupportsNativeDiscovery = true,
             SupportsDeviceSessions = true,
             SupportsControlTransfers = true,
-            SupportsNativeAsyncIo = false,
+            SupportsNativeAsyncIo = true,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = true,
-            Notes = "LibUsbDotNet requires the native libusb runtime; async access is currently adapter-based and hot-plug monitoring is polling-based."
+            Notes = "LibUsbDotNet requires the native libusb runtime; async access uses the upstream libusb async API where available and hot-plug monitoring is polling-based."
         };
     }
 

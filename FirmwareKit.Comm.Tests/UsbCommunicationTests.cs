@@ -77,10 +77,15 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var capabilities = layer.GetAvailableApiCapabilities();
 
         var native = Assert.Single(capabilities, item => string.Equals(item.ApiName, "native", StringComparison.OrdinalIgnoreCase));
+        var libusb = Assert.Single(capabilities, item => string.Equals(item.ApiName, "libusb", StringComparison.OrdinalIgnoreCase));
         Assert.True(native.SupportsNativeDiscovery);
+        Assert.True(native.SupportsControlTransfers);
         Assert.False(native.SupportsNativeAsyncIo);
         Assert.False(native.SupportsNativeHotPlugMonitoring);
         Assert.False(native.RequiresExternalRuntime);
+        Assert.True(libusb.SupportsControlTransfers);
+        Assert.True(libusb.SupportsNativeAsyncIo);
+        Assert.True(libusb.RequiresExternalRuntime);
     }
 
     [Fact]
@@ -175,6 +180,19 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Equal((byte)0xFF, provider.LastFilter!.InterfaceClass);
         Assert.Equal((byte)0xFF, provider.LastFilter.InterfaceSubClass);
         Assert.Equal((byte)0xFF, provider.LastFilter.InterfaceProtocol);
+    }
+
+    [Fact]
+    public void CapabilityDefaults_AssumeControlTransferSupport()
+    {
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("custom-capabilities", () => new EmptyProvider());
+
+        var capabilities = layer.GetAvailableApiCapabilities();
+        var custom = Assert.Single(capabilities, item => string.Equals(item.ApiName, "custom", StringComparison.OrdinalIgnoreCase));
+
+        Assert.True(custom.SupportsControlTransfers);
+        Assert.True(custom.SupportsDeviceSessions);
     }
 
     [Fact]
@@ -390,7 +408,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
                     ProductId = 0xEFE8,
                     InterfaceClass = 0xFF,
                     InterfaceSubClass = 0xFF,
-                    InterfaceProtocol = 0xFF
+                    InterfaceProtocol = 0xFF,
+                    InterfaceMetadataObserved = true
                 }
             };
         }
@@ -428,7 +447,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
                     DevicePath = "mock://switching",
                     VendorId = 0x18D1,
                     ProductId = 0xD00D,
-                    SerialNumber = "dev-1"
+                    SerialNumber = "dev-1",
+                    InterfaceMetadataObserved = true
                 }
             };
         }
@@ -465,7 +485,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
             SourceApiKind = UsbApiKind.Custom,
             DevicePath = "mock://timeout",
             VendorId = 0x1F3A,
-            ProductId = 0xEFE8
+            ProductId = 0xEFE8,
+            InterfaceMetadataObserved = true
         };
 
         public byte[] Read(int length)

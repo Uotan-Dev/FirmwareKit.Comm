@@ -11,6 +11,7 @@ internal abstract class UsbDevice : IDisposable
     public byte? InterfaceClass { get; set; }
     public byte? InterfaceSubClass { get; set; }
     public byte? InterfaceProtocol { get; set; }
+    public bool InterfaceMetadataObserved { get; set; }
     public UsbDeviceType UsbDeviceType { get; set; }
 
     public abstract byte[] Read(int length);
@@ -68,22 +69,12 @@ internal abstract class UsbDevice : IDisposable
 
     public virtual Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Read(length, timeoutMs);
-        }, cancellationToken);
+        return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => Read(length, timeoutMs), cancellationToken);
     }
 
     public virtual Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ReadInto(buffer, offset, length, timeoutMs);
-        }, cancellationToken);
+        return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => ReadInto(buffer, offset, length, timeoutMs), cancellationToken);
     }
 
     public abstract long Write(byte[] data, int length);
@@ -91,22 +82,12 @@ internal abstract class UsbDevice : IDisposable
 
     public virtual Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Write(data, length, timeoutMs);
-        }, cancellationToken);
+        return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => Write(data, length, timeoutMs), cancellationToken);
     }
 
     public virtual Task<int> ControlTransferAsync(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            return ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
-        }, cancellationToken);
+        return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => ControlTransfer(setupPacket, buffer, offset, length, timeoutMs), cancellationToken);
     }
 
     public abstract int GetSerialNumber();
@@ -114,12 +95,7 @@ internal abstract class UsbDevice : IDisposable
     public abstract void Reset();
     public virtual Task ResetAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
-        return Task.Run(() =>
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            Reset();
-        }, cancellationToken);
+        return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(Reset, cancellationToken);
     }
 
     public abstract void Dispose();

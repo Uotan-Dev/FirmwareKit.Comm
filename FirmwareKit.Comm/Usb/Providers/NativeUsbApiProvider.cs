@@ -8,7 +8,7 @@ using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Providers;
 
-internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider
+internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider, IUsbApiCapabilityProvider
 {
     public const string ApiNameConst = "native";
 
@@ -26,22 +26,7 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
         if (!IsSupportedOnCurrentPlatform) return Array.Empty<IUsbDeviceSession>();
 
         var devices = EnumerateBackendDevices(filter);
-
-        var sessions = new List<IUsbDeviceSession>(devices.Count);
-        foreach (var device in devices)
-        {
-            var session = new UsbDeviceSession(ApiName, ApiKind, device);
-            if (filter == null || filter.Matches(session.DeviceInfo))
-            {
-                sessions.Add(session);
-            }
-            else
-            {
-                session.Dispose();
-            }
-        }
-
-        return sessions;
+        return UsbProviderProjection.ToSessions(ApiName, ApiKind, devices, filter);
     }
 
     public IReadOnlyList<UsbDeviceInfo> EnumerateDeviceInfos(UsbDeviceFilter? filter = null)
@@ -49,39 +34,7 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
         if (!IsSupportedOnCurrentPlatform) return Array.Empty<UsbDeviceInfo>();
 
         var devices = EnumerateBackendDevices(filter);
-        var infos = new List<UsbDeviceInfo>(devices.Count);
-
-        foreach (var device in devices)
-        {
-            try
-            {
-                var info = new UsbDeviceInfo
-                {
-                    ApiName = ApiName,
-                    SourceApiKind = ApiKind,
-                    SourceDeviceType = device.GetType().Name,
-                    DevicePath = device.DevicePath,
-                    SerialNumber = device.SerialNumber,
-                    VendorId = device.VendorId,
-                    ProductId = device.ProductId,
-                    InterfaceClass = device.InterfaceClass,
-                    InterfaceSubClass = device.InterfaceSubClass,
-                    InterfaceProtocol = device.InterfaceProtocol
-                };
-                info.DeviceKey = UsbDeviceIdentity.BuildKey(info);
-
-                if (filter == null || filter.Matches(info))
-                {
-                    infos.Add(info);
-                }
-            }
-            finally
-            {
-                device.Dispose();
-            }
-        }
-
-        return infos;
+        return UsbProviderProjection.ToInfos(ApiName, ApiKind, devices, filter);
     }
 
     public UsbApiCapabilities GetCapabilities()

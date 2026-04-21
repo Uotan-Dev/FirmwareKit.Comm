@@ -112,6 +112,22 @@ public sealed class FirmwareKitCommFacadeTests
     }
 
     [Fact]
+    public void FirmwareKitComm_PreservesInterfaceMetadataProvenance()
+    {
+        IFirmwareKitComm comm = CreateIsolatedFacade();
+        _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
+
+        using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
+        {
+            VendorId = 0x1F3A,
+            ProductId = 0xEFE8
+        });
+
+        var session = Assert.Single(sessions.Sessions);
+        Assert.True(session.DeviceInfo.InterfaceMetadataObserved);
+    }
+
+    [Fact]
     public void UsbTrace_TransferObserved_CanReceiveStructuredEvent()
     {
         UsbTransferEvent? captured = null;
@@ -155,6 +171,7 @@ public sealed class FirmwareKitCommFacadeTests
 
         var custom = Assert.Single(capabilities, item => string.Equals(item.ApiName, "custom-facade", StringComparison.OrdinalIgnoreCase));
         Assert.True(custom.IsSupportedOnCurrentPlatform);
+        Assert.True(custom.SupportsControlTransfers);
         Assert.False(custom.SupportsNativeDiscovery);
         Assert.False(custom.SupportsNativeAsyncIo);
         Assert.False(custom.SupportsNativeHotPlugMonitoring);
@@ -218,7 +235,8 @@ public sealed class FirmwareKitCommFacadeTests
                 ProductId = productId,
                 InterfaceClass = 0xFF,
                 InterfaceSubClass = 0xFF,
-                InterfaceProtocol = 0xFF
+                InterfaceProtocol = 0xFF,
+                InterfaceMetadataObserved = true
             };
         }
 

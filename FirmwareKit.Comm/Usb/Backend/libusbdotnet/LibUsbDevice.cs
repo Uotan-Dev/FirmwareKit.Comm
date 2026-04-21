@@ -501,6 +501,294 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
         return count > 0 ? count : (length == 0 ? 0 : -1);
     }
+
+    public override async Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (length <= 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var buffer = new byte[length]
+        ;
+        int count = await ReadIntoAsync(buffer, 0, length, timeoutMs, cancellationToken).ConfigureAwait(false);
+        if (count <= 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        if (count == length)
+        {
+            return buffer;
+        }
+
+        var result = new byte[count];
+        Buffer.BlockCopy(buffer, 0, result, 0, count);
+        return result;
+    }
+
+    public override async Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
+        if (reader == null)
+        {
+            return 0;
+        }
+
+        if (length <= 0)
+        {
+            return 0;
+        }
+
+        ValidateBufferRange(buffer, offset, length);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
+        int lenRemaining = length;
+        int count = 0;
+
+        while (lenRemaining > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int lenToRead = Math.Min(lenRemaining, maxLenToRead);
+            var (errorCode, read_len) = await reader.ReadAsync(buffer, offset + count, lenToRead, effectiveTimeoutMs).ConfigureAwait(false);
+
+            if (errorCode != 0)
+            {
+                lastError = (int)errorCode;
+                outcome = UsbTransferOutcome.FatalError;
+            }
+
+            if (read_len <= 0)
+            {
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.Timeout;
+                }
+
+                break;
+            }
+
+            count += read_len;
+            lenRemaining -= read_len;
+
+            if (read_len < lenToRead)
+            {
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.ShortTransfer;
+                }
+
+                break;
+            }
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "libusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Read,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
+
+        return count;
+    }
+
+    public override async Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
+        if (writer == null)
+        {
+            UsbTrace.Log("LibUsbDevice: writer is null");
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "libusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = length,
+                TransferredBytes = 0,
+                TimeoutMs = timeoutMs > 0 ? timeoutMs : PlatformDefaultTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = null,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = UsbTransferOutcome.NotReady
+            });
+            return -1;
+        }
+
+        ValidateWriteData(data, length);
+        cancellationToken.ThrowIfCancellationRequested();
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
+        int lenRemaining = length;
+        int count = 0;
+
+        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}, data: {BitConverter.ToString(data, 0, Math.Min(length, 16))}");
+
+        if (length == 0)
+        {
+            var (errorCode, transferred) = await writer.WriteAsync(data, 0, 0, effectiveTimeoutMs).ConfigureAwait(false);
+            UsbTrace.Log($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
+            UsbTrace.EmitTransfer(new UsbTransferEvent
+            {
+                Backend = "libusb",
+                DevicePath = DevicePath,
+                Operation = UsbTransferOperation.Write,
+                RequestedBytes = 0,
+                TransferredBytes = transferred,
+                TimeoutMs = effectiveTimeoutMs,
+                RetryCount = 0,
+                NativeErrorCode = (int)errorCode,
+                ElapsedMs = stopwatch.ElapsedMilliseconds,
+                Outcome = errorCode == 0 ? UsbTransferOutcome.Success : UsbTransferOutcome.FatalError
+            });
+            return transferred;
+        }
+
+        while (lenRemaining > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            int lenToSend = Math.Min(lenRemaining, maxLenToSend);
+            var (errorCode, transferred) = await writer.WriteAsync(data, count, lenToSend, effectiveTimeoutMs).ConfigureAwait(false);
+
+            if (errorCode != 0)
+            {
+                UsbTrace.Log($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
+                lastError = (int)errorCode;
+                outcome = UsbTransferOutcome.FatalError;
+            }
+
+            if (transferred <= 0)
+            {
+                UsbTrace.Log($"LibUsbDevice: Write returned non-positive transferred: {transferred}, errorCode: {errorCode}");
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.Timeout;
+                    lastError = (int)errorCode;
+                }
+
+                break;
+            }
+
+            count += transferred;
+            lenRemaining -= transferred;
+
+            if (transferred < lenToSend)
+            {
+                UsbTrace.Log($"LibUsbDevice: Short write - transferred {transferred} < requested {lenToSend}");
+                if (outcome == UsbTransferOutcome.Success)
+                {
+                    outcome = UsbTransferOutcome.ShortTransfer;
+                }
+
+                break;
+            }
+        }
+
+        UsbTrace.Log($"LibUsbDevice: Write finished - total count: {count}");
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = "libusb",
+            DevicePath = DevicePath,
+            Operation = UsbTransferOperation.Write,
+            RequestedBytes = length,
+            TransferredBytes = count,
+            TimeoutMs = effectiveTimeoutMs,
+            RetryCount = 0,
+            NativeErrorCode = lastError,
+            ElapsedMs = stopwatch.ElapsedMilliseconds,
+            Outcome = outcome
+        });
+
+        return count > 0 ? count : (length == 0 ? 0 : -1);
+    }
+
+    public override async Task<int> ControlTransferAsync(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        if (usbDevice == null)
+        {
+            throw new Exception("Device handle is closed.");
+        }
+
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            ValidateBufferRange(buffer, offset, length);
+        }
+
+        var libUsbSetup = new LibUsbDotNet.Main.UsbSetupPacket(setupPacket.RequestType, setupPacket.Request, setupPacket.Value, setupPacket.Index, setupPacket.Length);
+
+        if (length == 0)
+        {
+            return await usbDevice.ControlTransferAsync(libUsbSetup).ConfigureAwait(false);
+        }
+
+        if (timeoutMs > 0 && timeoutMs != PlatformDefaultTimeoutMs)
+        {
+            return await Task.Run(() => ControlTransfer(setupPacket, buffer, offset, length, timeoutMs), cancellationToken).ConfigureAwait(false);
+        }
+
+        if (buffer == null)
+        {
+            return await usbDevice.ControlTransferAsync(libUsbSetup).ConfigureAwait(false);
+        }
+
+        if (offset == 0 && length == buffer.Length)
+        {
+            return await usbDevice.ControlTransferAsync(libUsbSetup, buffer, 0, length).ConfigureAwait(false);
+        }
+
+        var transferBuffer = new byte[length];
+        bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+        if (!isInDirection)
+        {
+            Buffer.BlockCopy(buffer, offset, transferBuffer, 0, length);
+        }
+
+        int transferred = await usbDevice.ControlTransferAsync(libUsbSetup, transferBuffer, 0, length).ConfigureAwait(false);
+        if (isInDirection)
+        {
+            Buffer.BlockCopy(transferBuffer, 0, buffer, offset, Math.Min(transferred, length));
+        }
+
+        return transferred;
+    }
 }
 
 

@@ -71,4 +71,10 @@ public sealed class UsbDeviceInfo
     /// 获取或设置 USB 接口协议代码（若可用）。
     /// </summary>
     public byte? InterfaceProtocol { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether the interface metadata was observed from the backend rather than inferred from filter criteria.
+    /// 获取或设置接口元数据是否由后端真实观测得到，而非由过滤条件推断得到。
+    /// </summary>
+    public bool InterfaceMetadataObserved { get; set; }
 }

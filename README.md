@@ -11,6 +11,7 @@
 - 设备发现与过滤：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath` 等过滤设备。
 - 可选接口级过滤：可按 `InterfaceClass`、`InterfaceSubClass`、`InterfaceProtocol` 约束底层接口匹配。
 - 异步会话能力：支持 `IAsyncUsbDeviceSession`，并提供 `AsAsync()` 适配器用于自定义同步会话。
+- 接口元数据可追踪来源：`UsbDeviceInfo.InterfaceMetadataObserved` 可区分“真实观测”与“由过滤条件推断”的接口信息。
 - 设备变化监视：支持 `MonitorUsbDevices` / `MonitorDevices` 轮询监视新增与移除事件，并可通过 `onError` 捕获监视阶段异常。
 - 后端能力摘要：可通过 `GetAvailableUsbApiCapabilities` 查看各后端的发现、会话、异步与热插拔能力轮廓。
 - 控制传输：统一暴露 `ControlTransfer` / `ControlTransferAsync`，支持标准 USB setup packet 请求。

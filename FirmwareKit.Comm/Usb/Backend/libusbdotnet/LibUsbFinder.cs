@@ -4,7 +4,7 @@ using LibUsbDotNet.LibUsb;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
-internal class LibUsbFinder
+internal static class LibUsbFinder
 {
     private static bool TryGetBulkInterface(
         LibUsbDotNet.LibUsb.UsbDevice device,
@@ -114,6 +114,7 @@ internal class LibUsbFinder
                     InterfaceClass = interfaceClass,
                     InterfaceSubClass = interfaceSubClass,
                     InterfaceProtocol = interfaceProtocol,
+                    InterfaceMetadataObserved = true,
                     DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
                     UsbDeviceType = global::FirmwareKit.Comm.Usb.Backend.UsbDeviceType.LibUSB
                 };

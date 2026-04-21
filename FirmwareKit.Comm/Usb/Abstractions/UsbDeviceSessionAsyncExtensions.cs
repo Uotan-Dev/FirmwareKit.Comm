@@ -40,52 +40,27 @@ public static class UsbDeviceSessionAsyncExtensions
 
         public Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.Run(() =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return _session.Read(length, timeoutMs);
-            }, cancellationToken);
+            return UsbAsyncExecution.Run(() => _session.Read(length, timeoutMs), cancellationToken);
         }
 
         public Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.Run(() =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return _session.ReadInto(buffer, offset, length, timeoutMs);
-            }, cancellationToken);
+            return UsbAsyncExecution.Run(() => _session.ReadInto(buffer, offset, length, timeoutMs), cancellationToken);
         }
 
         public Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.Run(() =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return _session.Write(data, length, timeoutMs);
-            }, cancellationToken);
+            return UsbAsyncExecution.Run(() => _session.Write(data, length, timeoutMs), cancellationToken);
         }
 
         public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.Run(() =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                return _session.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
-            }, cancellationToken);
+            return UsbAsyncExecution.Run(() => _session.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs), cancellationToken);
         }
 
         public Task ResetAsync(CancellationToken cancellationToken = default)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            return Task.Run(() =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                _session.Reset();
-            }, cancellationToken);
+            return UsbAsyncExecution.Run(_session.Reset, cancellationToken);
         }
     }
 }

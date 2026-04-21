@@ -51,6 +51,7 @@ internal class WinUSBDevice : UsbDevice
         InterfaceClass = USBDeviceInterfaceDescriptor.bInterfaceClass;
         InterfaceSubClass = USBDeviceInterfaceDescriptor.bInterfaceSubClass;
         InterfaceProtocol = USBDeviceInterfaceDescriptor.bInterfaceProtocol;
+        InterfaceMetadataObserved = true;
 
         for (byte endpoint = 0; endpoint < USBDeviceInterfaceDescriptor.bNumEndpoints; endpoint++)
         {
