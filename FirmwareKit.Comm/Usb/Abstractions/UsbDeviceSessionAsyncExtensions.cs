@@ -68,6 +68,16 @@ public static class UsbDeviceSessionAsyncExtensions
             }, cancellationToken);
         }
 
+        public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.Run(() =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                return _session.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
+            }, cancellationToken);
+        }
+
         public Task ResetAsync(CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();

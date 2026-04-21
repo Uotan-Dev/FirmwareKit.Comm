@@ -78,6 +78,23 @@ internal sealed class LibUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvi
         return infos;
     }
 
+    public UsbApiCapabilities GetCapabilities()
+    {
+        return new UsbApiCapabilities
+        {
+            ApiName = ApiName,
+            ApiKind = ApiKind,
+            IsSupportedOnCurrentPlatform = IsSupportedOnCurrentPlatform,
+            SupportsNativeDiscovery = true,
+            SupportsDeviceSessions = true,
+            SupportsControlTransfers = true,
+            SupportsNativeAsyncIo = false,
+            SupportsNativeHotPlugMonitoring = false,
+            RequiresExternalRuntime = true,
+            Notes = "LibUsbDotNet requires the native libusb runtime; async access is currently adapter-based and hot-plug monitoring is polling-based."
+        };
+    }
+
     private static List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter)
     {
         try

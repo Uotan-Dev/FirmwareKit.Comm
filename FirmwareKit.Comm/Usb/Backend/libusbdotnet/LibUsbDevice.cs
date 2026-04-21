@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
@@ -251,6 +252,53 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
         }
     }
 
+    public override int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+    {
+        if (usbDevice == null)
+        {
+            throw new Exception("Device handle is closed.");
+        }
+
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            ValidateBufferRange(buffer, offset, length);
+        }
+
+        var libUsbSetup = new LibUsbDotNet.Main.UsbSetupPacket(setupPacket.RequestType, setupPacket.Request, setupPacket.Value, setupPacket.Index, setupPacket.Length);
+
+        if (length == 0)
+        {
+            return usbDevice.ControlTransfer(libUsbSetup, null, 0, 0);
+        }
+
+        if (buffer != null && offset == 0 && length == buffer.Length)
+        {
+            return usbDevice.ControlTransfer(libUsbSetup, buffer, 0, length);
+        }
+
+        byte[] transferBuffer = new byte[length];
+        bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+        if (!isInDirection && buffer != null)
+        {
+            Buffer.BlockCopy(buffer, offset, transferBuffer, 0, length);
+        }
+
+        int transferred = usbDevice.ControlTransfer(libUsbSetup, transferBuffer, 0, length);
+        if (isInDirection && buffer != null)
+        {
+            Buffer.BlockCopy(transferBuffer, 0, buffer, offset, Math.Min(transferred, length));
+        }
+
+        return transferred;
+    }
+
     public override byte[] Read(int length)
     {
         return Read(length, PlatformDefaultTimeoutMs);
@@ -283,10 +331,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
         if (reader == null) return 0;
         if (length <= 0) return 0;
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
+        ValidateBufferRange(buffer, offset, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
@@ -364,6 +409,8 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
             });
             return -1;
         }
+
+        ValidateWriteData(data, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 

@@ -38,6 +38,13 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     public IReadOnlyList<string> GetAvailableUsbApis() => _usb.GetAvailableApis();
 
     /// <summary>
+    /// Gets capability summaries for the currently registered USB APIs.
+    /// 获取当前已注册 USB API 的能力摘要。
+    /// </summary>
+    /// <returns>A read-only list of capability summaries. 能力摘要只读列表。</returns>
+    public IReadOnlyList<UsbApiCapabilities> GetAvailableUsbApiCapabilities() => _usb.GetAvailableApiCapabilities();
+
+    /// <summary>
     /// Enumerates USB devices for the specified API and filter.
     /// 按指定 API 与过滤条件枚举 USB 设备。
     /// </summary>
@@ -65,14 +72,16 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
     /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
     /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
+    /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. 枚举或回调失败时触发的可选错误回调。</param>
     /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
     public IDisposable MonitorUsbDevices(
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
         UsbApiKind apiKind = UsbApiKind.Auto,
         UsbDeviceFilter? filter = null,
         TimeSpan? pollInterval = null,
-        bool fireInitialSnapshot = false) =>
-        _usb.MonitorDevices(onChanged, apiKind, filter, pollInterval, fireInitialSnapshot);
+        bool fireInitialSnapshot = false,
+        Action<Exception>? onError = null) =>
+        _usb.MonitorDevices(onChanged, apiKind, filter, pollInterval, fireInitialSnapshot, onError);
 
     /// <summary>
     /// Opens matching USB device sessions for direct read/write operations.

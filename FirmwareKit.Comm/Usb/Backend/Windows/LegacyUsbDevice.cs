@@ -53,6 +53,11 @@ internal class LegacyUsbDevice : UsbDevice
 
     public override byte[] Read(int length)
     {
+        if (length < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
         var readTask = Task.Run(() =>
         {
             byte[] buffer = new byte[length];
@@ -76,6 +81,8 @@ internal class LegacyUsbDevice : UsbDevice
 
     public override long Write(byte[] data, int length)
     {
+        ValidateWriteData(data, length);
+
         var writeTask = Task.Run(() =>
         {
             uint written;

@@ -76,6 +76,18 @@ public interface IUsbDeviceSession : IDisposable
     long Write(byte[] data, int length, int timeoutMs);
 
     /// <summary>
+    /// Sends or receives a USB control transfer.
+    /// 发送或接收 USB 控制传输。
+    /// </summary>
+    /// <param name="setupPacket">The setup packet. setup 包。</param>
+    /// <param name="buffer">The data buffer, or <c>null</c> for a zero-length transfer. 数据缓冲区，零长度传输可传 <c>null</c>。</param>
+    /// <param name="offset">The buffer offset. 缓冲区偏移量。</param>
+    /// <param name="length">The number of bytes to transfer. 传输字节数。</param>
+    /// <param name="timeoutMs">Timeout in milliseconds. 超时时间（毫秒）。</param>
+    /// <returns>The number of bytes transferred. 实际传输字节数。</returns>
+    int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs);
+
+    /// <summary>
     /// Resets the device or backend transport.
     /// 重置设备或后端传输层。
     /// </summary>

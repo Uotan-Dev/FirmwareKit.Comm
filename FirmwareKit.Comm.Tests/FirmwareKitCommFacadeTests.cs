@@ -56,9 +56,18 @@ public sealed class FirmwareKitCommFacadeTests
         var session = Assert.Single(sessions.Sessions);
         var read = session.Read(16, 2000);
         var written = session.Write(new byte[] { 1, 2, 3, 4 }, 4, 2000);
+        var transferred = session.ControlTransfer(new UsbSetupPacket
+        {
+            RequestType = 0x80,
+            Request = 0x06,
+            Value = 0x0100,
+            Index = 0x0000,
+            Length = 8
+        }, new byte[8], 0, 8, 2000);
 
         Assert.Equal(16, read.Length);
         Assert.Equal(4, written);
+        Assert.Equal(8, transferred);
     }
 
     [Fact]
@@ -134,6 +143,21 @@ public sealed class FirmwareKitCommFacadeTests
         Assert.NotNull(captured);
         Assert.Equal("test", captured!.Backend);
         Assert.Equal(UsbTransferOutcome.ShortTransfer, captured.Outcome);
+    }
+
+    [Fact]
+    public void FirmwareKitComm_CanReportUsbApiCapabilities()
+    {
+        IFirmwareKitComm comm = CreateIsolatedFacade();
+        _ = comm.RegisterUsbApi("custom-facade", () => new FacadeProvider());
+
+        var capabilities = comm.GetAvailableUsbApiCapabilities();
+
+        var custom = Assert.Single(capabilities, item => string.Equals(item.ApiName, "custom-facade", StringComparison.OrdinalIgnoreCase));
+        Assert.True(custom.IsSupportedOnCurrentPlatform);
+        Assert.False(custom.SupportsNativeDiscovery);
+        Assert.False(custom.SupportsNativeAsyncIo);
+        Assert.False(custom.SupportsNativeHotPlugMonitoring);
     }
 
     private sealed class FacadeProvider : IUsbApiProvider
@@ -213,6 +237,8 @@ public sealed class FirmwareKitCommFacadeTests
         public long Write(byte[] data, int length) => length;
 
         public long Write(byte[] data, int length, int timeoutMs) => length;
+
+        public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs) => length;
 
         public void Reset()
         {

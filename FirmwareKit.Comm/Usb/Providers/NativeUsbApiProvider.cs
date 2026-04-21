@@ -84,6 +84,23 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
         return infos;
     }
 
+    public UsbApiCapabilities GetCapabilities()
+    {
+        return new UsbApiCapabilities
+        {
+            ApiName = ApiName,
+            ApiKind = ApiKind,
+            IsSupportedOnCurrentPlatform = IsSupportedOnCurrentPlatform,
+            SupportsNativeDiscovery = true,
+            SupportsDeviceSessions = true,
+            SupportsControlTransfers = true,
+            SupportsNativeAsyncIo = false,
+            SupportsNativeHotPlugMonitoring = false,
+            RequiresExternalRuntime = false,
+            Notes = "Native transport is synchronous; async access is currently adapter-based and hot-plug monitoring is polling-based."
+        };
+    }
+
     private static List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter)
     {
         return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)

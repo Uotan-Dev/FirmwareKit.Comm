@@ -17,13 +17,46 @@ internal abstract class UsbDevice : IDisposable
 
     public virtual byte[] Read(int length, int timeoutMs) => Read(length);
 
-    public virtual int ReadInto(byte[] buffer, int offset, int length)
+    public virtual int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
     {
-        if (length <= 0) return 0;
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
+        throw new NotSupportedException($"{GetType().Name} does not support control transfers.");
+    }
+
+    internal static void ValidateBufferRange(byte[] buffer, int offset, int length)
+    {
+        if (buffer == null)
+        {
+            throw new ArgumentNullException(nameof(buffer));
+        }
+
+        if (offset < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(offset));
+        }
+
+        if (length < 0 || length > buffer.Length - offset)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
         }
+    }
+
+    internal static void ValidateWriteData(byte[] data, int length)
+    {
+        if (data == null)
+        {
+            throw new ArgumentNullException(nameof(data));
+        }
+
+        if (length < 0 || length > data.Length)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+    }
+
+    public virtual int ReadInto(byte[] buffer, int offset, int length)
+    {
+        if (length <= 0) return 0;
+        ValidateBufferRange(buffer, offset, length);
 
         byte[] data = Read(length);
         if (data.Length == 0) return 0;
@@ -63,6 +96,16 @@ internal abstract class UsbDevice : IDisposable
         {
             cancellationToken.ThrowIfCancellationRequested();
             return Write(data, length, timeoutMs);
+        }, cancellationToken);
+    }
+
+    public virtual Task<int> ControlTransferAsync(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.Run(() =>
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
         }, cancellationToken);
     }
 

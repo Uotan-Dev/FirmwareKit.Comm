@@ -71,6 +71,19 @@ public sealed class UsbCommunicationLayerIntegrationTests
     }
 
     [Fact]
+    public void GetAvailableApiCapabilities_ReportsBackendNotes()
+    {
+        var layer = new UsbCommunicationLayer();
+        var capabilities = layer.GetAvailableApiCapabilities();
+
+        var native = Assert.Single(capabilities, item => string.Equals(item.ApiName, "native", StringComparison.OrdinalIgnoreCase));
+        Assert.True(native.SupportsNativeDiscovery);
+        Assert.False(native.SupportsNativeAsyncIo);
+        Assert.False(native.SupportsNativeHotPlugMonitoring);
+        Assert.False(native.RequiresExternalRuntime);
+    }
+
+    [Fact]
     public void SessionTimeoutMethods_AreInvokableThroughRegisteredProvider()
     {
         var layer = new UsbCommunicationLayer(new UsbApiRegistry());
@@ -86,16 +99,26 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var read = session.Read(4, 1234);
         var count = session.ReadInto(new byte[8], 0, 8, 4321);
         var written = session.Write(new byte[] { 1, 2, 3 }, 3, 987);
+        var transferred = session.ControlTransfer(new UsbSetupPacket
+        {
+            RequestType = 0x80,
+            Request = 0x06,
+            Value = 0x0100,
+            Index = 0x0000,
+            Length = 4
+        }, new byte[4], 0, 4, 2468);
 
         Assert.Equal(4, read.Length);
         Assert.Equal(8, count);
         Assert.Equal(3, written);
+        Assert.Equal(4, transferred);
 
         var timeoutSession = Assert.IsType<TimeoutSession>(session);
         Assert.Equal(1234, timeoutSession.DefaultTimeoutMs);
         Assert.Equal(1234, timeoutSession.LastReadTimeoutMs);
         Assert.Equal(4321, timeoutSession.LastReadIntoTimeoutMs);
         Assert.Equal(987, timeoutSession.LastWriteTimeoutMs);
+        Assert.Equal(2468, timeoutSession.LastControlTimeoutMs);
     }
 
     [Fact]
@@ -251,6 +274,47 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Contains(allChanges, c => c.Kind == UsbDeviceChangeKind.Removed);
     }
 
+    [Fact]
+    public void MonitorDevices_ReportsCallbackFailures()
+    {
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("discover", () => new DiscoveryOnlyInspectingProvider());
+
+        Exception? capturedError = null;
+
+        using var monitor = layer.MonitorDevices(
+            _ => throw new InvalidOperationException("boom"),
+            UsbApiKind.Auto,
+            filter: null,
+            pollInterval: TimeSpan.FromMilliseconds(50),
+            fireInitialSnapshot: true,
+            onError: ex => capturedError = ex);
+
+        Assert.NotNull(capturedError);
+        Assert.IsType<InvalidOperationException>(capturedError);
+    }
+
+    [Fact]
+    public void SessionMethods_RejectOverflowingRanges()
+    {
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("custom-guards", () => new TimeoutProvider());
+
+        using var sessions = layer.OpenDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
+        {
+            VendorId = 0x1F3A,
+            ProductId = 0xEFE8
+        });
+
+        var session = Assert.Single(sessions.Sessions);
+        var buffer = new byte[4];
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.ReadInto(buffer, int.MaxValue, 1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.ReadInto(buffer, int.MaxValue, 1, 100));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.Write(new byte[4], int.MaxValue));
+        Assert.Throws<ArgumentOutOfRangeException>(() => session.Write(new byte[4], int.MaxValue, 100));
+    }
+
     private sealed class EmptyProvider : IUsbApiProvider
     {
         public string ApiName => "custom";
@@ -385,6 +449,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         public int LastWriteTimeoutMs { get; private set; }
 
+        public int LastControlTimeoutMs { get; private set; }
+
         public int LastAsyncReadTimeoutMs { get; private set; }
 
         public int LastAsyncReadIntoTimeoutMs { get; private set; }
@@ -425,7 +491,17 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         public int ReadInto(byte[] buffer, int offset, int length)
         {
-            if (offset < 0 || length < 0 || offset + length > buffer.Length)
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            if (offset < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+            if (length < 0 || length > buffer.Length - offset)
             {
                 throw new ArgumentOutOfRangeException(nameof(length));
             }
@@ -435,7 +511,17 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
         {
-            if (offset < 0 || length < 0 || offset + length > buffer.Length)
+            if (buffer == null)
+            {
+                throw new ArgumentNullException(nameof(buffer));
+            }
+
+            if (offset < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(offset));
+            }
+
+            if (length < 0 || length > buffer.Length - offset)
             {
                 throw new ArgumentOutOfRangeException(nameof(length));
             }
@@ -466,6 +552,12 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return length;
         }
 
+        public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+        {
+            LastControlTimeoutMs = timeoutMs;
+            return length;
+        }
+
         public void Reset()
         {
         }
@@ -486,6 +578,12 @@ public sealed class UsbCommunicationLayerIntegrationTests
         {
             LastAsyncWriteTimeoutMs = timeoutMs;
             return Task.FromResult((long)length);
+        }
+
+        public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            LastControlTimeoutMs = timeoutMs;
+            return Task.FromResult(length);
         }
 
         public Task ResetAsync(CancellationToken cancellationToken = default)

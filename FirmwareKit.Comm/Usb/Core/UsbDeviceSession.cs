@@ -53,38 +53,55 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
 
     public int ReadInto(byte[] buffer, int offset, int length)
     {
-        ValidateBufferRange(buffer, offset, length);
+        UsbDevice.ValidateBufferRange(buffer, offset, length);
         return _device.ReadInto(buffer, offset, length);
     }
 
     public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
     {
-        ValidateBufferRange(buffer, offset, length);
+        UsbDevice.ValidateBufferRange(buffer, offset, length);
         return _device.ReadInto(buffer, offset, length, timeoutMs);
     }
 
     public Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        ValidateBufferRange(buffer, offset, length);
+        UsbDevice.ValidateBufferRange(buffer, offset, length);
         return _device.ReadIntoAsync(buffer, offset, length, timeoutMs, cancellationToken);
     }
 
     public long Write(byte[] data, int length)
     {
-        ValidateWriteData(data, length);
+        UsbDevice.ValidateWriteData(data, length);
         return _device.Write(data, length);
     }
 
     public long Write(byte[] data, int length, int timeoutMs)
     {
-        ValidateWriteData(data, length);
+        UsbDevice.ValidateWriteData(data, length);
         return _device.Write(data, length, timeoutMs);
     }
 
     public Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        ValidateWriteData(data, length);
+        UsbDevice.ValidateWriteData(data, length);
         return _device.WriteAsync(data, length, timeoutMs, cancellationToken);
+    }
+
+    public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+    {
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            UsbDevice.ValidateBufferRange(buffer, offset, length);
+        }
+
+        return _device.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
     }
 
     public Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
@@ -97,35 +114,27 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         return _device.ReadAsync(length, timeoutMs, cancellationToken);
     }
 
+    public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            UsbDevice.ValidateBufferRange(buffer, offset, length);
+        }
+
+        return _device.ControlTransferAsync(setupPacket, buffer, offset, length, timeoutMs, cancellationToken);
+    }
+
     public void Reset() => _device.Reset();
 
     public Task ResetAsync(CancellationToken cancellationToken = default) => _device.ResetAsync(cancellationToken);
 
     public void Dispose() => _device.Dispose();
 
-    private static void ValidateBufferRange(byte[] buffer, int offset, int length)
-    {
-        if (buffer == null)
-        {
-            throw new ArgumentNullException(nameof(buffer));
-        }
-
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
-    }
-
-    private static void ValidateWriteData(byte[] data, int length)
-    {
-        if (data == null)
-        {
-            throw new ArgumentNullException(nameof(data));
-        }
-
-        if (length < 0 || length > data.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
-    }
 }

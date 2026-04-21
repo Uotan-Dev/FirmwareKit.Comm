@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Diagnostics;
@@ -45,6 +46,99 @@ internal class LinuxUsbDevice : UsbDevice
         {
             ioctl(fd, USBDEVFS_RESET, IntPtr.Zero);
         }
+    }
+
+    public override int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+    {
+        if (fd < 0)
+        {
+            throw new Exception("Device handle is closed.");
+        }
+
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            ValidateBufferRange(buffer, offset, length);
+        }
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        usbdevfs_ctrltransfer ctrl = new usbdevfs_ctrltransfer
+        {
+            bRequestType = setupPacket.RequestType,
+            bRequest = setupPacket.Request,
+            wValue = setupPacket.Value,
+            wIndex = setupPacket.Index,
+            wLength = (ushort)length,
+            timeout = (uint)effectiveTimeoutMs
+        };
+
+        bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+
+        if (length > 0)
+        {
+            if (buffer != null && offset == 0 && length == buffer.Length)
+            {
+                GCHandle pinnedHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+                try
+                {
+                    ctrl.data = pinnedHandle.AddrOfPinnedObject();
+                    int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+                    if (result < 0)
+                    {
+                        throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+                    }
+
+                    return result;
+                }
+                finally
+                {
+                    pinnedHandle.Free();
+                }
+            }
+
+            byte[] transferBuffer = new byte[length];
+            if (!isInDirection && buffer != null)
+            {
+                Buffer.BlockCopy(buffer, offset, transferBuffer, 0, length);
+            }
+
+            GCHandle transferHandle = GCHandle.Alloc(transferBuffer, GCHandleType.Pinned);
+            try
+            {
+                ctrl.data = transferHandle.AddrOfPinnedObject();
+                int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+                if (result < 0)
+                {
+                    throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+                }
+
+                if (isInDirection && buffer != null)
+                {
+                    Buffer.BlockCopy(transferBuffer, 0, buffer, offset, Math.Min(result, length));
+                }
+
+                return result;
+            }
+            finally
+            {
+                transferHandle.Free();
+            }
+        }
+
+        ctrl.data = IntPtr.Zero;
+        int zeroResult = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+        if (zeroResult < 0)
+        {
+            throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+        }
+
+        return zeroResult;
     }
 
     public override void Dispose()
@@ -153,10 +247,7 @@ internal class LinuxUsbDevice : UsbDevice
         var outcome = UsbTransferOutcome.Success;
 
         if (length <= 0) return 0;
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
+        ValidateBufferRange(buffer, offset, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
@@ -289,6 +380,8 @@ internal class LinuxUsbDevice : UsbDevice
             });
             return 0;
         }
+
+        ValidateWriteData(data, length);
 
         GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
         try

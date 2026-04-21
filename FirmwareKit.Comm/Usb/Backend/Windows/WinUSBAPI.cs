@@ -2,7 +2,7 @@ using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Backend.Windows;
 
-internal class WinUSBAPI
+internal static class WinUSBAPI
 {
     [StructLayout(LayoutKind.Sequential)]
     public struct WinUSBPipeInfo
@@ -11,6 +11,16 @@ internal class WinUSBAPI
         public byte PipeID;
         public ushort MaximumPacketSize;
         public byte Interval;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WINUSB_SETUP_PACKET
+    {
+        public byte RequestType;
+        public byte Request;
+        public ushort Value;
+        public ushort Index;
+        public ushort Length;
     }
 
     public enum WinUSBPipeType
@@ -52,6 +62,10 @@ internal class WinUSBAPI
     [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_ReadPipe(IntPtr DeviceHandle, byte pipeID, byte[] buffer,
         uint bufferLen, out uint bytesTransfered, IntPtr overlapp);
+
+    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_ControlTransfer(IntPtr InterfaceHandle, WINUSB_SETUP_PACKET SetupPacket,
+        byte[]? Buffer, uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
     [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_ResetPipe(IntPtr InterfaceHandle, byte PipeID);

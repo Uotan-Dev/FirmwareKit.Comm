@@ -30,6 +30,18 @@ public sealed class UsbCommunicationLayer
     public IReadOnlyList<string> GetAvailableApis() => _registry.GetApiNames();
 
     /// <summary>
+    /// Gets capability summaries for the currently registered USB APIs.
+    /// 获取当前已注册 USB API 的能力摘要。
+    /// </summary>
+    /// <returns>A read-only list of capability summaries. 能力摘要只读列表。</returns>
+    public IReadOnlyList<UsbApiCapabilities> GetAvailableApiCapabilities()
+    {
+        return ResolveProviders(UsbApiKind.Auto)
+            .Select(CreateCapabilities)
+            .ToList();
+    }
+
+    /// <summary>
     /// Enumerates devices for the selected backend.
     /// 按选定后端枚举设备。
     /// </summary>
@@ -140,13 +152,15 @@ public sealed class UsbCommunicationLayer
     /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
     /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
     /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
+    /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. 枚举或回调失败时触发的可选错误回调。</param>
     /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
     public IDisposable MonitorDevices(
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
         UsbApiKind apiKind = UsbApiKind.Auto,
         UsbDeviceFilter? filter = null,
         TimeSpan? pollInterval = null,
-        bool fireInitialSnapshot = false)
+        bool fireInitialSnapshot = false,
+        Action<Exception>? onError = null)
     {
         if (onChanged == null)
         {
@@ -168,11 +182,13 @@ public sealed class UsbCommunicationLayer
                 }
                 catch (Exception ex)
                 {
+                    onError?.Invoke(ex);
                     UsbTrace.Log($"MonitorDevices enumerate failed: {ex.GetType().Name}: {ex.Message}");
                     return Array.Empty<UsbDeviceInfo>();
                 }
             },
             onChanged,
+            onError,
             interval,
             fireInitialSnapshot);
     }
@@ -283,5 +299,27 @@ public sealed class UsbCommunicationLayer
         }
 
         return Array.Empty<IUsbApiProvider>();
+    }
+
+    private static UsbApiCapabilities CreateCapabilities(IUsbApiProvider provider)
+    {
+        if (provider is IUsbApiCapabilityProvider capabilityProvider)
+        {
+            return capabilityProvider.GetCapabilities();
+        }
+
+        return new UsbApiCapabilities
+        {
+            ApiName = provider.ApiName,
+            ApiKind = provider.ApiKind,
+            IsSupportedOnCurrentPlatform = provider.IsSupportedOnCurrentPlatform,
+            SupportsNativeDiscovery = provider is IUsbApiDiscoveryProvider,
+            SupportsDeviceSessions = true,
+            SupportsControlTransfers = false,
+            SupportsNativeAsyncIo = false,
+            SupportsNativeHotPlugMonitoring = false,
+            RequiresExternalRuntime = false,
+            Notes = "Capability data was inferred because the provider does not implement IUsbApiCapabilityProvider."
+        };
     }
 }

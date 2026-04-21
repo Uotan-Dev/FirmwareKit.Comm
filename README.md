@@ -11,7 +11,9 @@
 - 设备发现与过滤：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath` 等过滤设备。
 - 可选接口级过滤：可按 `InterfaceClass`、`InterfaceSubClass`、`InterfaceProtocol` 约束底层接口匹配。
 - 异步会话能力：支持 `IAsyncUsbDeviceSession`，并提供 `AsAsync()` 适配器用于自定义同步会话。
-- 设备变化监视：支持 `MonitorUsbDevices` / `MonitorDevices` 轮询监视新增与移除事件。
+- 设备变化监视：支持 `MonitorUsbDevices` / `MonitorDevices` 轮询监视新增与移除事件，并可通过 `onError` 捕获监视阶段异常。
+- 后端能力摘要：可通过 `GetAvailableUsbApiCapabilities` 查看各后端的发现、会话、异步与热插拔能力轮廓。
+- 控制传输：统一暴露 `ControlTransfer` / `ControlTransferAsync`，支持标准 USB setup packet 请求。
 - 结构化传输诊断：支持 `UsbTrace.TransferObserved`，统一输出读写操作的耗时、错误码、重试次数和结果。
 - 可扩展：可通过 `RegisterUsbApi` 注册自定义 USB API 提供器。
 - 简洁的门面 API：`IFirmwareKitComm` / `FirmwareKitComm`，便于在上层工具或应用中使用。
@@ -53,6 +55,12 @@ var comm = new FirmwareKitComm();
 foreach (var api in comm.GetAvailableUsbApis())
  Console.WriteLine(api);
 
+// 查看后端能力摘要
+foreach (var capability in comm.GetAvailableUsbApiCapabilities())
+{
+ Console.WriteLine($"api={capability.ApiName} nativeDiscovery={capability.SupportsNativeDiscovery} nativeAsync={capability.SupportsNativeAsyncIo} hotplug={capability.SupportsNativeHotPlugMonitoring} externalRuntime={capability.RequiresExternalRuntime}");
+}
+
 // 同步枚举设备并过滤 VendorId（示例：0x18D1）
 var devices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter { VendorId = 0x18D1 });
 foreach (var d in devices)
@@ -93,6 +101,19 @@ if (session != null)
  var response = session.Read(512, 3000);
  Console.WriteLine($"response bytes: {response.Length}");
 
+ // 控制传输示例：读取接口当前备用设置
+ var setup = new UsbSetupPacket
+ {
+  RequestType = 0x81,
+  Request = 0x0A,
+  Value = 0,
+  Index = 0,
+  Length = 1
+ };
+ var ctrlBuffer = new byte[1];
+ var ctrlCount = session.ControlTransfer(setup, ctrlBuffer, 0, ctrlBuffer.Length, 3000);
+ Console.WriteLine($"control bytes: {ctrlCount}, alt={ctrlBuffer[0]}");
+
  // 异步会话（若后端不直接实现异步接口，可用 AsAsync() 适配）
  var asyncSession = session.AsAsync();
  var asyncResponse = await asyncSession.ReadAsync(512, 3000);
@@ -110,7 +131,8 @@ using var monitor = comm.MonitorUsbDevices(
  },
  UsbApiKind.Auto,
  pollInterval: TimeSpan.FromSeconds(1),
- fireInitialSnapshot: false);
+ fireInitialSnapshot: false,
+ onError: ex => Console.WriteLine($"monitor error: {ex.Message}"));
 
 // 结构化诊断事件（可用于指标上报/日志聚合）
 UsbTrace.TransferObserved += evt =>

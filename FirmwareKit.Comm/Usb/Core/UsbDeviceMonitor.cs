@@ -7,6 +7,7 @@ internal sealed class UsbDeviceMonitor : IDisposable
 {
     private readonly Func<IReadOnlyList<UsbDeviceInfo>> _enumerator;
     private readonly Action<IReadOnlyList<UsbDeviceChange>> _onChanged;
+    private readonly Action<Exception>? _onError;
     private readonly TimeSpan _pollInterval;
     private readonly object _gate = new();
     private Timer? _timer;
@@ -17,21 +18,43 @@ internal sealed class UsbDeviceMonitor : IDisposable
     public UsbDeviceMonitor(
         Func<IReadOnlyList<UsbDeviceInfo>> enumerator,
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
+        Action<Exception>? onError,
         TimeSpan pollInterval,
         bool fireInitialSnapshot)
     {
         _enumerator = enumerator ?? throw new ArgumentNullException(nameof(enumerator));
         _onChanged = onChanged ?? throw new ArgumentNullException(nameof(onChanged));
+        _onError = onError;
         _pollInterval = pollInterval <= TimeSpan.Zero ? TimeSpan.FromSeconds(1) : pollInterval;
 
-        var initial = BuildMap(_enumerator());
+        IReadOnlyList<UsbDeviceInfo> initialDevices;
+        try
+        {
+            initialDevices = _enumerator();
+        }
+        catch (Exception ex)
+        {
+            _onError?.Invoke(ex);
+            UsbTrace.Log($"UsbDeviceMonitor initial enumerate failed: {ex.GetType().Name}: {ex.Message}");
+            initialDevices = Array.Empty<UsbDeviceInfo>();
+        }
+
+        var initial = BuildMap(initialDevices);
         _lastSnapshot = initial;
         if (fireInitialSnapshot && initial.Count > 0)
         {
             var initialChanges = initial.Values
                 .Select(device => new UsbDeviceChange { Kind = UsbDeviceChangeKind.Added, Device = device })
                 .ToList();
-            _onChanged(initialChanges);
+            try
+            {
+                _onChanged(initialChanges);
+            }
+            catch (Exception ex)
+            {
+                _onError?.Invoke(ex);
+                UsbTrace.Log($"UsbDeviceMonitor initial callback failed: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         _timer = new Timer(static state => ((UsbDeviceMonitor)state!).Poll(), this, _pollInterval, _pollInterval);
@@ -112,11 +135,20 @@ internal sealed class UsbDeviceMonitor : IDisposable
 
             if (changes is { Count: > 0 })
             {
-                _onChanged(changes);
+                try
+                {
+                    _onChanged(changes);
+                }
+                catch (Exception ex)
+                {
+                    _onError?.Invoke(ex);
+                    UsbTrace.Log($"UsbDeviceMonitor change callback failed: {ex.GetType().Name}: {ex.Message}");
+                }
             }
         }
         catch (Exception ex)
         {
+            _onError?.Invoke(ex);
             UsbTrace.Log($"UsbDeviceMonitor poll failed: {ex.GetType().Name}: {ex.Message}");
         }
         finally

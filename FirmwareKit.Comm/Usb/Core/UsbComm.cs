@@ -18,6 +18,13 @@ public static class UsbComm
     public static IReadOnlyList<string> GetAvailableApis() => DefaultLayer.GetAvailableApis();
 
     /// <summary>
+    /// Gets capability summaries for the currently registered USB APIs.
+    /// 获取当前已注册 USB API 的能力摘要。
+    /// </summary>
+    /// <returns>A read-only list of capability summaries. 能力摘要只读列表。</returns>
+    public static IReadOnlyList<UsbApiCapabilities> GetAvailableApiCapabilities() => DefaultLayer.GetAvailableApiCapabilities();
+
+    /// <summary>
     /// Enumerates devices for the selected backend.
     /// 按选定后端枚举设备。
     /// </summary>
@@ -52,14 +59,16 @@ public static class UsbComm
     /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
     /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
     /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
+    /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. 枚举或回调失败时触发的可选错误回调。</param>
     /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
     public static IDisposable MonitorDevices(
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
         UsbApiKind apiKind = UsbApiKind.Auto,
         UsbDeviceFilter? filter = null,
         TimeSpan? pollInterval = null,
-        bool fireInitialSnapshot = false) =>
-        DefaultLayer.MonitorDevices(onChanged, apiKind, filter, pollInterval, fireInitialSnapshot);
+        bool fireInitialSnapshot = false,
+        Action<Exception>? onError = null) =>
+        DefaultLayer.MonitorDevices(onChanged, apiKind, filter, pollInterval, fireInitialSnapshot, onError);
 
     /// <summary>
     /// Opens matching device sessions for direct read/write operations.

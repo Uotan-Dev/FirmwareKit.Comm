@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
 using FirmwareKit.Comm.Usb.Diagnostics;
@@ -203,6 +204,87 @@ internal class MacOSUsbDevice : UsbDevice
         }
     }
 
+    public override int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+    {
+        if (devicePtr == IntPtr.Zero)
+        {
+            throw new Exception("Device handle is closed.");
+        }
+
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            ValidateBufferRange(buffer, offset, length);
+        }
+
+        var request = new IOUSBDevRequest
+        {
+            bmRequestType = setupPacket.RequestType,
+            bRequest = setupPacket.Request,
+            wValue = setupPacket.Value,
+            wIndex = setupPacket.Index,
+            wLength = (ushort)length
+        };
+
+        byte[]? transferBuffer = null;
+        bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+
+        if (length > 0)
+        {
+            if (buffer != null && offset == 0 && length == buffer.Length)
+            {
+                transferBuffer = buffer;
+            }
+            else
+            {
+                transferBuffer = new byte[length];
+                if (!isInDirection && buffer != null)
+                {
+                    Buffer.BlockCopy(buffer, offset, transferBuffer, 0, length);
+                }
+            }
+        }
+
+        GCHandle handle = default;
+        try
+        {
+            if (transferBuffer != null)
+            {
+                handle = GCHandle.Alloc(transferBuffer, GCHandleType.Pinned);
+                request.pData = handle.AddrOfPinnedObject();
+            }
+
+            var devReq = GetDelegate<DeviceRequestDelegate>(devicePtr, Offset_DeviceRequest);
+            int result = devReq(devicePtr, ref request);
+            if (result != 0)
+            {
+                throw new IOException($"USB control transfer failed with error: 0x{result:X}");
+            }
+
+            if (isInDirection && buffer != null && transferBuffer != null && transferBuffer != buffer)
+            {
+                int bytesCopied = (int)request.wLenDone;
+                Buffer.BlockCopy(transferBuffer, 0, buffer, offset, Math.Min(bytesCopied, length));
+                return bytesCopied;
+            }
+
+            return (int)request.wLenDone;
+        }
+        finally
+        {
+            if (handle.IsAllocated)
+            {
+                handle.Free();
+            }
+        }
+    }
+
     public override void Dispose()
     {
         if (interfacePtr != IntPtr.Zero)
@@ -282,10 +364,7 @@ internal class MacOSUsbDevice : UsbDevice
 
         if (interfacePtr == IntPtr.Zero || bulkIn == 0) return 0;
         if (length <= 0) return 0;
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
+        ValidateBufferRange(buffer, offset, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 
@@ -377,6 +456,7 @@ internal class MacOSUsbDevice : UsbDevice
         var outcome = UsbTransferOutcome.Success;
 
         if (interfacePtr == IntPtr.Zero || bulkOut == 0) return -1;
+        ValidateWriteData(data, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
 

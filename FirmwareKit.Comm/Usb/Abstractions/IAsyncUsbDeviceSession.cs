@@ -46,6 +46,19 @@ public interface IAsyncUsbDeviceSession
     Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Sends or receives a USB control transfer asynchronously.
+    /// 异步发送或接收 USB 控制传输。
+    /// </summary>
+    /// <param name="setupPacket">The setup packet. setup 包。</param>
+    /// <param name="buffer">The data buffer, or <c>null</c> for a zero-length transfer. 数据缓冲区，零长度传输可传 <c>null</c>。</param>
+    /// <param name="offset">The buffer offset. 缓冲区偏移量。</param>
+    /// <param name="length">The number of bytes to transfer. 传输字节数。</param>
+    /// <param name="timeoutMs">Timeout in milliseconds. 超时时间（毫秒）。</param>
+    /// <param name="cancellationToken">A cancellation token. 取消令牌。</param>
+    /// <returns>A task that resolves to the number of bytes transferred. 返回实际传输字节数的任务。</returns>
+    Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Resets the device transport asynchronously.
     /// 异步重置设备传输层。
     /// </summary>

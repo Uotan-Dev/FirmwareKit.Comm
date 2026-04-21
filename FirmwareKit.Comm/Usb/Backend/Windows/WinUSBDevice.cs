@@ -1,3 +1,4 @@
+using FirmwareKit.Comm.Usb.Abstractions;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Diagnostics;
@@ -24,7 +25,7 @@ internal class WinUSBDevice : UsbDevice
     public override int CreateHandle()
     {
         IntPtr hUsb = SimpleCreateHandle(DevicePath, true);
-        uint bytesTransfered;
+        uint bytesTransferred;
         if (hUsb == new IntPtr(-1))
             return Marshal.GetLastWin32Error();
         FileHandle = hUsb;
@@ -33,14 +34,14 @@ internal class WinUSBDevice : UsbDevice
         if (!WinUsb_GetCurrentAlternateSetting(WinUSBHandle, out InterfaceNum))
             return Marshal.GetLastWin32Error();
         IntPtr ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceDescriptor>());
-        if (!WinUsb_GetDescriptor(WinUSBHandle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceDescriptor>(), out bytesTransfered))
+        if (!WinUsb_GetDescriptor(WinUSBHandle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceDescriptor>(), out bytesTransferred))
             return Marshal.GetLastWin32Error();
         USBDeviceDescriptor = Marshal.PtrToStructure<USBDeviceDescriptor>(ptr);
         VendorId = USBDeviceDescriptor.idVendor;
         ProductId = USBDeviceDescriptor.idProduct;
         Marshal.FreeHGlobal(ptr);
         ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceConfigDescriptor>());
-        if (!WinUsb_GetDescriptor(WinUSBHandle, USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransfered))
+        if (!WinUsb_GetDescriptor(WinUSBHandle, USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransferred))
             return Marshal.GetLastWin32Error();
         USBDeviceConfigDescriptor = Marshal.PtrToStructure<USBDeviceConfigDescriptor>(ptr);
         Marshal.FreeHGlobal(ptr);
@@ -128,6 +129,67 @@ internal class WinUSBDevice : UsbDevice
         }
     }
 
+    public override int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
+    {
+        if (WinUSBHandle == IntPtr.Zero)
+        {
+            throw new Exception("Device handle is closed.");
+        }
+
+        if (buffer == null)
+        {
+            if (length != 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+        }
+        else
+        {
+            ValidateBufferRange(buffer, offset, length);
+        }
+
+        var transferPacket = new WINUSB_SETUP_PACKET
+        {
+            RequestType = setupPacket.RequestType,
+            Request = setupPacket.Request,
+            Value = setupPacket.Value,
+            Index = setupPacket.Index,
+            Length = (ushort)Math.Max(0, length)
+        };
+
+        byte[]? transferBuffer = null;
+        bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+
+        if (length > 0)
+        {
+            if (buffer != null && offset == 0 && length == buffer.Length)
+            {
+                transferBuffer = buffer;
+            }
+            else
+            {
+                transferBuffer = new byte[length];
+                if (!isInDirection && buffer != null)
+                {
+                    Buffer.BlockCopy(buffer, offset, transferBuffer, 0, length);
+                }
+            }
+        }
+
+        uint bytesTransferred;
+        if (!WinUsb_ControlTransfer(WinUSBHandle, transferPacket, transferBuffer, (uint)length, out bytesTransferred, IntPtr.Zero))
+        {
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+
+        if (isInDirection && buffer != null && transferBuffer != null && transferBuffer != buffer)
+        {
+            Buffer.BlockCopy(transferBuffer, 0, buffer, offset, (int)bytesTransferred);
+        }
+
+        return (int)bytesTransferred;
+    }
+
     public override int GetSerialNumber()
     {
         uint bytes_get;
@@ -181,10 +243,7 @@ internal class WinUSBDevice : UsbDevice
 
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
         if (length <= 0) return 0;
-        if (offset < 0 || length < 0 || offset + length > buffer.Length)
-        {
-            throw new ArgumentOutOfRangeException(nameof(length));
-        }
+        ValidateBufferRange(buffer, offset, length);
 
         SetPipeTimeout(effectiveTimeoutMs);
 
@@ -258,6 +317,7 @@ internal class WinUSBDevice : UsbDevice
         int? lastError = null;
 
         if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
+        ValidateWriteData(data, length);
 
         SetPipeTimeout(effectiveTimeoutMs);
 
