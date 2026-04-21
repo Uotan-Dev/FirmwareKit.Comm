@@ -39,7 +39,7 @@ internal static class MacOSUsbAPI
     public const string kIOServicePlane = "IOService";
 
     [DllImport(IOKit)]
-    public static extern int IOCreatePlugInInterfaceForService(IntPtr service, Guid pluginType, Guid interfaceType, out IntPtr pluginInterface, out int score);
+    public static extern int IOCreatePlugInInterfaceForService(IntPtr service, ref Guid pluginType, ref Guid interfaceType, out IntPtr pluginInterface, out int score);
 
     [DllImport(IOKit)]
     public static extern int IOIteratorReset(IntPtr iterator);
@@ -70,13 +70,13 @@ internal static class MacOSUsbAPI
     [StructLayout(LayoutKind.Sequential)]
     public struct IOUSBFindInterfaceRequest
     {
-        public ushort bInterfaceClass;
-        public ushort bInterfaceSubClass;
-        public ushort bInterfaceProtocol;
-        public ushort bAlternateSetting;
+        public byte bInterfaceClass;
+        public byte bInterfaceSubClass;
+        public byte bInterfaceProtocol;
+        public byte bAlternateSetting;
     }
 
-    public const ushort kIOUSBFindInterfaceDontCare = 0xFFFF;
+    public const byte kIOUSBFindInterfaceDontCare = 0xFF;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate int USBDeviceOpenDelegate(IntPtr self);

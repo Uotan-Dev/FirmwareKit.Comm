@@ -25,9 +25,13 @@ internal class MacOSUsbFinder
             IORegistryEntryGetPath(service, kIOServicePlane, sbPath);
             string devicePath = sbPath.ToString();
 
+            
+
             IntPtr pluginInterface = IntPtr.Zero;
             int score = 0;
-            kr = IOCreatePlugInInterfaceForService(service, kIOUSBDeviceUserClientTypeID, kIOCFPlugInInterfaceID, out pluginInterface, out score);
+            var pluginTypeGuid = kIOUSBDeviceUserClientTypeID;
+            var pluginInterfaceGuid = kIOCFPlugInInterfaceID;
+            kr = IOCreatePlugInInterfaceForService(service, ref pluginTypeGuid, ref pluginInterfaceGuid, out pluginInterface, out score);
             if (kr != 0 || pluginInterface == IntPtr.Zero)
             {
                 IOObjectRelease(service);
@@ -38,7 +42,9 @@ internal class MacOSUsbFinder
             {
                 IntPtr deviceInterface = IntPtr.Zero;
                 if (!TryQueryInterface(pluginInterface, out deviceInterface, kIOUSBDeviceInterfaceID197, kIOUSBDeviceInterfaceID))
+                {
                     continue;
+                }
 
                 try
                 {
@@ -75,7 +81,9 @@ internal class MacOSUsbFinder
                         {
 
                             IntPtr ifcPlugin = IntPtr.Zero;
-                            if (IOCreatePlugInInterfaceForService(ifcService, kIOUSBInterfaceUserClientTypeID, kIOCFPlugInInterfaceID, out ifcPlugin, out score) == 0 && ifcPlugin != IntPtr.Zero)
+                            var ifcPluginTypeGuid = kIOUSBInterfaceUserClientTypeID;
+                            var ifcPluginInterfaceGuid = kIOCFPlugInInterfaceID;
+                            if (IOCreatePlugInInterfaceForService(ifcService, ref ifcPluginTypeGuid, ref ifcPluginInterfaceGuid, out ifcPlugin, out score) == 0 && ifcPlugin != IntPtr.Zero)
                             {
                                 try
                                 {

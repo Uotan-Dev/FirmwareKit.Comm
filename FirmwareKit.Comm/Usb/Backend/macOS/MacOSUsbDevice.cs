@@ -38,7 +38,9 @@ internal class MacOSUsbDevice : UsbDevice
         {
             IntPtr pluginInterface = IntPtr.Zero;
             int score = 0;
-            int kr = IOCreatePlugInInterfaceForService(service, kIOUSBDeviceUserClientTypeID, kIOCFPlugInInterfaceID, out pluginInterface, out score);
+            var pluginTypeGuid = kIOUSBDeviceUserClientTypeID;
+            var pluginInterfaceGuid = kIOCFPlugInInterfaceID;
+            int kr = IOCreatePlugInInterfaceForService(service, ref pluginTypeGuid, ref pluginInterfaceGuid, out pluginInterface, out score);
             if (kr != 0 || pluginInterface == IntPtr.Zero) return kr;
 
             try
@@ -75,7 +77,9 @@ internal class MacOSUsbDevice : UsbDevice
                         while ((ifcService = IOIteratorNext(interfaceIter)) != IntPtr.Zero)
                         {
                             IntPtr ifcPlugin = IntPtr.Zero;
-                            if (IOCreatePlugInInterfaceForService(ifcService, kIOUSBInterfaceUserClientTypeID, kIOCFPlugInInterfaceID, out ifcPlugin, out score) == 0 && ifcPlugin != IntPtr.Zero)
+                            var ifcPluginTypeGuid = kIOUSBInterfaceUserClientTypeID;
+                            var ifcPluginInterfaceGuid = kIOCFPlugInInterfaceID;
+                            if (IOCreatePlugInInterfaceForService(ifcService, ref ifcPluginTypeGuid, ref ifcPluginInterfaceGuid, out ifcPlugin, out score) == 0 && ifcPlugin != IntPtr.Zero)
                             {
                                 try
                                 {
