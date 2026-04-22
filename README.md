@@ -3,48 +3,50 @@
 [![NuGet version](https://img.shields.io/nuget/v/FirmwareKit.Comm.svg)](https://www.nuget.org/packages/FirmwareKit.Comm)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-跨平台的 USB 通信库，为 FirmwareKit 提供统一的 USB 抽象层、设备会话管理，以及多种平台后端（Windows / Linux / macOS / LibUsbDotNet）。
+English | [简体中文](README.zh-CN.md)
 
-## 特性
+A cross-platform USB communication library for FirmwareKit that provides a unified USB abstraction, device session management, and multiple backend implementations (Windows / Linux / macOS / LibUsbDotNet).
 
-- 跨平台 USB 抽象：支持系统原生实现与 `LibUsbDotNet` 后端。
-- 设备发现与过滤：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath` 等过滤设备。
-- 可选接口级过滤：可按 `InterfaceClass`、`InterfaceSubClass`、`InterfaceProtocol` 约束底层接口匹配。
-- 异步会话能力：支持 `IAsyncUsbDeviceSession`，并提供 `AsAsync()` 适配器用于自定义同步会话。
-- 接口元数据可追踪来源：`UsbDeviceInfo.InterfaceMetadataObserved` 可区分“真实观测”与“由过滤条件推断”的接口信息。
-- 设备变化监视：支持 `MonitorUsbDevices` / `MonitorDevices` 轮询监视新增与移除事件，并可通过 `onError` 捕获监视阶段异常。
-- 后端能力摘要：可通过 `GetAvailableUsbApiCapabilities` 查看各后端的发现、会话、异步与热插拔能力轮廓。
-- 控制传输：统一暴露 `ControlTransfer` / `ControlTransferAsync`，支持标准 USB setup packet 请求。
-- 结构化传输诊断：支持 `UsbTrace.TransferObserved`，统一输出读写操作的耗时、错误码、重试次数和结果。
-- 可扩展：可通过 `RegisterUsbApi` 注册自定义 USB API 提供器。
-- 简洁的门面 API：`IFirmwareKitComm` / `FirmwareKitComm`，便于在上层工具或应用中使用。
-- 自带轻量 CLI：项目 `FirmwareKit.Comm.CLI` 提供 `apis` 与 `devices` 命令。
+## Features
 
-## 设计边界
+- Cross-platform USB abstraction: supports native platform backends and `LibUsbDotNet`.
+- Device discovery and filtering by `VendorId`, `ProductId`, `SerialNumber`, `DevicePath`, and more.
+- Optional interface-level filtering by `InterfaceClass`, `InterfaceSubClass`, and `InterfaceProtocol`.
+- Async session support via `IAsyncUsbDeviceSession`, plus `AsAsync()` adapter for custom sync sessions.
+- Traceable interface metadata origin through `UsbDeviceInfo.InterfaceMetadataObserved`.
+- Device change monitoring with `MonitorUsbDevices` / `MonitorDevices`, with `onError` hook for monitor-stage exceptions.
+- Backend capability snapshot through `GetAvailableUsbApiCapabilities`.
+- Unified control transfer APIs: `ControlTransfer` / `ControlTransferAsync`.
+- Structured transfer diagnostics through `UsbTrace.TransferObserved`.
+- Extensible provider registration with `RegisterUsbApi`.
+- Simple facade API: `IFirmwareKitComm` / `FirmwareKitComm`.
+- Lightweight built-in CLI in `FirmwareKit.Comm.CLI` (`apis`, `devices`, `all-devices`).
 
-FirmwareKit.Comm 专注于跨平台原生 USB 传输能力：
+## Design Boundary
 
-- 设备发现与筛选
-- 会话管理
-- 统一读写与超时控制
-- 传输层复位
+FirmwareKit.Comm focuses on cross-platform native USB transport primitives:
 
-设备发现默认优先走“元数据发现”路径，避免为仅枚举场景建立长期读写会话；
-真正的数据收发会在调用 `OpenUsbDeviceSessions` 后进行。
+- Device discovery and filtering
+- Session management
+- Unified read/write with timeout control
+- Transport-level reset
 
-协议层（例如 Sahara、Firehose、Fastboot、自定义二进制协议）不在本库中实现，由调用程序基于统一会话接口自行实现。
+By default, discovery prefers metadata-first paths so simple enumeration does not require long-lived read/write sessions.
+Actual payload I/O starts after calling `OpenUsbDeviceSessions`.
 
-## 安装
+Protocol layers (for example Sahara, Firehose, Fastboot, or custom binary protocols) are intentionally out of scope and should be implemented by callers on top of the unified session interfaces.
 
-使用 NuGet 安装包：
+## Installation
+
+Install via NuGet:
 
 ```powershell
 dotnet add package FirmwareKit.Comm
 ```
 
-## 快速开始
+## Quick Start
 
-如何使用门面类 `FirmwareKitComm` 枚举可用的 USB API 与设备：
+Use the `FirmwareKitComm` facade to enumerate APIs and devices:
 
 ```csharp
 using FirmwareKit.Comm;
@@ -52,134 +54,134 @@ using FirmwareKit.Comm.Usb;
 
 var comm = new FirmwareKitComm();
 
-// 列出已注册的 USB API
+// List registered USB APIs
 foreach (var api in comm.GetAvailableUsbApis())
- Console.WriteLine(api);
+    Console.WriteLine(api);
 
-// 查看后端能力摘要
+// Print backend capability summary
 foreach (var capability in comm.GetAvailableUsbApiCapabilities())
 {
- Console.WriteLine($"api={capability.ApiName} nativeDiscovery={capability.SupportsNativeDiscovery} nativeAsync={capability.SupportsNativeAsyncIo} hotplug={capability.SupportsNativeHotPlugMonitoring} externalRuntime={capability.RequiresExternalRuntime}");
+    Console.WriteLine($"api={capability.ApiName} nativeDiscovery={capability.SupportsNativeDiscovery} nativeAsync={capability.SupportsNativeAsyncIo} hotplug={capability.SupportsNativeHotPlugMonitoring} externalRuntime={capability.RequiresExternalRuntime}");
 }
 
-// 同步枚举设备并过滤 VendorId（示例：0x18D1）
+// Sync device enumeration with VendorId filter (example: 0x18D1)
 var devices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter { VendorId = 0x18D1 });
 foreach (var d in devices)
 {
- var ifClass = d.InterfaceClass.HasValue ? $"0x{d.InterfaceClass.Value:X2}" : "--";
- var ifSubClass = d.InterfaceSubClass.HasValue ? $"0x{d.InterfaceSubClass.Value:X2}" : "--";
- var ifProto = d.InterfaceProtocol.HasValue ? $"0x{d.InterfaceProtocol.Value:X2}" : "--";
- Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} if={ifClass}/{ifSubClass}/{ifProto} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
+    var ifClass = d.InterfaceClass.HasValue ? $"0x{d.InterfaceClass.Value:X2}" : "--";
+    var ifSubClass = d.InterfaceSubClass.HasValue ? $"0x{d.InterfaceSubClass.Value:X2}" : "--";
+    var ifProto = d.InterfaceProtocol.HasValue ? $"0x{d.InterfaceProtocol.Value:X2}" : "--";
+    Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} if={ifClass}/{ifSubClass}/{ifProto} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
 }
 
-// 可选：按USB接口类过滤（例如 Qualcomm EDL 常见为 0xFF/0xFF/0xFF）
+// Optional: filter by USB interface class (for example Qualcomm EDL often uses 0xFF/0xFF/0xFF)
 var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
 {
- VendorId = 0x05C6,
- InterfaceClass = 0xFF,
- InterfaceSubClass = 0xFF,
- InterfaceProtocol = 0xFF
+    VendorId = 0x05C6,
+    InterfaceClass = 0xFF,
+    InterfaceSubClass = 0xFF,
+    InterfaceProtocol = 0xFF
 });
 
-// 异步枚举
+// Async enumeration
 var asyncDevices = await comm.EnumerateUsbDevicesAsync(UsbApiKind.LibUsbDotNet);
 
-// 打开会话并执行统一读写（协议解析由调用方实现）
+// Open sessions and do unified read/write (protocol parsing is caller-defined)
 using var sessions = comm.OpenUsbDeviceSessions(UsbApiKind.Auto, new UsbDeviceFilter
 {
- VendorId = 0x05C6,
- ProductId = 0x9008,
- InterfaceClass = 0xFF,
- InterfaceSubClass = 0xFF,
- InterfaceProtocol = 0xFF
+    VendorId = 0x05C6,
+    ProductId = 0x9008,
+    InterfaceClass = 0xFF,
+    InterfaceSubClass = 0xFF,
+    InterfaceProtocol = 0xFF
 });
 
 var session = sessions.Sessions.FirstOrDefault();
 if (session != null)
 {
- // 仅示例：具体命令/协议包由上层自己定义
- _ = session.Write(new byte[] { 0x7E, 0x00 }, 2, 3000);
- var response = session.Read(512, 3000);
- Console.WriteLine($"response bytes: {response.Length}");
+    // Example only: command/protocol payload is app-specific
+    _ = session.Write(new byte[] { 0x7E, 0x00 }, 2, 3000);
+    var response = session.Read(512, 3000);
+    Console.WriteLine($"response bytes: {response.Length}");
 
- // 控制传输示例：读取接口当前备用设置
- var setup = new UsbSetupPacket
- {
-  RequestType = 0x81,
-  Request = 0x0A,
-  Value = 0,
-  Index = 0,
-  Length = 1
- };
- var ctrlBuffer = new byte[1];
- var ctrlCount = session.ControlTransfer(setup, ctrlBuffer, 0, ctrlBuffer.Length, 3000);
- Console.WriteLine($"control bytes: {ctrlCount}, alt={ctrlBuffer[0]}");
+    // Control transfer example: read current alternate setting
+    var setup = new UsbSetupPacket
+    {
+        RequestType = 0x81,
+        Request = 0x0A,
+        Value = 0,
+        Index = 0,
+        Length = 1
+    };
+    var ctrlBuffer = new byte[1];
+    var ctrlCount = session.ControlTransfer(setup, ctrlBuffer, 0, ctrlBuffer.Length, 3000);
+    Console.WriteLine($"control bytes: {ctrlCount}, alt={ctrlBuffer[0]}");
 
- // 异步会话（若后端不直接实现异步接口，可用 AsAsync() 适配）
- var asyncSession = session.AsAsync();
- var asyncResponse = await asyncSession.ReadAsync(512, 3000);
- Console.WriteLine($"async response bytes: {asyncResponse.Length}");
+    // Async session (if backend does not implement async natively, use AsAsync())
+    var asyncSession = session.AsAsync();
+    var asyncResponse = await asyncSession.ReadAsync(512, 3000);
+    Console.WriteLine($"async response bytes: {asyncResponse.Length}");
 }
 
-// 设备变化监视（记得在适当时机释放）
+// Device change monitoring (dispose when appropriate)
 using var monitor = comm.MonitorUsbDevices(
- changes =>
- {
-  foreach (var change in changes)
-  {
-   Console.WriteLine($"device {change.Kind}: {change.Device.ApiName} {change.Device.DevicePath}");
-  }
- },
- UsbApiKind.Auto,
- pollInterval: TimeSpan.FromSeconds(1),
- fireInitialSnapshot: false,
- onError: ex => Console.WriteLine($"monitor error: {ex.Message}"));
+    changes =>
+    {
+        foreach (var change in changes)
+        {
+            Console.WriteLine($"device {change.Kind}: {change.Device.ApiName} {change.Device.DevicePath}");
+        }
+    },
+    UsbApiKind.Auto,
+    pollInterval: TimeSpan.FromSeconds(1),
+    fireInitialSnapshot: false,
+    onError: ex => Console.WriteLine($"monitor error: {ex.Message}"));
 
-// 结构化诊断事件（可用于指标上报/日志聚合）
+// Structured diagnostics event (for metrics/log aggregation)
 UsbTrace.TransferObserved += evt =>
 {
- Console.WriteLine($"usb {evt.Operation} backend={evt.Backend} outcome={evt.Outcome} bytes={evt.TransferredBytes}/{evt.RequestedBytes} retry={evt.RetryCount} err={evt.NativeErrorCode}");
+    Console.WriteLine($"usb {evt.Operation} backend={evt.Backend} outcome={evt.Outcome} bytes={evt.TransferredBytes}/{evt.RequestedBytes} retry={evt.RetryCount} err={evt.NativeErrorCode}");
 };
 ```
 
-注册自定义 USB API 的示例：
+Register a custom USB API provider:
 
 ```csharp
 comm.RegisterUsbApi("my-custom", () => new MyCustomUsbApiProvider());
 ```
 
-## 命令行工具
+## CLI
 
-项目 `FirmwareKit.Comm.CLI` 提供两个主要命令：
+`FirmwareKit.Comm.CLI` provides these commands:
 
-- `apis`：列出可用的 USB API。
-- `devices`：枚举设备并可用下列参数过滤。
-- `all-devices`：列出当前平台可识别的全部 USB 设备（默认使用 native 后端）。
+- `apis`: list available USB APIs.
+- `devices`: enumerate devices with optional filters.
+- `all-devices`: list all USB devices recognized by the current platform (native backend by default).
 
-用法示例：
+Examples:
 
 ```powershell
-# 列出 API
+# List APIs
 dotnet run --project FirmwareKit.Comm.CLI -- apis
 
-# 列出设备（使用 libusb、按 VID/PID 过滤）
+# List devices (libusb backend, filtered by VID/PID)
 dotnet run --project FirmwareKit.Comm.CLI -- devices --api libusb --vid 0x18D1 --pid 0x4E11
 
-# 列出当前平台可识别的全部 USB 设备
+# List all USB devices recognized by current platform
 dotnet run --project FirmwareKit.Comm.CLI -- all-devices
 ```
 
-支持的 `devices` 参数：
+Supported `devices` options:
 
-- `--api auto|native|libusb`：选择后端 API。
-- `--vid <hex>`：供应商 ID（十六进制或十进制）。
-- `--pid <hex>`：产品 ID（十六进制或十进制）。
-- `--serial <text>`：设备序列号。
-- `--path-contains <text>`：设备路径包含文本。
-- `--if-class <hex|dec>`：接口类代码过滤。
-- `--if-subclass <hex|dec>`：接口子类代码过滤。
-- `--if-protocol <hex|dec>`：接口协议代码过滤。
+- `--api auto|native|libusb`: select backend API.
+- `--vid <hex>`: vendor ID (hex or decimal).
+- `--pid <hex>`: product ID (hex or decimal).
+- `--serial <text>`: device serial number.
+- `--path-contains <text>`: substring filter on device path.
+- `--if-class <hex|dec>`: interface class filter.
+- `--if-subclass <hex|dec>`: interface subclass filter.
+- `--if-protocol <hex|dec>`: interface protocol filter.
 
-## 许可
+## License
 
 MIT
