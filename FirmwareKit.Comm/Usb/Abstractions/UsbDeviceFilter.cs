@@ -2,64 +2,64 @@ namespace FirmwareKit.Comm.Usb.Abstractions;
 
 /// <summary>
 /// Describes optional device matching criteria.
-/// 描述可选的设备匹配条件。
+/// <para>描述可选的设备匹配条件。</para>
 /// </summary>
 public sealed class UsbDeviceFilter
 {
     /// <summary>
     /// Gets or sets the vendor identifier filter.
-    /// 获取或设置厂商 ID 过滤条件。
+    /// <para>获取或设置厂商 ID 过滤条件。</para>
     /// </summary>
     public ushort? VendorId { get; set; }
 
     /// <summary>
     /// Gets or sets the product identifier filter.
-    /// 获取或设置产品 ID 过滤条件。
+    /// <para>获取或设置产品 ID 过滤条件。</para>
     /// </summary>
     public ushort? ProductId { get; set; }
 
     /// <summary>
     /// Gets or sets the serial number filter.
-    /// 获取或设置序列号过滤条件。
+    /// <para>获取或设置序列号过滤条件。</para>
     /// </summary>
     public string? SerialNumber { get; set; }
 
     /// <summary>
     /// Gets or sets a substring that must appear in the device path.
-    /// 获取或设置设备路径必须包含的子串。
+    /// <para>获取或设置设备路径必须包含的子串。</para>
     /// </summary>
     public string? DevicePathContains { get; set; }
 
     /// <summary>
     /// Gets or sets the backend family filter.
-    /// 获取或设置后端类型过滤条件。
+    /// <para>获取或设置后端类型过滤条件。</para>
     /// </summary>
     public UsbApiKind? SourceApiKind { get; set; }
 
     /// <summary>
     /// Gets or sets the required USB interface class code.
-    /// 获取或设置要求的 USB 接口类代码。
+    /// <para>获取或设置要求的 USB 接口类代码。</para>
     /// </summary>
     public byte? InterfaceClass { get; set; }
 
     /// <summary>
     /// Gets or sets the required USB interface subclass code.
-    /// 获取或设置要求的 USB 接口子类代码。
+    /// <para>获取或设置要求的 USB 接口子类代码。</para>
     /// </summary>
     public byte? InterfaceSubClass { get; set; }
 
     /// <summary>
     /// Gets or sets the required USB interface protocol code.
-    /// 获取或设置要求的 USB 接口协议代码。
+    /// <para>获取或设置要求的 USB 接口协议代码。</para>
     /// </summary>
     public byte? InterfaceProtocol { get; set; }
 
     /// <summary>
     /// Determines whether the supplied metadata matches this filter.
-    /// 判断给定元数据是否匹配当前过滤器。
+    /// <para>判断给定元数据是否匹配当前过滤器。</para>
     /// </summary>
-    /// <param name="info">The device metadata to test. 待匹配的设备元数据。</param>
-    /// <returns><c>true</c> if the device matches; otherwise, <c>false</c>. 匹配返回 <c>true</c>，否则返回 <c>false</c>。</returns>
+    /// <param name="info">The device metadata to test. <para>待匹配的设备元数据。</para></param>
+    /// <returns><c>true</c> if the device matches; otherwise, <c>false</c>. <para>匹配返回 <c>true</c>，否则返回 <c>false</c>。</para></returns>
     public bool Matches(UsbDeviceInfo info)
     {
         if (VendorId.HasValue && info.VendorId != VendorId.Value) return false;

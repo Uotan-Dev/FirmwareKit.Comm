@@ -256,7 +256,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
     {
         if (usbDevice == null)
         {
-            throw new Exception("Device handle is closed.");
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
 
         if (buffer == null)
@@ -737,7 +737,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
         if (usbDevice == null)
         {
-            throw new Exception("Device handle is closed.");
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
 
         if (buffer == null)

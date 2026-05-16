@@ -1,8 +1,8 @@
 using FirmwareKit.Comm.Usb.Abstractions;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Usb.Backend.Windows.Win32API;
 using static FirmwareKit.Comm.Usb.Backend.Windows.WinUSBAPI;
 
@@ -134,7 +134,7 @@ internal class WinUSBDevice : UsbDevice
     {
         if (WinUSBHandle == IntPtr.Zero)
         {
-            throw new Exception("Device handle is closed.");
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
 
         if (buffer == null)
@@ -242,7 +242,7 @@ internal class WinUSBDevice : UsbDevice
         int? lastError = null;
         var outcome = UsbTransferOutcome.Success;
 
-        if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
+        if (WinUSBHandle == IntPtr.Zero) throw new UsbDeviceHandleClosedException("Device handle is closed.");
         if (length <= 0) return 0;
         ValidateBufferRange(buffer, offset, length);
 
@@ -317,7 +317,7 @@ internal class WinUSBDevice : UsbDevice
         var effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
         int? lastError = null;
 
-        if (WinUSBHandle == IntPtr.Zero) throw new Exception("Device handle is closed.");
+        if (WinUSBHandle == IntPtr.Zero) throw new UsbDeviceHandleClosedException("Device handle is closed.");
         ValidateWriteData(data, length);
 
         SetPipeTimeout(effectiveTimeoutMs);

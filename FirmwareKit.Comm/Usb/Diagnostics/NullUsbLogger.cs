@@ -2,13 +2,13 @@ namespace FirmwareKit.Comm.Usb.Diagnostics;
 
 /// <summary>
 /// Ignores USB diagnostic log messages.
-/// 忽略 USB 诊断日志消息。
+/// <para>忽略 USB 诊断日志消息。</para>
 /// </summary>
 public sealed class NullUsbLogger : IUsbLogger
 {
     /// <summary>
     /// Gets the shared instance.
-    /// 获取共享实例。
+    /// <para>获取共享实例。</para>
     /// </summary>
     public static readonly NullUsbLogger Instance = new();
 
@@ -18,9 +18,9 @@ public sealed class NullUsbLogger : IUsbLogger
 
     /// <summary>
     /// Ignores the diagnostic message.
-    /// 忽略该诊断日志消息。
+    /// <para>忽略该诊断日志消息。</para>
     /// </summary>
-    /// <param name="message">The diagnostic message. 诊断日志消息内容。</param>
+    /// <param name="message">The diagnostic message. <para>诊断日志消息内容。</para></param>
     public void Log(string message)
     {
     }

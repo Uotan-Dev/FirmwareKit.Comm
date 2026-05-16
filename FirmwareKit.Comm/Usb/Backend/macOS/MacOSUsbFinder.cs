@@ -25,7 +25,7 @@ internal static class MacOSUsbFinder
             IORegistryEntryGetPath(service, kIOServicePlane, sbPath);
             string devicePath = sbPath.ToString();
 
-            
+
 
             IntPtr pluginInterface = IntPtr.Zero;
             int score = 0;

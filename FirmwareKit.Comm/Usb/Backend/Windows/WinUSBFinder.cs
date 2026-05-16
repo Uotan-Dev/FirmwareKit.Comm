@@ -53,7 +53,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                                     continue;
                                 }
 
-                                // Ϊ Google �豸�Ż�����Щ�豸ͨ����ѡ WinUSB
+                                // Prefer WinUSB for Google devices
                                 bool isGoogleWinUsb = lowerPath.Contains("vid_18d1&pid_d00d");
 
                                 UsbDevice? device = null;

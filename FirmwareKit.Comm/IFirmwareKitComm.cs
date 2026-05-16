@@ -5,54 +5,54 @@ namespace FirmwareKit.Comm;
 
 /// <summary>
 /// Exposes the public FirmwareKit.Comm entry points for USB discovery and API registration.
-/// 暴露 FirmwareKit.Comm 的公共入口，用于 USB 发现与 API 注册。
+/// <para>暴露 FirmwareKit.Comm 的公共入口，用于 USB 发现与 API 注册。</para>
 /// </summary>
 public interface IFirmwareKitComm
 {
     /// <summary>
     /// Gets the names of the registered USB APIs.
-    /// 获取已注册的 USB API 名称列表。
+    /// <para>获取已注册的 USB API 名称列表。</para>
     /// </summary>
-    /// <returns>A read-only list of available API names. 可用 API 名称只读列表。</returns>
+    /// <returns>A read-only list of available API names. <para>可用 API 名称只读列表。</para></returns>
     IReadOnlyList<string> GetAvailableUsbApis();
 
     /// <summary>
     /// Gets capability summaries for the currently registered USB APIs.
-    /// 获取当前已注册 USB API 的能力摘要。
+    /// <para>获取当前已注册 USB API 的能力摘要。</para>
     /// </summary>
-    /// <returns>A read-only list of capability summaries. 能力摘要只读列表。</returns>
+    /// <returns>A read-only list of capability summaries. <para>能力摘要只读列表。</para></returns>
     IReadOnlyList<UsbApiCapabilities> GetAvailableUsbApiCapabilities();
 
     /// <summary>
     /// Enumerates USB devices for the specified API and filter.
-    /// 按指定 API 与过滤条件枚举 USB 设备。
+    /// <para>按指定 API 与过滤条件枚举 USB 设备。</para>
     /// </summary>
-    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
-    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
-    /// <returns>A read-only list of matched USB device descriptors. 匹配到的 USB 设备描述信息只读列表。</returns>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <returns>A read-only list of matched USB device descriptors. <para>匹配到的 USB 设备描述信息只读列表。</para></returns>
     IReadOnlyList<UsbDeviceInfo> EnumerateUsbDevices(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
     /// Enumerates USB devices asynchronously for the specified API and filter.
-    /// 按指定 API 与过滤条件异步枚举 USB 设备。
+    /// <para>按指定 API 与过滤条件异步枚举 USB 设备。</para>
     /// </summary>
-    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
-    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
-    /// <param name="cancellationToken">A cancellation token. 取消令牌。</param>
-    /// <returns>A task that resolves to the matched USB device descriptors. 返回匹配 USB 设备描述信息的任务。</returns>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the matched USB device descriptors. <para>返回匹配 USB 设备描述信息的任务。</para></returns>
     Task<IReadOnlyList<UsbDeviceInfo>> EnumerateUsbDevicesAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Monitors USB device additions and removals by polling snapshots.
-    /// 通过轮询快照监视 USB 设备新增与移除。
+    /// <para>通过轮询快照监视 USB 设备新增与移除。</para>
     /// </summary>
-    /// <param name="onChanged">Change callback. 设备变化回调。</param>
-    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
-    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
-    /// <param name="pollInterval">Polling interval. 轮询间隔。</param>
-    /// <param name="fireInitialSnapshot">Whether to emit initial Added events. 是否触发初始 Added 事件。</param>
-    /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. 枚举或回调失败时触发的可选错误回调。</param>
-    /// <returns>A disposable monitor handle. 可释放的监视句柄。</returns>
+    /// <param name="onChanged">Change callback. <para>设备变化回调。</para></param>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="pollInterval">Polling interval. <para>轮询间隔。</para></param>
+    /// <param name="fireInitialSnapshot">Whether to emit initial Added events. <para>是否触发初始 Added 事件。</para></param>
+    /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. <para>枚举或回调失败时触发的可选错误回调。</para></param>
+    /// <returns>A disposable monitor handle. <para>可释放的监视句柄。</para></returns>
     IDisposable MonitorUsbDevices(
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
         UsbApiKind apiKind = UsbApiKind.Auto,
@@ -63,28 +63,28 @@ public interface IFirmwareKitComm
 
     /// <summary>
     /// Opens matching USB device sessions for direct read/write operations.
-    /// 打开匹配的 USB 设备会话，用于直接读写操作。
+    /// <para>打开匹配的 USB 设备会话，用于直接读写操作。</para>
     /// </summary>
-    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
-    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
-    /// <returns>A disposable collection of opened sessions. 已打开会话的可释放集合。</returns>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <returns>A disposable collection of opened sessions. <para>已打开会话的可释放集合。</para></returns>
     UsbSessionCollection OpenUsbDeviceSessions(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
     /// Opens the first matching USB device session for direct read/write operations.
-    /// 打开第一个匹配的 USB 设备会话，用于直接读写操作。
+    /// <para>打开第一个匹配的 USB 设备会话，用于直接读写操作。</para>
     /// </summary>
-    /// <param name="apiKind">The USB API selection mode. USB API 选择模式。</param>
-    /// <param name="filter">Optional device filter. 可选设备过滤器。</param>
-    /// <returns>The first matching session, or <c>null</c> if none was found. 第一个匹配会话；如果没有则返回 <c>null</c>。</returns>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <returns>The first matching session, or <c>null</c> if none was found. <para>第一个匹配会话；如果没有则返回 <c>null</c>。</para></returns>
     IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
     /// Registers a custom USB API provider.
-    /// 注册自定义 USB API 提供器。
+    /// <para>注册自定义 USB API 提供器。</para>
     /// </summary>
-    /// <param name="apiName">The API name to register. 要注册的 API 名称。</param>
-    /// <param name="providerFactory">Factory that creates the provider. 创建提供器实例的工厂方法。</param>
-    /// <returns><c>true</c> when the provider is registered. 注册成功时返回 <c>true</c>。</returns>
+    /// <param name="apiName">The API name to register. <para>要注册的 API 名称。</para></param>
+    /// <param name="providerFactory">Factory that creates the provider. <para>创建提供器实例的工厂方法。</para></param>
+    /// <returns><c>true</c> when the provider is registered. <para>注册成功时返回 <c>true</c>。</para></returns>
     bool RegisterUsbApi(string apiName, Func<IUsbApiProvider> providerFactory);
 }

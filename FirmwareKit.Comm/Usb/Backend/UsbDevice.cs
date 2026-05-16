@@ -1,28 +1,113 @@
 namespace FirmwareKit.Comm.Usb.Backend;
 
+/// <summary>
+/// Represents an abstract USB device that provides read, write, control transfer, and lifecycle operations.
+/// <para>表示一个抽象 USB 设备，提供读取、写入、控制传输及生命周期操作。</para>
+/// </summary>
 internal abstract class UsbDevice : IDisposable
 {
+    /// <summary>
+    /// Gets the default timeout in milliseconds for this device.
+    /// <para>获取此设备的默认超时时间（毫秒）。</para>
+    /// </summary>
     public virtual int DefaultTimeoutMs => UsbTransferPolicies.DefaultTimeoutMs;
 
+    /// <summary>
+    /// Gets or sets the device path used to open the handle.
+    /// <para>获取或设置用于打开句柄的设备路径。</para>
+    /// </summary>
     public string DevicePath { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets the serial number of the device.
+    /// <para>获取或设置设备的序列号。</para>
+    /// </summary>
     public string? SerialNumber { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB vendor identifier.
+    /// <para>获取或设置 USB 厂商标识。</para>
+    /// </summary>
     public ushort VendorId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB product identifier.
+    /// <para>获取或设置 USB 产品标识。</para>
+    /// </summary>
     public ushort ProductId { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interface class code.
+    /// <para>获取或设置接口类代码。</para>
+    /// </summary>
     public byte? InterfaceClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interface subclass code.
+    /// <para>获取或设置接口子类代码。</para>
+    /// </summary>
     public byte? InterfaceSubClass { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interface protocol code.
+    /// <para>获取或设置接口协议代码。</para>
+    /// </summary>
     public byte? InterfaceProtocol { get; set; }
+
+    /// <summary>
+    /// Gets or sets a value indicating whether interface metadata has been observed from the device descriptor.
+    /// <para>获取或设置一个值，指示是否已从设备描述符中观测到接口元数据。</para>
+    /// </summary>
     public bool InterfaceMetadataObserved { get; set; }
+
+    /// <summary>
+    /// Gets or sets the platform-specific USB device type.
+    /// <para>获取或设置平台特定的 USB 设备类型。</para>
+    /// </summary>
     public UsbDeviceType UsbDeviceType { get; set; }
 
+    /// <summary>
+    /// Reads data from the device using the default timeout.
+    /// <para>使用默认超时时间从设备读取数据。</para>
+    /// </summary>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <returns>The received data. <para>接收到的数据。</para></returns>
     public abstract byte[] Read(int length);
 
+    /// <summary>
+    /// Reads data from the device with a specified timeout.
+    /// <para>使用指定超时时间从设备读取数据。</para>
+    /// </summary>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The received data. <para>接收到的数据。</para></returns>
     public virtual byte[] Read(int length, int timeoutMs) => Read(length);
 
+    /// <summary>
+    /// Performs a USB control transfer.
+    /// <para>执行 USB 控制传输。</para>
+    /// </summary>
+    /// <param name="setupPacket">The setup packet for the control request. <para>控制请求的 Setup 包。</para></param>
+    /// <param name="buffer">The data buffer, or <c>null</c> for zero-length transfers. <para>数据缓冲区；零长度传输时为 <c>null</c>。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes to transfer. <para>要传输的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The number of bytes transferred. <para>已传输的字节数。</para></returns>
+    /// <exception cref="NotSupportedException">Thrown when the device does not support control transfers. <para>当设备不支持控制传输时抛出。</para></exception>
     public virtual int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
     {
         throw new NotSupportedException($"{GetType().Name} does not support control transfers.");
     }
 
+    /// <summary>
+    /// Validates that the specified buffer range is within bounds.
+    /// <para>验证指定的缓冲区范围是否在边界内。</para>
+    /// </summary>
+    /// <param name="buffer">The buffer to validate. <para>要验证的缓冲区。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes. <para>字节数。</para></param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="buffer"/> is <c>null</c>. <para>当 <paramref name="buffer"/> 为 <c>null</c> 时抛出。</para></exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="offset"/> or <paramref name="length"/> is out of range. <para>当 <paramref name="offset"/> 或 <paramref name="length"/> 超出范围时抛出。</para></exception>
     internal static void ValidateBufferRange(byte[] buffer, int offset, int length)
     {
         if (buffer == null)
@@ -41,6 +126,14 @@ internal abstract class UsbDevice : IDisposable
         }
     }
 
+    /// <summary>
+    /// Validates that the write data buffer is not null and the length is within bounds.
+    /// <para>验证写入数据缓冲区不为 null 且长度在边界内。</para>
+    /// </summary>
+    /// <param name="data">The data buffer to validate. <para>要验证的数据缓冲区。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <exception cref="ArgumentNullException">Thrown when <paramref name="data"/> is <c>null</c>. <para>当 <paramref name="data"/> 为 <c>null</c> 时抛出。</para></exception>
+    /// <exception cref="ArgumentOutOfRangeException">Thrown when <paramref name="length"/> is out of range. <para>当 <paramref name="length"/> 超出范围时抛出。</para></exception>
     internal static void ValidateWriteData(byte[] data, int length)
     {
         if (data == null)
@@ -54,6 +147,14 @@ internal abstract class UsbDevice : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads data from the device directly into the specified buffer using the default timeout.
+    /// <para>使用默认超时时间将数据直接读入指定的缓冲区。</para>
+    /// </summary>
+    /// <param name="buffer">The target buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <returns>The number of bytes actually read. <para>实际读取的字节数。</para></returns>
     public virtual int ReadInto(byte[] buffer, int offset, int length)
     {
         if (length <= 0) return 0;
@@ -65,47 +166,177 @@ internal abstract class UsbDevice : IDisposable
         return data.Length;
     }
 
+    /// <summary>
+    /// Reads data from the device directly into the specified buffer with a specified timeout.
+    /// <para>使用指定超时时间将数据直接读入指定的缓冲区。</para>
+    /// </summary>
+    /// <param name="buffer">The target buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The number of bytes actually read. <para>实际读取的字节数。</para></returns>
     public virtual int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => ReadInto(buffer, offset, length);
 
+    /// <summary>
+    /// Asynchronously reads data from the device.
+    /// <para>异步从设备读取数据。</para>
+    /// </summary>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous read operation. <para>表示异步读取操作的任务。</para></returns>
     public virtual Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => Read(length, timeoutMs), cancellationToken);
     }
 
+    /// <summary>
+    /// Asynchronously reads data directly into the specified buffer.
+    /// <para>异步将数据直接读入指定的缓冲区。</para>
+    /// </summary>
+    /// <param name="buffer">The target buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous read operation with the number of bytes read. <para>表示异步读取操作并返回已读取字节数的任务。</para></returns>
     public virtual Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => ReadInto(buffer, offset, length, timeoutMs), cancellationToken);
     }
 
+    /// <summary>
+    /// Writes data to the device using the default timeout.
+    /// <para>使用默认超时时间向设备写入数据。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>要写入的数据。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <returns>The number of bytes actually written. <para>实际写入的字节数。</para></returns>
     public abstract long Write(byte[] data, int length);
+
+    /// <summary>
+    /// Writes data to the device with a specified timeout.
+    /// <para>使用指定超时时间向设备写入数据。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>要写入的数据。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The number of bytes actually written. <para>实际写入的字节数。</para></returns>
     public virtual long Write(byte[] data, int length, int timeoutMs) => Write(data, length);
 
+    /// <summary>
+    /// Asynchronously writes data to the device.
+    /// <para>异步向设备写入数据。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>要写入的数据。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous write operation with the number of bytes written. <para>表示异步写入操作并返回已写入字节数的任务。</para></returns>
     public virtual Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => Write(data, length, timeoutMs), cancellationToken);
     }
 
+    /// <summary>
+    /// Asynchronously performs a USB control transfer.
+    /// <para>异步执行 USB 控制传输。</para>
+    /// </summary>
+    /// <param name="setupPacket">The setup packet for the control request. <para>控制请求的 Setup 包。</para></param>
+    /// <param name="buffer">The data buffer, or <c>null</c> for zero-length transfers. <para>数据缓冲区；零长度传输时为 <c>null</c>。</para></param>
+    /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
+    /// <param name="length">The number of bytes to transfer. <para>要传输的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous control transfer with the number of bytes transferred. <para>表示异步控制传输并返回已传输字节数的任务。</para></returns>
     public virtual Task<int> ControlTransferAsync(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(() => ControlTransfer(setupPacket, buffer, offset, length, timeoutMs), cancellationToken);
     }
 
+    /// <summary>
+    /// Retrieves the serial number string from the device.
+    /// <para>从设备获取序列号字符串。</para>
+    /// </summary>
+    /// <returns>Zero on success; a negative error code on failure. <para>成功时返回零；失败时返回负数错误码。</para></returns>
     public abstract int GetSerialNumber();
+
+    /// <summary>
+    /// Opens the device handle and claims the USB interface.
+    /// <para>打开设备句柄并声明 USB 接口。</para>
+    /// </summary>
+    /// <returns>Zero on success; a non-zero error code on failure. <para>成功时返回零；失败时返回非零错误码。</para></returns>
     public abstract int CreateHandle();
+
+    /// <summary>
+    /// Resets the USB device.
+    /// <para>重置 USB 设备。</para>
+    /// </summary>
     public abstract void Reset();
+
+    /// <summary>
+    /// Asynchronously resets the USB device.
+    /// <para>异步重置 USB 设备。</para>
+    /// </summary>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous reset operation. <para>表示异步重置操作的任务。</para></returns>
     public virtual Task ResetAsync(CancellationToken cancellationToken = default)
     {
         return FirmwareKit.Comm.Usb.Abstractions.UsbAsyncExecution.Run(Reset, cancellationToken);
     }
 
+    /// <summary>
+    /// Releases the device handle and all associated resources.
+    /// <para>释放设备句柄及所有关联资源。</para>
+    /// </summary>
     public abstract void Dispose();
 }
 
+/// <summary>
+/// Identifies the platform-specific USB device backend type.
+/// <para>标识平台特定的 USB 设备后端类型。</para>
+/// </summary>
 internal enum UsbDeviceType
 {
+    /// <summary>
+    /// Windows legacy USB backend.
+    /// <para>Windows 传统 USB 后端。</para>
+    /// </summary>
     WinLegacy = 0,
+
+    /// <summary>
+    /// Windows WinUSB backend.
+    /// <para>Windows WinUSB 后端。</para>
+    /// </summary>
     WinUSB = 1,
+
+    /// <summary>
+    /// Linux usbfs backend.
+    /// <para>Linux usbfs 后端。</para>
+    /// </summary>
     Linux = 2,
+
+    /// <summary>
+    /// LibUSB cross-platform backend.
+    /// <para>LibUSB 跨平台后端。</para>
+    /// </summary>
     LibUSB = 3,
-    MacOS = 4
+
+    /// <summary>
+    /// macOS native backend.
+    /// <para>macOS 原生后端。</para>
+    /// </summary>
+    MacOS = 4,
+
+    /// <summary>
+    /// HarmonyOS USBManager backend (via IPC bridge).
+    /// <para>HarmonyOS USBManager 后端（通过 IPC 桥接）。</para>
+    /// </summary>
+    HarmonyOS = 5,
+
+    /// <summary>
+    /// OpenHarmony usbfs backend.
+    /// <para>OpenHarmony usbfs 后端。</para>
+    /// </summary>
+    OpenHarmony = 6
 }

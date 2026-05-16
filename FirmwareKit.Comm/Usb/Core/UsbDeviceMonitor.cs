@@ -3,6 +3,10 @@ using FirmwareKit.Comm.Usb.Diagnostics;
 
 namespace FirmwareKit.Comm.Usb.Core;
 
+/// <summary>
+/// Monitors USB device arrivals and removals by periodically polling a device snapshot.
+/// <para>通过定期轮询设备快照来监视 USB 设备的新增与移除。</para>
+/// </summary>
 internal sealed class UsbDeviceMonitor : IDisposable
 {
     private readonly Func<IReadOnlyList<UsbDeviceInfo>> _enumerator;

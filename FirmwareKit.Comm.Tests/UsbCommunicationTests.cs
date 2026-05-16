@@ -14,6 +14,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         Assert.Contains("native", apis, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("libusb", apis, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("harmony", apis, StringComparer.OrdinalIgnoreCase);
+        Assert.Contains("openharmony", apis, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -78,6 +80,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         var native = Assert.Single(capabilities, item => string.Equals(item.ApiName, "native", StringComparison.OrdinalIgnoreCase));
         var libusb = Assert.Single(capabilities, item => string.Equals(item.ApiName, "libusb", StringComparison.OrdinalIgnoreCase));
+        var harmony = Assert.Single(capabilities, item => string.Equals(item.ApiName, "harmony", StringComparison.OrdinalIgnoreCase));
+        var openharmony = Assert.Single(capabilities, item => string.Equals(item.ApiName, "openharmony", StringComparison.OrdinalIgnoreCase));
         Assert.True(native.SupportsNativeDiscovery);
         Assert.True(native.SupportsControlTransfers);
         Assert.False(native.SupportsNativeAsyncIo);
@@ -86,6 +90,13 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.True(libusb.SupportsControlTransfers);
         Assert.True(libusb.SupportsNativeAsyncIo);
         Assert.True(libusb.RequiresExternalRuntime);
+        Assert.Equal(UsbApiKind.HarmonyOS, harmony.ApiKind);
+        Assert.True(harmony.SupportsControlTransfers);
+        Assert.False(harmony.RequiresExternalRuntime);
+        Assert.Equal(UsbApiKind.OpenHarmony, openharmony.ApiKind);
+        Assert.True(openharmony.SupportsControlTransfers);
+        Assert.False(openharmony.SupportsNativeAsyncIo);
+        Assert.False(openharmony.RequiresExternalRuntime);
     }
 
     [Fact]
@@ -615,6 +626,141 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         public void Dispose()
         {
+        }
+    }
+
+    [Fact]
+    public void HarmonyOSApiKind_IsRegisteredInDefaultRegistry()
+    {
+        var registry = UsbApiRegistry.CreateDefault();
+        var apis = registry.GetApiNames();
+
+        Assert.Contains("harmony", apis, StringComparer.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void HarmonyOSApiKind_ResolvesToHarmonyProvider()
+    {
+        var layer = new UsbCommunicationLayer();
+        var capabilities = layer.GetAvailableApiCapabilities();
+        var harmony = capabilities.FirstOrDefault(c => string.Equals(c.ApiName, "harmony", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(harmony);
+        Assert.Equal(UsbApiKind.HarmonyOS, harmony.ApiKind);
+    }
+
+    [Fact]
+    public void OpenHarmonyApiKind_ResolvesToOpenHarmonyProvider()
+    {
+        var layer = new UsbCommunicationLayer();
+        var capabilities = layer.GetAvailableApiCapabilities();
+        var openharmony = capabilities.FirstOrDefault(c => string.Equals(c.ApiName, "openharmony", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(openharmony);
+        Assert.Equal(UsbApiKind.OpenHarmony, openharmony.ApiKind);
+    }
+
+    [Fact]
+    public void UsbApiKind_HarmonyOS_HasCorrectValue()
+    {
+        Assert.Equal(4, (int)UsbApiKind.HarmonyOS);
+    }
+
+    [Fact]
+    public void UsbApiKind_OpenHarmony_HasCorrectValue()
+    {
+        Assert.Equal(5, (int)UsbApiKind.OpenHarmony);
+    }
+
+    [Fact]
+    public void UsbDeviceHandleClosedException_IsInvalidOperationException()
+    {
+        var ex = new UsbDeviceHandleClosedException("test");
+        Assert.IsType<UsbDeviceHandleClosedException>(ex);
+        Assert.IsAssignableFrom<InvalidOperationException>(ex);
+        Assert.Equal("test", ex.Message);
+    }
+
+    [Fact]
+    public void UsbTransferException_IsIOException()
+    {
+        var ex = new UsbTransferException("transfer failed");
+        Assert.IsType<UsbTransferException>(ex);
+        Assert.IsAssignableFrom<IOException>(ex);
+        Assert.Equal("transfer failed", ex.Message);
+        Assert.Null(ex.NativeErrorCode);
+    }
+
+    [Fact]
+    public void UsbTransferException_WithNativeErrorCode_PreservesCode()
+    {
+        var ex = new UsbTransferException("transfer failed", 110);
+        Assert.Equal(110, ex.NativeErrorCode);
+    }
+
+    [Fact]
+    public void UsbDeviceOpenException_IsInvalidOperationException()
+    {
+        var ex = new UsbDeviceOpenException("open failed", "/dev/bus/usb/001/001", 13);
+        Assert.IsType<UsbDeviceOpenException>(ex);
+        Assert.Equal("/dev/bus/usb/001/001", ex.DevicePath);
+        Assert.Equal(13, ex.NativeErrorCode);
+    }
+
+    [Fact]
+    public void UsbDeviceFilter_MatchesHarmonyOSApiKind()
+    {
+        var info = new UsbDeviceInfo
+        {
+            VendorId = 0x18D1,
+            ProductId = 0xD00D,
+            SourceApiKind = UsbApiKind.HarmonyOS
+        };
+
+        var matchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.HarmonyOS };
+        var nonMatchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.Native };
+
+        Assert.True(matchingFilter.Matches(info));
+        Assert.False(nonMatchingFilter.Matches(info));
+    }
+
+    [Fact]
+    public void UsbDeviceFilter_MatchesOpenHarmonyApiKind()
+    {
+        var info = new UsbDeviceInfo
+        {
+            VendorId = 0x18D1,
+            ProductId = 0xD00D,
+            SourceApiKind = UsbApiKind.OpenHarmony
+        };
+
+        var matchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.OpenHarmony };
+        var nonMatchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.HarmonyOS };
+
+        Assert.True(matchingFilter.Matches(info));
+        Assert.False(nonMatchingFilter.Matches(info));
+    }
+
+    [Fact]
+    public void CustomProvider_WithHarmonyOSApiKind_CanBeRegistered()
+    {
+        var layer = new UsbCommunicationLayer(new UsbApiRegistry());
+        _ = layer.RegisterApi("harmony-custom", () => new HarmonyOSCustomProvider());
+
+        var capabilities = layer.GetAvailableApiCapabilities();
+        var custom = Assert.Single(capabilities, c => c.ApiName == "harmony-custom");
+        Assert.Equal(UsbApiKind.HarmonyOS, custom.ApiKind);
+    }
+
+    private sealed class HarmonyOSCustomProvider : IUsbApiProvider
+    {
+        public string ApiName => "harmony-custom";
+        public UsbApiKind ApiKind => UsbApiKind.HarmonyOS;
+        public bool IsSupportedOnCurrentPlatform => true;
+
+        public IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter = null)
+        {
+            return Array.Empty<IUsbDeviceSession>();
         }
     }
 }

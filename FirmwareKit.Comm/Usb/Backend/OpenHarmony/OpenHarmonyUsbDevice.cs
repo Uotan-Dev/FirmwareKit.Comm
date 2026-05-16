@@ -3,11 +3,11 @@ using FirmwareKit.Comm.Usb.Diagnostics;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
-using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
+using static FirmwareKit.Comm.Usb.Backend.OpenHarmony.OpenHarmonyUsbAPI;
 
-namespace FirmwareKit.Comm.Usb.Backend.Linux;
+namespace FirmwareKit.Comm.Usb.Backend.OpenHarmony;
 
-internal class LinuxUsbDevice : UsbDevice
+internal class OpenHarmonyUsbDevice : UsbDevice
 {
     private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
@@ -22,20 +22,36 @@ internal class LinuxUsbDevice : UsbDevice
     public override int CreateHandle()
     {
         fd = open(DevicePath, O_RDWR | O_CLOEXEC);
-        if (fd < 0) return fd;
+        if (fd < 0)
+        {
+            int openError = Marshal.GetLastWin32Error();
+            UsbTrace.Log($"OpenHarmonyUsbDevice: open failed for {DevicePath}, error: {openError}");
+
+            fd = open(DevicePath, 0 | O_CLOEXEC);
+            if (fd < 0)
+            {
+                return Marshal.GetLastWin32Error();
+            }
+        }
+
         int ifc = InterfaceId;
         int n = ioctl(fd, USBDEVFS_CLAIMINTERFACE, ref ifc);
         if (n != 0)
         {
+            UsbTrace.Log($"OpenHarmonyUsbDevice: CLAIMINTERFACE failed, trying disconnect first");
             ioctl(fd, USBDEVFS_DISCONNECT, ref ifc);
             n = ioctl(fd, USBDEVFS_CLAIMINTERFACE, ref ifc);
         }
+
         if (n != 0)
         {
+            int claimError = Marshal.GetLastWin32Error();
+            UsbTrace.Log($"OpenHarmonyUsbDevice: CLAIMINTERFACE failed with error: {claimError}");
             close(fd);
             fd = -1;
             return n;
         }
+
         GetSerialNumber();
         return 0;
     }
@@ -91,7 +107,7 @@ internal class LinuxUsbDevice : UsbDevice
                     int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
                     if (result < 0)
                     {
-                        throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+                        throw new UsbTransferException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}", Marshal.GetLastWin32Error());
                     }
 
                     return result;
@@ -115,7 +131,7 @@ internal class LinuxUsbDevice : UsbDevice
                 int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
                 if (result < 0)
                 {
-                    throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+                    throw new UsbTransferException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}", Marshal.GetLastWin32Error());
                 }
 
                 if (isInDirection && buffer != null)
@@ -135,7 +151,7 @@ internal class LinuxUsbDevice : UsbDevice
         int zeroResult = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
         if (zeroResult < 0)
         {
-            throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
+            throw new UsbTransferException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}", Marshal.GetLastWin32Error());
         }
 
         return zeroResult;
@@ -205,6 +221,7 @@ internal class LinuxUsbDevice : UsbDevice
                     return 0;
                 }
             }
+
             return -1;
         }
         finally
@@ -282,12 +299,13 @@ internal class LinuxUsbDevice : UsbDevice
                             outcome = UsbTransferOutcome.Timeout;
                             break;
                         }
+
                         if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
                         {
                             outcome = UsbTransferOutcome.FatalError;
                             UsbTrace.EmitTransfer(new UsbTransferEvent
                             {
-                                Backend = "linux-usbfs",
+                                Backend = "openharmony-usbfs",
                                 DevicePath = DevicePath,
                                 Operation = UsbTransferOperation.Read,
                                 RequestedBytes = length,
@@ -298,7 +316,7 @@ internal class LinuxUsbDevice : UsbDevice
                                 ElapsedMs = stopwatch.ElapsedMilliseconds,
                                 Outcome = outcome
                             });
-                            throw new IOException($"USB read failed with fatal error: {err}");
+                            throw new UsbTransferException($"USB read failed with fatal error: {err}", err);
                         }
 
                         if (++retry > MAX_RETRIES) break;
@@ -331,7 +349,7 @@ internal class LinuxUsbDevice : UsbDevice
 
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
-            Backend = "linux-usbfs",
+            Backend = "openharmony-usbfs",
             DevicePath = DevicePath,
             Operation = UsbTransferOperation.Read,
             RequestedBytes = length,
@@ -364,10 +382,9 @@ internal class LinuxUsbDevice : UsbDevice
 
         if (length == 0)
         {
-            // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
             UsbTrace.EmitTransfer(new UsbTransferEvent
             {
-                Backend = "linux-usbfs",
+                Backend = "openharmony-usbfs",
                 DevicePath = DevicePath,
                 Operation = UsbTransferOperation.Write,
                 RequestedBytes = 0,
@@ -413,12 +430,13 @@ internal class LinuxUsbDevice : UsbDevice
                             outcome = UsbTransferOutcome.Timeout;
                             break;
                         }
+
                         if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
                         {
                             outcome = UsbTransferOutcome.FatalError;
                             UsbTrace.EmitTransfer(new UsbTransferEvent
                             {
-                                Backend = "linux-usbfs",
+                                Backend = "openharmony-usbfs",
                                 DevicePath = DevicePath,
                                 Operation = UsbTransferOperation.Write,
                                 RequestedBytes = length,
@@ -429,7 +447,7 @@ internal class LinuxUsbDevice : UsbDevice
                                 ElapsedMs = stopwatch.ElapsedMilliseconds,
                                 Outcome = outcome
                             });
-                            throw new IOException($"USB write failed with fatal error: {err}");
+                            throw new UsbTransferException($"USB write failed with fatal error: {err}", err);
                         }
 
                         if (++retry > MAX_RETRIES) break;
@@ -444,7 +462,7 @@ internal class LinuxUsbDevice : UsbDevice
                     var partial = (count > 0) ? count : -1;
                     UsbTrace.EmitTransfer(new UsbTransferEvent
                     {
-                        Backend = "linux-usbfs",
+                        Backend = "openharmony-usbfs",
                         DevicePath = DevicePath,
                         Operation = UsbTransferOperation.Write,
                         RequestedBytes = length,
@@ -457,6 +475,7 @@ internal class LinuxUsbDevice : UsbDevice
                     });
                     return partial;
                 }
+
                 count += n;
                 if (n < (int)xfer) break;
             }
@@ -473,7 +492,7 @@ internal class LinuxUsbDevice : UsbDevice
 
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
-            Backend = "linux-usbfs",
+            Backend = "openharmony-usbfs",
             DevicePath = DevicePath,
             Operation = UsbTransferOperation.Write,
             RequestedBytes = length,
@@ -487,9 +506,4 @@ internal class LinuxUsbDevice : UsbDevice
 
         return count;
     }
-
-
 }
-
-
-

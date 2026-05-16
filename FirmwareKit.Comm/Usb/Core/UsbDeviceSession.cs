@@ -3,6 +3,10 @@ using FirmwareKit.Comm.Usb.Backend;
 
 namespace FirmwareKit.Comm.Usb.Core;
 
+/// <summary>
+/// Represents an active session over a USB device, implementing both synchronous and asynchronous I/O.
+/// <para>表示 USB 设备上的活动会话，实现同步和异步 I/O。</para>
+/// </summary>
 internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSession
 {
     private readonly UsbDevice _device;

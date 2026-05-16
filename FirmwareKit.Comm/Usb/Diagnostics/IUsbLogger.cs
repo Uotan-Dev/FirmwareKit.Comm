@@ -2,14 +2,14 @@ namespace FirmwareKit.Comm.Usb.Diagnostics;
 
 /// <summary>
 /// Receives USB diagnostic log messages.
-/// 接收 USB 诊断日志消息。
+/// <para>接收 USB 诊断日志消息。</para>
 /// </summary>
 public interface IUsbLogger
 {
     /// <summary>
     /// Writes a diagnostic message.
-    /// 写入一条诊断日志消息。
+    /// <para>写入一条诊断日志消息。</para>
     /// </summary>
-    /// <param name="message">The diagnostic message. 诊断日志消息内容。</param>
+    /// <param name="message">The diagnostic message. <para>诊断日志消息内容。</para></param>
     void Log(string message);
 }

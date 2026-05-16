@@ -1,7 +1,7 @@
 using FirmwareKit.Comm.Usb.Abstractions;
-using System.Runtime.InteropServices;
-using System.Diagnostics;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Usb.Backend.macOS.MacOSUsbAPI;
 
 namespace FirmwareKit.Comm.Usb.Backend.macOS;
@@ -208,7 +208,7 @@ internal class MacOSUsbDevice : UsbDevice
     {
         if (devicePtr == IntPtr.Zero)
         {
-            throw new Exception("Device handle is closed.");
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
 
         if (buffer == null)

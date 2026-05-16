@@ -4,17 +4,16 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 
 internal class Win32API
 {
-    //File
-    public static uint GENERIC_READ { get; } = 0x80000000;
-    public static uint GENERIC_WRITE { get; } = 0x40000000;
-    public static uint FILE_SHARE_READ { get; } = 0x00000001;
-    public static uint FILE_SHARE_WRITE { get; } = 0x00000002;
-    public static uint OPEN_EXISTING { get; } = 3;
-    public static IntPtr INVALID_HANDLE_VALUE { get; } = new IntPtr(-1);
-    public static uint FILE_DEVICE_UNKNOWN { get; } = 0x00000022;
-    public static uint METHOD_BUFFERED { get; } = 0;
-    public static uint FILE_READ_ACCESS { get; } = 1;
-    public static uint FILE_FLAG_OVERLAPPED { get; } = 0x40000000;
+    public const uint GENERIC_READ = 0x80000000;
+    public const uint GENERIC_WRITE = 0x40000000;
+    public const uint FILE_SHARE_READ = 0x00000001;
+    public const uint FILE_SHARE_WRITE = 0x00000002;
+    public const uint OPEN_EXISTING = 3;
+    public static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
+    public const uint FILE_DEVICE_UNKNOWN = 0x00000022;
+    public const uint METHOD_BUFFERED = 0;
+    public const uint FILE_READ_ACCESS = 1;
+    public const uint FILE_FLAG_OVERLAPPED = 0x40000000;
 
     public static uint CTL_CODE(uint deviceType, uint function, uint method, uint access)
     {
@@ -42,7 +41,6 @@ internal class Win32API
     [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool ReadFile(IntPtr hFile, byte[] buffer, uint sizeToRead, out uint bytesRead, IntPtr overlapped);
 
-    //USB
     public struct GUID
     {
         public uint Data1;
@@ -107,8 +105,8 @@ internal class Win32API
         public byte iInterface;
     }
 
-    public static uint DIGCF_PRESENT { get; } = 0x00000002;
-    public static uint DIGCF_DEVICEINTERFACE { get; } = 0x00000010;
+    public const uint DIGCF_PRESENT = 0x00000002;
+    public const uint DIGCF_DEVICEINTERFACE = 0x00000010;
 
     [DllImport("setupapi.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern IntPtr SetupDiGetClassDevsW(ref GUID guid, string? enumerator, int parent, uint flag);
@@ -137,13 +135,6 @@ internal class Win32API
             overlapped ? FILE_FLAG_OVERLAPPED : 0, IntPtr.Zero);
     }
 
-    //ErrorCode
-    public static int ERROR_INSUFFICIENT_BUFFER { get; } = 122;
-    public static int ERROR_NO_MORE_ITEMS { get; } = 259;
-
-
+    public const int ERROR_INSUFFICIENT_BUFFER = 122;
+    public const int ERROR_NO_MORE_ITEMS = 259;
 }
-
-
-
-

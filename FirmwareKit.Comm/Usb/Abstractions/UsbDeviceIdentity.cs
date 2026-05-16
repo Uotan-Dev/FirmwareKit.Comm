@@ -2,16 +2,16 @@ namespace FirmwareKit.Comm.Usb.Abstractions;
 
 /// <summary>
 /// Builds stable identity keys for USB devices.
-/// 为 USB 设备构建稳定标识键。
+/// <para>为 USB 设备构建稳定标识键。</para>
 /// </summary>
 internal static class UsbDeviceIdentity
 {
     /// <summary>
     /// Creates a stable key that can be used for reopen, monitoring, or deduplication.
-    /// 创建可用于重连、监视或去重的稳定键。
+    /// <para>创建可用于重连、监视或去重的稳定键。</para>
     /// </summary>
-    /// <param name="info">The device metadata. 设备元数据。</param>
-    /// <returns>A stable identity string. 稳定标识字符串。</returns>
+    /// <param name="info">The device metadata. <para>设备元数据。</para></param>
+    /// <returns>A stable identity string. <para>稳定标识字符串。</para></returns>
     public static string BuildKey(UsbDeviceInfo info)
     {
         if (info == null)

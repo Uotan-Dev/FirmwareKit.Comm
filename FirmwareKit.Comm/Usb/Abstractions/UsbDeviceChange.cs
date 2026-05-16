@@ -2,38 +2,38 @@ namespace FirmwareKit.Comm.Usb.Abstractions;
 
 /// <summary>
 /// Describes a USB device change kind.
-/// 描述 USB 设备变化类型。
+/// <para>描述 USB 设备变化类型。</para>
 /// </summary>
 public enum UsbDeviceChangeKind
 {
     /// <summary>
     /// The device has been discovered.
-    /// 设备被发现。
+    /// <para>设备被发现。</para>
     /// </summary>
     Added = 0,
 
     /// <summary>
     /// The device is no longer present.
-    /// 设备已不再存在。
+    /// <para>设备已不再存在。</para>
     /// </summary>
     Removed = 1
 }
 
 /// <summary>
 /// Represents a single device change entry.
-/// 表示单个设备变化条目。
+/// <para>表示单个设备变化条目。</para>
 /// </summary>
 public sealed class UsbDeviceChange
 {
     /// <summary>
     /// Gets or sets the change kind.
-    /// 获取或设置变化类型。
+    /// <para>获取或设置变化类型。</para>
     /// </summary>
     public UsbDeviceChangeKind Kind { get; set; }
 
     /// <summary>
     /// Gets or sets the device metadata.
-    /// 获取或设置设备元数据。
+    /// <para>获取或设置设备元数据。</para>
     /// </summary>
     public UsbDeviceInfo Device { get; set; } = new();
 }

@@ -2,14 +2,22 @@ using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Backend;
 using FirmwareKit.Comm.Usb.Backend.Linux;
 using FirmwareKit.Comm.Usb.Backend.macOS;
+using FirmwareKit.Comm.Usb.Backend.OpenHarmony;
 using FirmwareKit.Comm.Usb.Backend.Windows;
 using FirmwareKit.Comm.Usb.Core;
+using FirmwareKit.Comm.Usb.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Providers;
 
 internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider, IUsbApiCapabilityProvider
 {
+    private static readonly Lazy<bool> IsOpenHarmony =
+        new(OpenHarmonyUsbAPI.IsOpenHarmonyPlatform, isThreadSafe: true);
+
+    private static readonly Lazy<bool> IsHarmonyOS =
+        new(OpenHarmonyUsbAPI.IsHarmonyOSPlatform, isThreadSafe: true);
+
     public const string ApiNameConst = "native";
 
     public string ApiName => ApiNameConst;
@@ -39,6 +47,19 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
 
     public UsbApiCapabilities GetCapabilities()
     {
+        bool isOpenHarmony = IsOpenHarmony.Value;
+        bool isHarmonyOS = IsHarmonyOS.Value;
+        string notes = "Native transport is synchronous; async access is currently adapter-based and hot-plug monitoring is polling-based.";
+
+        if (isOpenHarmony)
+        {
+            notes = "OpenHarmony native transport via usbfs; async access is adapter-based and hot-plug monitoring is polling-based.";
+        }
+        else if (isHarmonyOS)
+        {
+            notes = "HarmonyOS detected; use the dedicated 'harmony' provider for USBManager IPC bridge, or this native provider for direct usbfs access.";
+        }
+
         return new UsbApiCapabilities
         {
             ApiName = ApiName,
@@ -50,18 +71,33 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = false,
-            Notes = "Native transport is synchronous; async access is currently adapter-based and hot-plug monitoring is polling-based."
+            Notes = notes
         };
     }
 
     private static List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter)
     {
-        return RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
-            ? WinUSBFinder.FindDevice(filter)
-            : RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
-                ? LinuxUsbFinder.FindDevice(filter)
-                : RuntimeInformation.IsOSPlatform(OSPlatform.OSX)
-                    ? MacOSUsbFinder.FindDevice(filter)
-                    : new List<UsbDevice>();
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return WinUSBFinder.FindDevice(filter);
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            if (IsOpenHarmony.Value)
+            {
+                UsbTrace.Log("Detected OpenHarmony platform, using OpenHarmony USB backend.");
+                return OpenHarmonyUsbFinder.FindDevice(filter);
+            }
+
+            return LinuxUsbFinder.FindDevice(filter);
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return MacOSUsbFinder.FindDevice(filter);
+        }
+
+        return new List<UsbDevice>();
     }
 }

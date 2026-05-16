@@ -2,147 +2,147 @@ namespace FirmwareKit.Comm.Usb.Diagnostics;
 
 /// <summary>
 /// Describes the kind of transfer operation.
-/// 描述传输操作类型。
+/// <para>描述传输操作类型。</para>
 /// </summary>
 public enum UsbTransferOperation
 {
     /// <summary>
     /// Read operation.
-    /// 读取操作。
+    /// <para>读取操作。</para>
     /// </summary>
     Read = 0,
 
     /// <summary>
     /// Write operation.
-    /// 写入操作。
+    /// <para>写入操作。</para>
     /// </summary>
     Write = 1,
 
     /// <summary>
     /// Reset operation.
-    /// 重置操作。
+    /// <para>重置操作。</para>
     /// </summary>
     Reset = 2,
 
     /// <summary>
     /// Device enumeration operation.
-    /// 设备枚举操作。
+    /// <para>设备枚举操作。</para>
     /// </summary>
     Enumerate = 3
 }
 
 /// <summary>
 /// Describes how a transfer operation finished.
-/// 描述传输操作结束状态。
+/// <para>描述传输操作结束状态。</para>
 /// </summary>
 public enum UsbTransferOutcome
 {
     /// <summary>
     /// Transfer completed successfully.
-    /// 传输成功完成。
+    /// <para>传输成功完成。</para>
     /// </summary>
     Success = 0,
 
     /// <summary>
     /// Transfer stopped due to timeout.
-    /// 传输因超时结束。
+    /// <para>传输因超时结束。</para>
     /// </summary>
     Timeout = 1,
 
     /// <summary>
     /// Transfer completed with fewer bytes than requested.
-    /// 传输字节数少于请求值。
+    /// <para>传输字节数少于请求值。</para>
     /// </summary>
     ShortTransfer = 2,
 
     /// <summary>
     /// Transfer failed with a fatal error.
-    /// 传输遇到致命错误。
+    /// <para>传输遇到致命错误。</para>
     /// </summary>
     FatalError = 3,
 
     /// <summary>
     /// Transfer could not start because backend/session was not ready.
-    /// 后端或会话未就绪，无法开始传输。
+    /// <para>后端或会话未就绪，无法开始传输。</para>
     /// </summary>
     NotReady = 4,
 
     /// <summary>
     /// Transfer was canceled.
-    /// 传输被取消。
+    /// <para>传输被取消。</para>
     /// </summary>
     Canceled = 5
 }
 
 /// <summary>
 /// Represents a structured USB transfer event.
-/// 表示结构化 USB 传输事件。
+/// <para>表示结构化 USB 传输事件。</para>
 /// </summary>
 public sealed class UsbTransferEvent
 {
     /// <summary>
     /// Gets or sets backend name.
-    /// 获取或设置后端名称。
+    /// <para>获取或设置后端名称。</para>
     /// </summary>
     public string Backend { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets device path.
-    /// 获取或设置设备路径。
+    /// <para>获取或设置设备路径。</para>
     /// </summary>
     public string DevicePath { get; set; } = string.Empty;
 
     /// <summary>
     /// Gets or sets transfer operation kind.
-    /// 获取或设置传输操作类型。
+    /// <para>获取或设置传输操作类型。</para>
     /// </summary>
     public UsbTransferOperation Operation { get; set; }
 
     /// <summary>
     /// Gets or sets requested bytes.
-    /// 获取或设置请求字节数。
+    /// <para>获取或设置请求字节数。</para>
     /// </summary>
     public int RequestedBytes { get; set; }
 
     /// <summary>
     /// Gets or sets transferred bytes.
-    /// 获取或设置实际传输字节数。
+    /// <para>获取或设置实际传输字节数。</para>
     /// </summary>
     public int TransferredBytes { get; set; }
 
     /// <summary>
     /// Gets or sets timeout in milliseconds.
-    /// 获取或设置超时（毫秒）。
+    /// <para>获取或设置超时（毫秒）。</para>
     /// </summary>
     public int TimeoutMs { get; set; }
 
     /// <summary>
     /// Gets or sets retry count.
-    /// 获取或设置重试次数。
+    /// <para>获取或设置重试次数。</para>
     /// </summary>
     public int RetryCount { get; set; }
 
     /// <summary>
     /// Gets or sets native error code if available.
-    /// 获取或设置原生错误码（若可用）。
+    /// <para>获取或设置原生错误码（若可用）。</para>
     /// </summary>
     public int? NativeErrorCode { get; set; }
 
     /// <summary>
     /// Gets or sets elapsed time in milliseconds.
-    /// 获取或设置耗时（毫秒）。
+    /// <para>获取或设置耗时（毫秒）。</para>
     /// </summary>
     public long ElapsedMs { get; set; }
 
     /// <summary>
     /// Gets or sets operation outcome.
-    /// 获取或设置操作结果。
+    /// <para>获取或设置操作结果。</para>
     /// </summary>
     public UsbTransferOutcome Outcome { get; set; }
 
     /// <summary>
     /// Gets or sets optional message.
-    /// 获取或设置可选消息。
+    /// <para>获取或设置可选消息。</para>
     /// </summary>
     public string? Message { get; set; }
 }
