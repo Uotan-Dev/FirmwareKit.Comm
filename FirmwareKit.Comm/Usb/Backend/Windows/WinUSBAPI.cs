@@ -36,47 +36,46 @@ internal static class WinUSBAPI
     public static readonly byte USB_ENDPOINT_DIRECTION_MASK = 0x80;
     public static readonly byte USB_STRING_DESCRIPTOR_TYPE = 0x03;
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_Initialize(IntPtr DeviceHandle, out IntPtr InterfaceHandle);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_Free(IntPtr InterfaceHandle);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_GetCurrentAlternateSetting(IntPtr InterfaceHandle, out byte InterfaceNum);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_GetCurrentAlternateSetting(IntPtr InterfaceHandle, out byte SettingNumber);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_GetDescriptor(IntPtr DeviceHandle, byte DescriptorType, byte index, ushort LangID,
-        IntPtr buffer, uint bufferLen, out uint lengthTransfered);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_GetDescriptor(IntPtr InterfaceHandle, byte DescriptorType, byte Index, ushort LangID,
+        IntPtr Buffer, uint BufferLength, out uint LengthTransferred);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_QueryInterfaceSettings(IntPtr DeviceHandle, byte interfaceNum, out Win32API.USBDeviceInterfaceDescriptor descriptor);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_QueryInterfaceSettings(IntPtr InterfaceHandle, byte AlternateInterfaceNumber, out Win32API.USBDeviceInterfaceDescriptor UsbAltInterfaceDescriptor);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_QueryPipe(IntPtr DeviceHandle, byte interfaceNum, byte pipeIndex, out WinUSBPipeInfo info);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_QueryPipe(IntPtr InterfaceHandle, byte AlternateInterfaceNumber, byte PipeIndex, out WinUSBPipeInfo PipeInformation);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_WritePipe(IntPtr DeviceHandle, byte pipeID, byte[] buffer,
-        uint bufferLen, out uint bytesTransfered, IntPtr overlapp);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_WritePipe(IntPtr InterfaceHandle, byte PipeID, byte[] Buffer,
+        uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_ReadPipe(IntPtr DeviceHandle, byte pipeID, byte[] buffer,
-        uint bufferLen, out uint bytesTransfered, IntPtr overlapp);
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_ReadPipe(IntPtr InterfaceHandle, byte PipeID, byte[] Buffer,
+        uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_ControlTransfer(IntPtr InterfaceHandle, WINUSB_SETUP_PACKET SetupPacket,
         byte[]? Buffer, uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_ResetPipe(IntPtr InterfaceHandle, byte PipeID);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_SetPipePolicy(IntPtr InterfaceHandle, byte PipeID, uint PolicyType, uint ValueLength, ref uint Value);
 
-    [DllImport("Winusb.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_SetPipePolicy(IntPtr InterfaceHandle, byte PipeID, uint PolicyType, uint ValueLength, ref byte Value);
 
-    // Pipe Policies
     public const uint SHORT_PACKET_TERMINATE = 0x01;
     public const uint AUTO_CLEAR_STALL = 0x02;
     public const uint PIPE_TRANSFER_TIMEOUT = 0x03;
@@ -84,11 +83,4 @@ internal static class WinUSBAPI
     public const uint ALLOW_PARTIAL_READS = 0x05;
     public const uint AUTO_FLUSH = 0x06;
     public const uint RAW_IO = 0x07;
-
-
-
 }
-
-
-
-

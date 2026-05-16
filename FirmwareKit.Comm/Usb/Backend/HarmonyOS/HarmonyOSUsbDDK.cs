@@ -96,7 +96,7 @@ internal static class HarmonyOSUsbDDK
     [StructLayout(LayoutKind.Sequential)]
     public struct UsbDdkInterface
     {
-        public UsbInterfaceDescriptor altsetting;
+        public IntPtr altsetting;
         public byte numAltsetting;
         public IntPtr extra;
         public int extraLength;
@@ -184,6 +184,12 @@ internal static class HarmonyOSUsbDDK
 
     [DllImport(LibUsbNdk, EntryPoint = "OH_Usb_DestroyDeviceMemMap")]
     public static extern int OH_Usb_DestroyDeviceMemMap(IntPtr devMmap);
+
+    [DllImport(LibUsbNdk, EntryPoint = "OH_Usb_GetDescriptor")]
+    public static extern int OH_Usb_GetDescriptor(ulong deviceId, byte descType, byte descIndex, byte[] data, ref uint dataLen);
+
+    [DllImport(LibUsbNdk, EntryPoint = "OH_Usb_GetInterfaceSetting")]
+    public static extern int OH_Usb_GetInterfaceSetting(ulong deviceId, byte configIndex, byte interfaceIndex, ref byte altsetting);
 
     internal static string GetErrorMessage(int errorCode)
     {

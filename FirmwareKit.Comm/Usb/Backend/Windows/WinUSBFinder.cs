@@ -22,7 +22,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
             foreach (var guid in KnownInterfaceGUIDs)
             {
                 Win32API.GUID apiGuid = ToApiGuid(guid);
-                var devInfo = Win32API.SetupDiGetClassDevsW(ref apiGuid, null, 0,
+                var devInfo = Win32API.SetupDiGetClassDevsW(ref apiGuid, null, IntPtr.Zero,
                     Win32API.DIGCF_PRESENT | Win32API.DIGCF_DEVICEINTERFACE);
 
                 if (devInfo == (IntPtr)(-1)) continue;
@@ -41,7 +41,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                         IntPtr detailBuffer = Marshal.AllocHGlobal((int)detailSize);
                         try
                         {
-                            Marshal.WriteInt32(detailBuffer, (IntPtr.Size == 4) ? 6 : 8);
+                            Marshal.WriteInt32(detailBuffer, 6);
                             uint requiredSize;
                             if (Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, detailBuffer, detailSize, out requiredSize, IntPtr.Zero))
                             {
@@ -158,8 +158,8 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
             try
             {
                 byte[] buffer = new byte[256];
-                int returned;
-                if (Win32API.DeviceIoControl(hDevice, LegacyUsbDevice.IoGetSerialCode, null, 0, buffer, buffer.Length, out returned, IntPtr.Zero))
+                uint returned;
+                if (Win32API.DeviceIoControl(hDevice, LegacyUsbDevice.IoGetSerialCode, null, 0, buffer, (uint)buffer.Length, out returned, IntPtr.Zero))
                 {
                     isLegacy = true;
                 }

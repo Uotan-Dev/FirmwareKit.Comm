@@ -24,11 +24,11 @@ internal class LinuxUsbDevice : UsbDevice
         fd = open(DevicePath, O_RDWR | O_CLOEXEC);
         if (fd < 0) return fd;
         int ifc = InterfaceId;
-        int n = ioctl(fd, USBDEVFS_CLAIMINTERFACE, ref ifc);
+        int n = ioctl(fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         if (n != 0)
         {
-            ioctl(fd, USBDEVFS_DISCONNECT, ref ifc);
-            n = ioctl(fd, USBDEVFS_CLAIMINTERFACE, ref ifc);
+            ioctl(fd, (UIntPtr)USBDEVFS_DISCONNECT, ref ifc);
+            n = ioctl(fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         }
         if (n != 0)
         {
@@ -44,7 +44,7 @@ internal class LinuxUsbDevice : UsbDevice
     {
         if (fd >= 0)
         {
-            ioctl(fd, USBDEVFS_RESET, IntPtr.Zero);
+            ioctl(fd, (UIntPtr)USBDEVFS_RESET, IntPtr.Zero);
         }
     }
 
@@ -88,7 +88,7 @@ internal class LinuxUsbDevice : UsbDevice
                 try
                 {
                     ctrl.data = pinnedHandle.AddrOfPinnedObject();
-                    int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+                    int result = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
                     if (result < 0)
                     {
                         throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -112,7 +112,7 @@ internal class LinuxUsbDevice : UsbDevice
             try
             {
                 ctrl.data = transferHandle.AddrOfPinnedObject();
-                int result = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+                int result = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
                 if (result < 0)
                 {
                     throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -132,7 +132,7 @@ internal class LinuxUsbDevice : UsbDevice
         }
 
         ctrl.data = IntPtr.Zero;
-        int zeroResult = ioctl(fd, IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86, ref ctrl);
+        int zeroResult = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
         if (zeroResult < 0)
         {
             throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -146,7 +146,7 @@ internal class LinuxUsbDevice : UsbDevice
         if (fd >= 0)
         {
             int ifc = InterfaceId;
-            ioctl(fd, USBDEVFS_RELEASEINTERFACE, ref ifc);
+            ioctl(fd, (UIntPtr)USBDEVFS_RELEASEINTERFACE, ref ifc);
             close(fd);
             fd = -1;
         }
@@ -162,6 +162,7 @@ internal class LinuxUsbDevice : UsbDevice
         try
         {
             uint ctrlCode = (IntPtr.Size == 8) ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86;
+            UIntPtr ctrlCodePtr = (UIntPtr)ctrlCode;
 
             ctrl.bRequestType = 0x80;
             ctrl.bRequest = 0x06;
@@ -171,7 +172,7 @@ internal class LinuxUsbDevice : UsbDevice
             ctrl.data = handle.AddrOfPinnedObject();
             ctrl.timeout = 1000;
 
-            int n = ioctl(fd, ctrlCode, ref ctrl);
+            int n = ioctl(fd, ctrlCodePtr, ref ctrl);
             int languageCount = 0;
             ushort[] languages = new ushort[128];
             if (n > 2)
@@ -198,7 +199,7 @@ internal class LinuxUsbDevice : UsbDevice
                 ctrl.data = handle.AddrOfPinnedObject();
                 ctrl.timeout = 1000;
 
-                n = ioctl(fd, ctrlCode, ref ctrl);
+                n = ioctl(fd, ctrlCodePtr, ref ctrl);
                 if (n > 2)
                 {
                     SerialNumber = Encoding.Unicode.GetString(descriptor, 2, n - 2).TrimEnd('\0');
@@ -267,11 +268,12 @@ internal class LinuxUsbDevice : UsbDevice
                 };
 
                 uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
+                UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
                 int n = -1;
                 int retry = 0;
                 do
                 {
-                    n = ioctl(fd, bulkCode, ref bulk);
+                    n = ioctl(fd, bulkCodePtr, ref bulk);
                     if (n < 0)
                     {
                         int err = Marshal.GetLastWin32Error();
@@ -398,11 +400,12 @@ internal class LinuxUsbDevice : UsbDevice
                 };
 
                 uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
+                UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
                 int n = -1;
                 int retry = 0;
                 do
                 {
-                    n = ioctl(fd, bulkCode, ref bulk);
+                    n = ioctl(fd, bulkCodePtr, ref bulk);
                     if (n < 0)
                     {
                         int err = Marshal.GetLastWin32Error();
@@ -441,7 +444,7 @@ internal class LinuxUsbDevice : UsbDevice
                 if (n < 0)
                 {
                     outcome = outcome == UsbTransferOutcome.Success && lastError.HasValue ? UsbTransferOutcome.Timeout : outcome;
-                    var partial = (count > 0) ? count : -1;
+                    var partial = (count > 0) ? count : 0;
                     UsbTrace.EmitTransfer(new UsbTransferEvent
                     {
                         Backend = "linux-usbfs",

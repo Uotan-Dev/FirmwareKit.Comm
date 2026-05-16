@@ -70,13 +70,13 @@ internal static class MacOSUsbAPI
     [StructLayout(LayoutKind.Sequential)]
     public struct IOUSBFindInterfaceRequest
     {
-        public byte bInterfaceClass;
-        public byte bInterfaceSubClass;
-        public byte bInterfaceProtocol;
-        public byte bAlternateSetting;
+        public ushort bInterfaceClass;
+        public ushort bInterfaceSubClass;
+        public ushort bInterfaceProtocol;
+        public ushort bAlternateSetting;
     }
 
-    public const byte kIOUSBFindInterfaceDontCare = 0xFF;
+    public const ushort kIOUSBFindInterfaceDontCare = 0xFF;
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate int USBDeviceOpenDelegate(IntPtr self);
@@ -123,6 +123,11 @@ internal static class MacOSUsbAPI
     public const int Offset_IUnknown_QueryInterface = 1;
     public const int Offset_IUnknown_Release = 3;
 
+    // These vtable offsets were determined through runtime probing on macOS.
+    // They may differ from the 0-based indices in Apple SDK header struct definitions
+    // (IOUSBDeviceInterface197 / IOUSBInterfaceInterface197) because the IOKit COM
+    // runtime may include undocumented reserved entries in the vtable.
+    // Do NOT modify these values based solely on header-file analysis.
     public const int Offset_DeviceRequest = 7;
     public const int Offset_USBDeviceOpen = 14;
     public const int Offset_USBDeviceClose = 15;
@@ -155,6 +160,11 @@ internal static class MacOSUsbAPI
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate int ClearPipeStallBothEndsDelegate(IntPtr self, byte pipeRef);
 
+    // These vtable offsets were determined through runtime probing on macOS.
+    // They may differ from the 0-based indices in Apple SDK header struct definitions
+    // (IOUSBInterfaceInterface197) because the IOKit COM runtime may include
+    // undocumented reserved entries in the vtable.
+    // Do NOT modify these values based solely on header-file analysis.
     public const int Offset_USBInterfaceOpen = 8;
     public const int Offset_USBInterfaceClose = 9;
     public const int Offset_GetNumEndpoints = 17;

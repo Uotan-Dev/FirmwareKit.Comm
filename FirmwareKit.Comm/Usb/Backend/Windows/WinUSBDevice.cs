@@ -11,6 +11,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 internal class WinUSBDevice : UsbDevice
 {
     private const int WinUsbDefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
+    private const int ERROR_SEM_TIMEOUT = 121;
     public override int DefaultTimeoutMs => WinUsbDefaultTimeoutMs;
 
     private byte InterfaceNum;
@@ -35,14 +36,20 @@ internal class WinUSBDevice : UsbDevice
             return Marshal.GetLastWin32Error();
         IntPtr ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceDescriptor>());
         if (!WinUsb_GetDescriptor(WinUSBHandle, USB_DEVICE_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceDescriptor>(), out bytesTransferred))
+        {
+            Marshal.FreeHGlobal(ptr);
             return Marshal.GetLastWin32Error();
+        }
         USBDeviceDescriptor = Marshal.PtrToStructure<USBDeviceDescriptor>(ptr);
         VendorId = USBDeviceDescriptor.idVendor;
         ProductId = USBDeviceDescriptor.idProduct;
         Marshal.FreeHGlobal(ptr);
         ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceConfigDescriptor>());
         if (!WinUsb_GetDescriptor(WinUSBHandle, USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransferred))
+        {
+            Marshal.FreeHGlobal(ptr);
             return Marshal.GetLastWin32Error();
+        }
         USBDeviceConfigDescriptor = Marshal.PtrToStructure<USBDeviceConfigDescriptor>(ptr);
         Marshal.FreeHGlobal(ptr);
         if (!WinUsb_QueryInterfaceSettings(WinUSBHandle, InterfaceNum, out USBDeviceInterfaceDescriptor))
@@ -271,7 +278,7 @@ internal class WinUSBDevice : UsbDevice
             else
             {
                 int err = Marshal.GetLastWin32Error();
-                if (err == 121)
+                if (err == ERROR_SEM_TIMEOUT)
                 {
                     lastError = err;
                     outcome = UsbTransferOutcome.Timeout;

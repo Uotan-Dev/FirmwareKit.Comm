@@ -67,9 +67,9 @@ internal static class MacOSUsbFinder
 
                     IOUSBFindInterfaceRequest request = new IOUSBFindInterfaceRequest
                     {
-                        bInterfaceClass = filter?.InterfaceClass ?? kIOUSBFindInterfaceDontCare,
-                        bInterfaceSubClass = filter?.InterfaceSubClass ?? kIOUSBFindInterfaceDontCare,
-                        bInterfaceProtocol = filter?.InterfaceProtocol ?? kIOUSBFindInterfaceDontCare,
+                        bInterfaceClass = (ushort?)(filter?.InterfaceClass) ?? kIOUSBFindInterfaceDontCare,
+                        bInterfaceSubClass = (ushort?)(filter?.InterfaceSubClass) ?? kIOUSBFindInterfaceDontCare,
+                        bInterfaceProtocol = (ushort?)(filter?.InterfaceProtocol) ?? kIOUSBFindInterfaceDontCare,
                         bAlternateSetting = kIOUSBFindInterfaceDontCare
                     };
 

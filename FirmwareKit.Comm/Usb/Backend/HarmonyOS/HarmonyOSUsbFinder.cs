@@ -7,10 +7,15 @@ namespace FirmwareKit.Comm.Usb.Backend.HarmonyOS;
 
 internal static class HarmonyOSUsbFinder
 {
+    private const int MaxDeviceId = 256;
+
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         var devices = new List<UsbDevice>();
 
+        // DDK must be initialized before calling GetDeviceDescriptor/GetConfigDescriptor.
+        // OH_Usb_Init uses internal reference counting, so the subsequent Init call in
+        // CreateHandle is safe and simply increments the count.
         int ret = OH_Usb_Init();
         if (ret != USB_DDK_NO_ERROR)
         {
@@ -20,7 +25,7 @@ internal static class HarmonyOSUsbFinder
 
         try
         {
-            for (ulong deviceId = 1; deviceId <= 128; deviceId++)
+            for (ulong deviceId = 1; deviceId <= MaxDeviceId; deviceId++)
             {
                 ProbeDevice(deviceId, filter, devices);
             }
@@ -63,7 +68,11 @@ internal static class HarmonyOSUsbFinder
                 IntPtr ifacePtr = new IntPtr(ifaceArrayPtr.ToInt64() + ifcIndex * ifaceSize);
 
                 var iface = Marshal.PtrToStructure<UsbDdkInterface>(ifacePtr);
-                var ifaceDesc = iface.altsetting;
+
+                if (iface.altsetting == IntPtr.Zero) continue;
+
+                var ifaceDescStruct = Marshal.PtrToStructure<UsbDdkInterfaceDescriptor>(iface.altsetting);
+                var ifaceDesc = ifaceDescStruct.interfaceDescriptor;
 
                 byte ifcClass = ifaceDesc.bInterfaceClass;
                 byte ifcSubClass = ifaceDesc.bInterfaceSubClass;
@@ -76,7 +85,7 @@ internal static class HarmonyOSUsbFinder
                 byte numEndpoints = ifaceDesc.bNumEndpoints;
                 byte epIn = 0, epOut = 0;
 
-                IntPtr endpointArrayPtr = iface.extra;
+                IntPtr endpointArrayPtr = ifaceDescStruct.endpoint;
                 if (endpointArrayPtr != IntPtr.Zero)
                 {
                     int epSize = Marshal.SizeOf<UsbEndpointDescriptor>();

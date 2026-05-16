@@ -34,7 +34,8 @@ internal static class OpenHarmonyUsbFinder
         return new[]
         {
             "/dev/bus/usb",
-            "/dev/usb"
+            "/dev/usb",
+            "/dev/hdf/usb_host"
         };
     }
 
@@ -51,11 +52,10 @@ internal static class OpenHarmonyUsbFinder
         IntPtr ptr = Marshal.AllocHGlobal(desc.Length);
         try
         {
-            int n = read(fd, ptr, (uint)desc.Length);
+            int n = (int)read(fd, ptr, (UIntPtr)desc.Length);
             if (n < 18) { close(fd); fd = -1; return; }
             Marshal.Copy(ptr, desc, 0, n);
 
-            if (n < 18) { close(fd); fd = -1; return; }
             ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
             ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
             byte iSerialNumber = desc[14];

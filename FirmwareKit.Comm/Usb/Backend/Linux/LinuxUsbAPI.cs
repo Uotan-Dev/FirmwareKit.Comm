@@ -47,19 +47,19 @@ internal static class LinuxUsbAPI
     public static extern int close(int fd);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int read(int fd, IntPtr buf, uint count);
+    public static extern IntPtr read(int fd, IntPtr buf, UIntPtr count);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int ioctl(int fd, uint request, IntPtr arg);
+    public static extern int ioctl(int fd, UIntPtr request, IntPtr arg);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int ioctl(int fd, uint request, ref int arg);
+    public static extern int ioctl(int fd, UIntPtr request, ref int arg);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int ioctl(int fd, uint request, ref usbdevfs_bulktransfer arg);
+    public static extern int ioctl(int fd, UIntPtr request, ref usbdevfs_bulktransfer arg);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int ioctl(int fd, uint request, ref usbdevfs_ctrltransfer arg);
+    public static extern int ioctl(int fd, UIntPtr request, ref usbdevfs_ctrltransfer arg);
 
     public const int O_RDWR = 2;
     public const int O_CLOEXEC = 0x80000;
@@ -74,7 +74,7 @@ internal static class LinuxUsbAPI
     public static extern IntPtr readdir(IntPtr dirp);
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct Dirent
+    public struct Dirent64
     {
         public ulong d_ino;
         public long d_off;
@@ -86,14 +86,11 @@ internal static class LinuxUsbAPI
 
     public const int EINTR = 4;
     public const int EAGAIN = 11;
+    public const int EACCES = 13;
+    public const int EBUSY = 16;
     public const int ENODEV = 19;
     public const int EPIPE = 32;
     public const int ESHUTDOWN = 108;
     public const int ETIMEDOUT = 110;
     public const int EPROTO = 71;
-
-
 }
-
-
-

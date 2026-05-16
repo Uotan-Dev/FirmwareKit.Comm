@@ -20,27 +20,34 @@ internal class Win32API
         return (deviceType << 16) | (access << 14) | (function << 2) | method;
     }
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern IntPtr CreateFileW([MarshalAs(UnmanagedType.LPWStr)] string fileName, uint access,
                                          uint shareMode, IntPtr securityAttributes,
                                          uint createDisposition, uint flagsAndAttributes,
                                          IntPtr template);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool DeviceIoControl(IntPtr device, uint code,
-                                              byte[]? inBuffer, int inBufferSize,
-                                              byte[]? outBuffer, int outBufferSize,
-                                              out int bytesReturned, IntPtr overlapped);
+                                          byte[]? inBuffer, uint inBufferSize,
+                                          byte[]? outBuffer, uint outBufferSize,
+                                          out uint bytesReturned, IntPtr overlapped);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool DeviceIoControl(IntPtr device, uint code,
+                                          IntPtr inBuffer, uint inBufferSize,
+                                          byte[]? outBuffer, uint outBufferSize,
+                                          out uint bytesReturned, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool CloseHandle(IntPtr handle);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WriteFile(IntPtr hFile, byte[] buffer, uint sizeToWrite, out uint bytesWritten, IntPtr overlapped);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool ReadFile(IntPtr hFile, byte[] buffer, uint sizeToRead, out uint bytesRead, IntPtr overlapped);
 
+    [StructLayout(LayoutKind.Sequential)]
     public struct GUID
     {
         public uint Data1;
@@ -108,10 +115,10 @@ internal class Win32API
     public const uint DIGCF_PRESENT = 0x00000002;
     public const uint DIGCF_DEVICEINTERFACE = 0x00000010;
 
-    [DllImport("setupapi.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern IntPtr SetupDiGetClassDevsW(ref GUID guid, string? enumerator, int parent, uint flag);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern IntPtr SetupDiGetClassDevsW(ref GUID guid, string? enumerator, IntPtr parent, uint flag);
 
-    [DllImport("setupapi.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool SetupDiEnumDeviceInterfaces(IntPtr deviceInfoSet, IntPtr deviceInfoData,
                                                           ref GUID interfaceClassGuid, uint index,
                                                           ref SpDeviceInterfaceData deviceInterfaceData);

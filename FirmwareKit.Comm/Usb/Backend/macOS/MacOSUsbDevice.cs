@@ -362,7 +362,10 @@ internal class MacOSUsbDevice : UsbDevice
         int? lastError = null;
         var outcome = UsbTransferOutcome.Success;
 
-        if (interfacePtr == IntPtr.Zero || bulkIn == 0) return 0;
+        if (interfacePtr == IntPtr.Zero || bulkIn == 0)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
         if (length <= 0) return 0;
         ValidateBufferRange(buffer, offset, length);
 
@@ -455,7 +458,10 @@ internal class MacOSUsbDevice : UsbDevice
         int? lastError = null;
         var outcome = UsbTransferOutcome.Success;
 
-        if (interfacePtr == IntPtr.Zero || bulkOut == 0) return -1;
+        if (interfacePtr == IntPtr.Zero || bulkOut == 0)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
         ValidateWriteData(data, length);
 
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
@@ -526,7 +532,7 @@ internal class MacOSUsbDevice : UsbDevice
             });
 
             // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
-            return count > 0 ? count : (length == 0 ? 0 : -1);
+            return count > 0 ? count : (length == 0 ? 0 : 0);
         }
         finally
         {

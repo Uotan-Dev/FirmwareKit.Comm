@@ -329,7 +329,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
         int? lastError = null;
         var outcome = UsbTransferOutcome.Success;
 
-        if (reader == null) return 0;
+        if (reader == null)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
         if (length <= 0) return 0;
         ValidateBufferRange(buffer, offset, length);
 
@@ -407,7 +410,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
                 Outcome = UsbTransferOutcome.NotReady
             });
-            return -1;
+            return 0;
         }
 
         ValidateWriteData(data, length);
@@ -418,7 +421,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
         int lenRemaining = length;
         int count = 0;
 
-        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}, data: {BitConverter.ToString(data, 0, Math.Min(length, 16))}");
+        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}");
 
         if (length == 0)
         {
@@ -634,7 +637,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
                 ElapsedMs = stopwatch.ElapsedMilliseconds,
                 Outcome = UsbTransferOutcome.NotReady
             });
-            return -1;
+            return 0;
         }
 
         ValidateWriteData(data, length);
@@ -645,7 +648,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
         int lenRemaining = length;
         int count = 0;
 
-        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}, data: {BitConverter.ToString(data, 0, Math.Min(length, 16))}");
+        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}");
 
         if (length == 0)
         {

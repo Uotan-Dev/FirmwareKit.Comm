@@ -16,6 +16,8 @@ internal class HarmonyOSUsbDevice : UsbDevice
     private byte _epIn;
     private byte _epOut;
     private IntPtr _devMmap;
+    private IntPtr _devMmapBuffer;
+    private int _devMmapSize;
     private bool _disposed;
     private bool _ddkInitialized;
 
@@ -81,6 +83,10 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
         _devMmap = devMmapPtr;
 
+        var mmapStruct = Marshal.PtrToStructure<UsbDeviceMemMap>(_devMmap);
+        _devMmapBuffer = mmapStruct.buffer;
+        _devMmapSize = (int)mmapStruct.size;
+
         GetSerialNumber();
         return USB_DDK_NO_ERROR;
     }
@@ -135,6 +141,7 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
         int ret;
         bool isInDirection = (setupPacket.RequestType & 0x80) != 0;
+        var traceOp = isInDirection ? UsbTransferOperation.Read : UsbTransferOperation.Write;
 
         if (isInDirection)
         {
@@ -149,7 +156,7 @@ internal class HarmonyOSUsbDevice : UsbDevice
             {
                 int copyLen = Math.Min((int)dataLen, length);
                 Buffer.BlockCopy(readBuffer, 0, buffer, offset, copyLen);
-                EmitControlTransferTrace(length, copyLen, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
+                EmitControlTransferTrace(traceOp, length, copyLen, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
                 return copyLen;
             }
         }
@@ -172,13 +179,13 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
             if (ret == USB_DDK_NO_ERROR)
             {
-                EmitControlTransferTrace(length, length, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
+                EmitControlTransferTrace(traceOp, length, length, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
                 return length;
             }
         }
 
         var outcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
-        EmitControlTransferTrace(length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
+        EmitControlTransferTrace(traceOp, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
 
         if (ret != USB_DDK_NO_ERROR)
         {
@@ -235,42 +242,35 @@ internal class HarmonyOSUsbDevice : UsbDevice
         var devMmap = new UsbDeviceMemMap
         {
             deviceId = _deviceId,
-            buffer = Marshal.AllocHGlobal(length),
-            size = (UIntPtr)length,
+            buffer = _devMmapBuffer,
+            size = (UIntPtr)_devMmapSize,
             offset = UIntPtr.Zero,
             length = (UIntPtr)length
         };
 
-        try
+        int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
+
+        stopwatch.Stop();
+
+        if (ret == USB_DDK_NO_ERROR)
         {
-            int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
-
-            stopwatch.Stop();
-
-            if (ret == USB_DDK_NO_ERROR)
+            int transferred = (int)devMmap.length;
+            if (transferred > 0)
             {
-                int transferred = (int)devMmap.length;
-                if (transferred > 0)
-                {
-                    Marshal.Copy(devMmap.buffer, buffer, offset, Math.Min(transferred, length));
-                }
-
-                var outcome = transferred >= length ? UsbTransferOutcome.Success : UsbTransferOutcome.ShortTransfer;
-                EmitTransferTrace(UsbTransferOperation.Read, length, transferred, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
-                return transferred;
+                Marshal.Copy(devMmap.buffer, buffer, offset, Math.Min(transferred, length));
             }
 
-            var errorOutcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
-            EmitTransferTrace(UsbTransferOperation.Read, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, errorOutcome);
-
-            if (ret == USB_DDK_TIMEOUT) return 0;
-
-            throw new UsbTransferException($"USB read failed: {GetErrorMessage(ret)}", ret);
+            var outcome = transferred >= length ? UsbTransferOutcome.Success : UsbTransferOutcome.ShortTransfer;
+            EmitTransferTrace(UsbTransferOperation.Read, length, transferred, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
+            return transferred;
         }
-        finally
-        {
-            Marshal.FreeHGlobal(devMmap.buffer);
-        }
+
+        var errorOutcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
+        EmitTransferTrace(UsbTransferOperation.Read, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, errorOutcome);
+
+        if (ret == USB_DDK_TIMEOUT) return 0;
+
+        throw new UsbTransferException($"USB read failed: {GetErrorMessage(ret)}", ret);
     }
 
     public override long Write(byte[] data, int length)
@@ -327,7 +327,7 @@ internal class HarmonyOSUsbDevice : UsbDevice
             var errorOutcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
             EmitTransferTrace(UsbTransferOperation.Write, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, errorOutcome);
 
-            if (ret == USB_DDK_TIMEOUT) return -1;
+            if (ret == USB_DDK_TIMEOUT) return 0;
 
             throw new UsbTransferException($"USB write failed: {GetErrorMessage(ret)}", ret);
         }
@@ -408,13 +408,13 @@ internal class HarmonyOSUsbDevice : UsbDevice
         }
     }
 
-    private void EmitControlTransferTrace(int requested, int transferred, int timeoutMs, long elapsedMs, UsbTransferOutcome outcome)
+    private void EmitControlTransferTrace(UsbTransferOperation operation, int requested, int transferred, int timeoutMs, long elapsedMs, UsbTransferOutcome outcome)
     {
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
             Backend = "harmony-usbddk",
             DevicePath = DevicePath,
-            Operation = UsbTransferOperation.Write,
+            Operation = operation,
             RequestedBytes = requested,
             TransferredBytes = transferred,
             TimeoutMs = timeoutMs,
