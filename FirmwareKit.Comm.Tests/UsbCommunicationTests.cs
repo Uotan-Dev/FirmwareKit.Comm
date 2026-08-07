@@ -15,7 +15,6 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Contains("native", apis, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("libusb", apis, StringComparer.OrdinalIgnoreCase);
         Assert.Contains("harmony", apis, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains("openharmony", apis, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -81,7 +80,6 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var native = Assert.Single(capabilities, item => string.Equals(item.ApiName, "native", StringComparison.OrdinalIgnoreCase));
         var libusb = Assert.Single(capabilities, item => string.Equals(item.ApiName, "libusb", StringComparison.OrdinalIgnoreCase));
         var harmony = Assert.Single(capabilities, item => string.Equals(item.ApiName, "harmony", StringComparison.OrdinalIgnoreCase));
-        var openharmony = Assert.Single(capabilities, item => string.Equals(item.ApiName, "openharmony", StringComparison.OrdinalIgnoreCase));
         Assert.True(native.SupportsNativeDiscovery);
         Assert.True(native.SupportsControlTransfers);
         Assert.False(native.SupportsNativeAsyncIo);
@@ -93,10 +91,6 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Equal(UsbApiKind.HarmonyOS, harmony.ApiKind);
         Assert.True(harmony.SupportsControlTransfers);
         Assert.False(harmony.RequiresExternalRuntime);
-        Assert.Equal(UsbApiKind.OpenHarmony, openharmony.ApiKind);
-        Assert.True(openharmony.SupportsControlTransfers);
-        Assert.False(openharmony.SupportsNativeAsyncIo);
-        Assert.False(openharmony.RequiresExternalRuntime);
     }
 
     [Fact]
@@ -648,28 +642,10 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.NotNull(harmony);
         Assert.Equal(UsbApiKind.HarmonyOS, harmony.ApiKind);
     }
-
-    [Fact]
-    public void OpenHarmonyApiKind_ResolvesToOpenHarmonyProvider()
-    {
-        var layer = new UsbCommunicationLayer();
-        var capabilities = layer.GetAvailableApiCapabilities();
-        var openharmony = capabilities.FirstOrDefault(c => string.Equals(c.ApiName, "openharmony", StringComparison.OrdinalIgnoreCase));
-
-        Assert.NotNull(openharmony);
-        Assert.Equal(UsbApiKind.OpenHarmony, openharmony.ApiKind);
-    }
-
     [Fact]
     public void UsbApiKind_HarmonyOS_HasCorrectValue()
     {
         Assert.Equal(4, (int)UsbApiKind.HarmonyOS);
-    }
-
-    [Fact]
-    public void UsbApiKind_OpenHarmony_HasCorrectValue()
-    {
-        Assert.Equal(5, (int)UsbApiKind.OpenHarmony);
     }
 
     [Fact]
@@ -725,17 +701,17 @@ public sealed class UsbCommunicationLayerIntegrationTests
     }
 
     [Fact]
-    public void UsbDeviceFilter_MatchesOpenHarmonyApiKind()
+    public void UsbDeviceFilter_MatchesSourceApiKind()
     {
         var info = new UsbDeviceInfo
         {
             VendorId = 0x18D1,
             ProductId = 0xD00D,
-            SourceApiKind = UsbApiKind.OpenHarmony
+            SourceApiKind = UsbApiKind.HarmonyOS
         };
 
-        var matchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.OpenHarmony };
-        var nonMatchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.HarmonyOS };
+        var matchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.HarmonyOS };
+        var nonMatchingFilter = new UsbDeviceFilter { SourceApiKind = UsbApiKind.LibUsbDotNet };
 
         Assert.True(matchingFilter.Matches(info));
         Assert.False(nonMatchingFilter.Matches(info));

@@ -16,6 +16,40 @@ internal static class HarmonyOSUsbDDK
     public const int USB_DDK_DEVICE_BUSY = -7;
     public const int USB_DDK_TIMEOUT = -8;
 
+    internal static bool IsHarmonyOSPlatform()
+    {
+        try
+        {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return false;
+            }
+
+            try
+            {
+                var osRelease = File.ReadAllText("/etc/os-release");
+                if (osRelease.IndexOf("HarmonyOS", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+
+            if (File.Exists("/etc/hmos-release") || File.Exists("/system/etc/hmos-release"))
+            {
+                return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     public struct UsbControlRequestSetup
     {

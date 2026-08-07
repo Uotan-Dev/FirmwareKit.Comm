@@ -34,11 +34,5 @@ public enum UsbApiKind
     /// Uses the HarmonyOS USBManager backend via IPC bridge service.
     /// <para>使用基于 IPC 桥接服务的 HarmonyOS USBManager 后端。</para>
     /// </summary>
-    HarmonyOS = 4,
-
-    /// <summary>
-    /// Uses the OpenHarmony native USB backend via usbfs.
-    /// <para>使用基于 usbfs 的 OpenHarmony 原生 USB 后端。</para>
-    /// </summary>
-    OpenHarmony = 5
+    HarmonyOS = 4
 }

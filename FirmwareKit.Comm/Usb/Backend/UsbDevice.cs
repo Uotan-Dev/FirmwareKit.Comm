@@ -332,11 +332,5 @@ internal enum UsbDeviceType
     /// HarmonyOS USBManager backend (via IPC bridge).
     /// <para>HarmonyOS USBManager 后端（通过 IPC 桥接）。</para>
     /// </summary>
-    HarmonyOS = 5,
-
-    /// <summary>
-    /// OpenHarmony usbfs backend.
-    /// <para>OpenHarmony usbfs 后端。</para>
-    /// </summary>
-    OpenHarmony = 6
+    HarmonyOS = 5
 }

@@ -83,8 +83,8 @@ public sealed class UsbApiRegistry
     }
 
     /// <summary>
-    /// Creates the default registry with native, libusb, harmony and openharmony providers.
-    /// <para>创建包含 native、libusb、harmony 与 openharmony 提供器的默认注册表。</para>
+    /// Creates the default registry with native, libusb and harmony providers.
+    /// <para>创建包含 native、libusb 与 harmony 提供器的默认注册表。</para>
     /// </summary>
     /// <returns>The default registry. <para>默认注册表实例。</para></returns>
     public static UsbApiRegistry CreateDefault()
@@ -93,7 +93,6 @@ public sealed class UsbApiRegistry
         registry.Register(NativeUsbApiProvider.ApiNameConst, () => new NativeUsbApiProvider());
         registry.Register(LibUsbApiProvider.ApiNameConst, () => new LibUsbApiProvider());
         registry.Register(HarmonyOSUsbApiProvider.ApiNameConst, () => new HarmonyOSUsbApiProvider());
-        registry.Register(OpenHarmonyUsbApiProvider.ApiNameConst, () => new OpenHarmonyUsbApiProvider());
         return registry;
     }
 

@@ -289,7 +289,6 @@ public sealed class UsbCommunicationLayer
             UsbApiKind.Native => NativeUsbApiProvider.ApiNameConst,
             UsbApiKind.LibUsbDotNet => LibUsbApiProvider.ApiNameConst,
             UsbApiKind.HarmonyOS => HarmonyOSUsbApiProvider.ApiNameConst,
-            UsbApiKind.OpenHarmony => OpenHarmonyUsbApiProvider.ApiNameConst,
             _ => string.Empty
         };
 

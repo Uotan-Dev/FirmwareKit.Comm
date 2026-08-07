@@ -1,7 +1,6 @@
 using FirmwareKit.Comm.Usb.Backend.HarmonyOS;
 using FirmwareKit.Comm.Usb.Backend.Linux;
 using FirmwareKit.Comm.Usb.Backend.macOS;
-using FirmwareKit.Comm.Usb.Backend.OpenHarmony;
 using FirmwareKit.Comm.Usb.Backend.Windows;
 using System.Runtime.InteropServices;
 
@@ -202,31 +201,6 @@ public sealed class PlatformInteropStructureTests
         Assert.Equal(-6, HarmonyOSUsbDDK.USB_DDK_IO_ERROR);
         Assert.Equal(-7, HarmonyOSUsbDDK.USB_DDK_DEVICE_BUSY);
         Assert.Equal(-8, HarmonyOSUsbDDK.USB_DDK_TIMEOUT);
-    }
-
-    [Fact]
-    public void OpenHarmony_IoctlCodes_MatchLinux()
-    {
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_CONTROL, OpenHarmonyUsbAPI.USBDEVFS_CONTROL);
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_BULK, OpenHarmonyUsbAPI.USBDEVFS_BULK);
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_CONTROL_X86_64, OpenHarmonyUsbAPI.USBDEVFS_CONTROL_X86_64);
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_BULK_X86_64, OpenHarmonyUsbAPI.USBDEVFS_BULK_X86_64);
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_CLAIMINTERFACE, OpenHarmonyUsbAPI.USBDEVFS_CLAIMINTERFACE);
-        Assert.Equal(LinuxUsbAPI.USBDEVFS_RELEASEINTERFACE, OpenHarmonyUsbAPI.USBDEVFS_RELEASEINTERFACE);
-    }
-
-    [Fact]
-    public void OpenHarmony_ErrnoConstants_MatchLinux()
-    {
-        Assert.Equal(LinuxUsbAPI.EINTR, OpenHarmonyUsbAPI.EINTR);
-        Assert.Equal(LinuxUsbAPI.EAGAIN, OpenHarmonyUsbAPI.EAGAIN);
-        Assert.Equal(LinuxUsbAPI.EACCES, OpenHarmonyUsbAPI.EACCES);
-        Assert.Equal(LinuxUsbAPI.EBUSY, OpenHarmonyUsbAPI.EBUSY);
-        Assert.Equal(LinuxUsbAPI.ENODEV, OpenHarmonyUsbAPI.ENODEV);
-        Assert.Equal(LinuxUsbAPI.EPIPE, OpenHarmonyUsbAPI.EPIPE);
-        Assert.Equal(LinuxUsbAPI.ESHUTDOWN, OpenHarmonyUsbAPI.ESHUTDOWN);
-        Assert.Equal(LinuxUsbAPI.ETIMEDOUT, OpenHarmonyUsbAPI.ETIMEDOUT);
-        Assert.Equal(LinuxUsbAPI.EPROTO, OpenHarmonyUsbAPI.EPROTO);
     }
 
     [Fact]

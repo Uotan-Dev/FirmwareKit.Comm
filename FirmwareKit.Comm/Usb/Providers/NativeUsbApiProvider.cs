@@ -1,8 +1,8 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Backend;
 using FirmwareKit.Comm.Usb.Backend.Linux;
+using FirmwareKit.Comm.Usb.Backend.HarmonyOS;
 using FirmwareKit.Comm.Usb.Backend.macOS;
-using FirmwareKit.Comm.Usb.Backend.OpenHarmony;
 using FirmwareKit.Comm.Usb.Backend.Windows;
 using FirmwareKit.Comm.Usb.Core;
 using FirmwareKit.Comm.Usb.Diagnostics;
@@ -12,11 +12,8 @@ namespace FirmwareKit.Comm.Usb.Providers;
 
 internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryProvider, IUsbApiCapabilityProvider
 {
-    private static readonly Lazy<bool> IsOpenHarmony =
-        new(OpenHarmonyUsbAPI.IsOpenHarmonyPlatform, isThreadSafe: true);
-
     private static readonly Lazy<bool> IsHarmonyOS =
-        new(OpenHarmonyUsbAPI.IsHarmonyOSPlatform, isThreadSafe: true);
+        new(HarmonyOSUsbDDK.IsHarmonyOSPlatform, isThreadSafe: true);
 
     public const string ApiNameConst = "native";
 
@@ -47,15 +44,10 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
 
     public UsbApiCapabilities GetCapabilities()
     {
-        bool isOpenHarmony = IsOpenHarmony.Value;
         bool isHarmonyOS = IsHarmonyOS.Value;
         string notes = "Native transport is synchronous; async access is currently adapter-based and hot-plug monitoring is polling-based.";
 
-        if (isOpenHarmony)
-        {
-            notes = "OpenHarmony native transport via usbfs; async access is adapter-based and hot-plug monitoring is polling-based.";
-        }
-        else if (isHarmonyOS)
+        if (isHarmonyOS)
         {
             notes = "HarmonyOS detected; use the dedicated 'harmony' provider for USBManager IPC bridge, or this native provider for direct usbfs access.";
         }
@@ -84,12 +76,6 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
         {
-            if (IsOpenHarmony.Value)
-            {
-                UsbTrace.Log("Detected OpenHarmony platform, using OpenHarmony USB backend.");
-                return OpenHarmonyUsbFinder.FindDevice(filter);
-            }
-
             return LinuxUsbFinder.FindDevice(filter);
         }
 
@@ -100,7 +86,7 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
                 // IOUSBHost (IOUSBLib) backend, requires macOS 10.15+.
                 return MacHostUsbFinder.FindDevice(filter);
             }
-            catch (DllNotFoundException ex)
+            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
             {
                 UsbTrace.Log($"IOUSBHost backend unavailable (requires macOS 10.15+): {ex.Message}");
                 return new List<UsbDevice>();
