@@ -72,14 +72,15 @@ jobs:
           # usb-serial exposes bulk IN/OUT endpoints. A null chardev discards
           # writes and reads time out; enumeration + claim (with kernel-driver
           # DISCONNECT fallback) is the observed behavior.
-          timeout 540 qemu-system-x86_64 \
+          # sudo is required for /dev/kvm access on hosted runners (falls back to TCG).
+          sudo timeout 900 qemu-system-x86_64 \
             -machine accel=kvm:tcg \
             -cpu max \
             -m 2048 -smp 2 \
             -drive file=ubuntu.img,if=virtio \
-            -drive file=seed.img,if=virtio \
+            -drive file=seed.img,if=virtio,format=raw \
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-            -device usb-ehci \
+            -device usb-uhci \
             -chardev null,id=usb0 \
             -device usb-serial,chardev=usb0 \
             -nographic 2>&1 | tee guest.log || true

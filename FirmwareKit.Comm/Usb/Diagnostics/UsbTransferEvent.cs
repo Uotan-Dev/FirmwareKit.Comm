@@ -145,4 +145,16 @@ public sealed class UsbTransferEvent
     /// <para>获取或设置可选消息。</para>
     /// </summary>
     public string? Message { get; set; }
+
+    /// <summary>
+    /// Gets or sets the raw 8-byte USB setup packet (control transfers, opt-in frame capture).
+    /// <para>获取或设置原始 8 字节 USB setup 包（控制传输，可选抓帧）。</para>
+    /// </summary>
+    public byte[]? SetupPacket { get; set; }
+
+    /// <summary>
+    /// Gets or sets the raw payload bytes (bulk transfers, opt-in frame capture, capped).
+    /// <para>获取或设置原始载荷字节（批量传输，可选抓帧，有截断上限）。</para>
+    /// </summary>
+    public byte[]? Payload { get; set; }
 }

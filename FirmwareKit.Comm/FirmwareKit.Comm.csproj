@@ -36,4 +36,10 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
   </ItemGroup>
 
+  <!-- Debug-only: bridges UsbTrace to Microsoft.Extensions.Logging (UsbLoggerBridge).
+       Release builds stay zero-dependency for the custom logging abstraction. -->
+  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
 </Project>

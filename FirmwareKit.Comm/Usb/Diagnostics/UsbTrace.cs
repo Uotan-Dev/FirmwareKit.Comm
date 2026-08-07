@@ -26,6 +26,21 @@ public static class UsbTrace
     public static event Action<UsbTransferEvent>? TransferObserved;
 
     /// <summary>
+    /// Gets or sets whether raw USB frames are captured into transfer events (opt-in).
+    /// Enabled via the <c>FIRMWAREKIT_USB_CAPTURE_FRAMES=1</c> environment variable.
+    /// <para>获取或设置是否将原始 USB 帧捕获到传输事件中（可选开启）。
+    /// 通过 <c>FIRMWAREKIT_USB_CAPTURE_FRAMES=1</c> 环境变量启用。</para>
+    /// </summary>
+    public static bool CaptureFrames { get; set; } =
+        string.Equals(Environment.GetEnvironmentVariable("FIRMWAREKIT_USB_CAPTURE_FRAMES"), "1", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Gets the maximum payload bytes captured per transfer event.
+    /// <para>获取每个传输事件最多捕获的载荷字节数。</para>
+    /// </summary>
+    public const int MaxCaptureBytes = 256;
+
+    /// <summary>
     /// Writes a plain text diagnostic message through <see cref="Logger"/>.
     /// <para>通过 <see cref="Logger"/> 写入纯文本诊断消息。</para>
     /// </summary>

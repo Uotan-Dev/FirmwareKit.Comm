@@ -261,10 +261,23 @@ internal abstract class UsbDevice : IDisposable
     }
 
     /// <summary>
+    /// Snapshots the transferred payload bytes when opt-in frame capture is enabled.
+    /// <para>开启可选抓帧时对已传输载荷字节做快照。</para>
+    /// </summary>
+    private static byte[]? CapturePayload(byte[] buffer, int offset, int count)
+    {
+        if (!UsbTrace.CaptureFrames || count <= 0) return null;
+        int cap = Math.Min(count, UsbTrace.MaxCaptureBytes);
+        var frame = new byte[cap];
+        Buffer.BlockCopy(buffer, offset, frame, 0, cap);
+        return frame;
+    }
+
+    /// <summary>
     /// Emits a transfer trace event using the backend tag.
     /// <para>使用后端标签发出传输跟踪事件。</para>
     /// </summary>
-    private void EmitTransfer(UsbTransferOperation operation, int requestedBytes, int transferredBytes, int timeoutMs, int retryCount, int? nativeErrorCode, long elapsedMs, UsbTransferOutcome outcome)
+    private void EmitTransfer(UsbTransferOperation operation, int requestedBytes, int transferredBytes, int timeoutMs, int retryCount, int? nativeErrorCode, long elapsedMs, UsbTransferOutcome outcome, byte[]? payload = null)
     {
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
@@ -277,7 +290,8 @@ internal abstract class UsbDevice : IDisposable
             RetryCount = retryCount,
             NativeErrorCode = nativeErrorCode,
             ElapsedMs = elapsedMs,
-            Outcome = outcome
+            Outcome = outcome,
+            Payload = payload
         });
     }
 
@@ -329,7 +343,7 @@ internal abstract class UsbDevice : IDisposable
                 if (chunk.Status == UsbChunkStatus.FatalError)
                 {
                     lastError = chunk.NativeError;
-                    EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError);
+                    EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError, CapturePayload(buffer, offset, count));
                     throw CreateReadFatalException(chunk.NativeError);
                 }
 
@@ -356,7 +370,7 @@ internal abstract class UsbDevice : IDisposable
             outcome = UsbTransferOutcome.ShortTransfer;
         }
 
-        EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome);
+        EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome, CapturePayload(buffer, offset, count));
         return count;
     }
 
@@ -450,7 +464,7 @@ internal abstract class UsbDevice : IDisposable
                 if (chunk.Status == UsbChunkStatus.FatalError)
                 {
                     lastError = chunk.NativeError;
-                    EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError);
+                    EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError, CapturePayload(data, 0, count));
                     throw CreateWriteFatalException(chunk.NativeError);
                 }
 
@@ -477,7 +491,7 @@ internal abstract class UsbDevice : IDisposable
             outcome = UsbTransferOutcome.ShortTransfer;
         }
 
-        EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome);
+        EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome, CapturePayload(data, 0, count));
         return count;
     }
 

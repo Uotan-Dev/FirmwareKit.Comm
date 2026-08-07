@@ -30,6 +30,13 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0
 
+    # The libusb backend probe (Marshal.Prelink) degrades gracefully when the native
+    # runtime is absent, so Windows needs no provisioning. macOS gets brew's libusb so
+    # the supported path is exercised there too.
+    - name: Install libusb (macOS)
+      if: runner.os == 'macOS'
+      run: brew install libusb
+
     - name: Restore dependencies
       run: dotnet restore
 

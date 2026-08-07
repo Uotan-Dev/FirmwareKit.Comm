@@ -1,11 +1,42 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
 using LibUsbDotNet.LibUsb;
+using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Backend.libusbdotnet;
 
 internal static class LibUsbFinder
 {
+    // LibUsbDotNet 3.0.224 no longer bundles the native libusb runtime. Creating a
+    // UsbContext when the native library is absent leaves a half-initialized context
+    // whose finalizer NullReferenceExceptions (known upstream issue). Probe for the
+    // runtime first so we never create a context without the native library present.
+    [DllImport("libusb-1.0", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int libusb_init(out IntPtr context);
+
+    private static bool IsNativeRuntimePresent()
+    {
+        try
+        {
+            // Resolves the entry points without invoking them; throws when the
+            // native library (or the entry point) is absent.
+            Marshal.PrelinkAll(typeof(LibUsbFinder));
+            return true;
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool TryGetBulkInterface(
         LibUsbDotNet.LibUsb.UsbDevice device,
         UsbDeviceFilter? filter,
@@ -78,6 +109,12 @@ internal static class LibUsbFinder
     public static List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice> devices = new List<global::FirmwareKit.Comm.Usb.Backend.UsbDevice>();
+        if (!IsNativeRuntimePresent())
+        {
+            UsbTrace.Log("LibUsb backend unavailable: native libusb runtime not found.");
+            return devices;
+        }
+
         using (var context = new UsbContext())
         {
             var deviceList = context.List();
@@ -135,6 +172,13 @@ internal static class LibUsbFinder
     public static bool IsRuntimeAvailable(out string? reason)
     {
         reason = null;
+
+        if (!IsNativeRuntimePresent())
+        {
+            reason = "native libusb runtime not found";
+            UsbTrace.Log($"LibUsb runtime probe failed: {reason}");
+            return false;
+        }
 
         try
         {
