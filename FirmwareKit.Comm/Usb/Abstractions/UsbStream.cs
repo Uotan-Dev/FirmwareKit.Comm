@@ -42,6 +42,33 @@ public sealed class UsbStream : Stream
     /// <inheritdoc />
     public override bool CanTimeout => true;
 
+    private const int InfiniteTimeout = -1;
+
+    private int _readTimeout = InfiniteTimeout;
+    private int _writeTimeout = InfiniteTimeout;
+
+    /// <inheritdoc />
+    public override int ReadTimeout
+    {
+        get => _readTimeout;
+        set
+        {
+            if (value < 0 && value != InfiniteTimeout) throw new ArgumentOutOfRangeException(nameof(value));
+            _readTimeout = value;
+        }
+    }
+
+    /// <inheritdoc />
+    public override int WriteTimeout
+    {
+        get => _writeTimeout;
+        set
+        {
+            if (value < 0 && value != InfiniteTimeout) throw new ArgumentOutOfRangeException(nameof(value));
+            _writeTimeout = value;
+        }
+    }
+
     /// <inheritdoc />
     public override long Length => throw new NotSupportedException("USB streams are not seekable.");
 

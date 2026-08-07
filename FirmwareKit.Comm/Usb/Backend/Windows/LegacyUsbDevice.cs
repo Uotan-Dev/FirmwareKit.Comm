@@ -129,13 +129,21 @@ internal class LegacyUsbDevice : UsbDevice
         {
             byte[] buffer = new byte[length];
             uint read;
-            if (ReadFile(fileHandle.DangerousGetHandle(), buffer, (uint)length, out read, IntPtr.Zero))
+            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+            try
             {
-                byte[] result = new byte[read];
-                Array.Copy(buffer, result, (int)read);
-                return result;
+                if (ReadFile(fileHandle.DangerousGetHandle(), handle.AddrOfPinnedObject(), (uint)length, out read, IntPtr.Zero))
+                {
+                    byte[] result = new byte[read];
+                    Array.Copy(buffer, result, (int)read);
+                    return result;
+                }
+                throw new Win32Exception(Marshal.GetLastWin32Error());
             }
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+            finally
+            {
+                handle.Free();
+            }
         });
 
         if (!readTask.Wait(IoTimeoutMs))
@@ -157,26 +165,18 @@ internal class LegacyUsbDevice : UsbDevice
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        byte[] chunk = new byte[length];
         uint bytesRead;
-        if (!ReadFile(fileHandle.DangerousGetHandle(), chunk, (uint)length, out bytesRead, IntPtr.Zero))
+        if (!ReadFile(fileHandle.DangerousGetHandle(), buffer, (uint)length, out bytesRead, IntPtr.Zero))
         {
             return UsbChunkResult.Fatal(Marshal.GetLastWin32Error());
-        }
-        if (bytesRead > 0)
-        {
-            Marshal.Copy(chunk, 0, buffer, (int)bytesRead);
         }
         return UsbChunkResult.Success((int)bytesRead);
     }
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        byte[] chunk = new byte[length];
-        Marshal.Copy(buffer, chunk, 0, length);
-
         uint written;
-        if (!WriteFile(fileHandle.DangerousGetHandle(), chunk, (uint)length, out written, IntPtr.Zero))
+        if (!WriteFile(fileHandle.DangerousGetHandle(), buffer, (uint)length, out written, IntPtr.Zero))
         {
             return UsbChunkResult.Fatal(Marshal.GetLastWin32Error());
         }

@@ -7,6 +7,10 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
 {
     internal static class WinUSBFinder
     {
+        // Heuristic: prefer the WinUSB path for Google ADB-style devices (VID_18D1).
+        // Kept as a named constant so it can be lifted into configuration later.
+        private const string PreferWinUsbVidPid = "vid_18d1&pid_d00d";
+
         private static readonly Guid[] KnownInterfaceGUIDs = new[]
         {
             new Guid("a5dcbf10-6530-11d2-901f-00c04fb951ed"), // USB Device
@@ -54,7 +58,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                                 }
 
                                 // Prefer WinUSB for Google devices
-                                bool isGoogleWinUsb = lowerPath.Contains("vid_18d1&pid_d00d");
+                                bool isGoogleWinUsb = lowerPath.Contains(PreferWinUsbVidPid);
 
                                 UsbDevice? device = null;
                                 if (isGoogleWinUsb)

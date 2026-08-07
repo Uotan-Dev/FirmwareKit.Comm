@@ -42,10 +42,10 @@ internal class Win32API
     public static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WriteFile(IntPtr hFile, byte[] buffer, uint sizeToWrite, out uint bytesWritten, IntPtr overlapped);
+    public static extern bool WriteFile(IntPtr hFile, IntPtr buffer, uint sizeToWrite, out uint bytesWritten, IntPtr overlapped);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool ReadFile(IntPtr hFile, byte[] buffer, uint sizeToRead, out uint bytesRead, IntPtr overlapped);
+    public static extern bool ReadFile(IntPtr hFile, IntPtr buffer, uint sizeToRead, out uint bytesRead, IntPtr overlapped);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GUID

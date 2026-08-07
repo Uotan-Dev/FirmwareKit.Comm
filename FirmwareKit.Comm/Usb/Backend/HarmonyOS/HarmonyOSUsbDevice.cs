@@ -385,21 +385,4 @@ internal class HarmonyOSUsbDevice : UsbDevice
             Outcome = outcome
         });
     }
-
-    private void EmitTransferTrace(UsbTransferOperation operation, int requested, int transferred, int timeoutMs, long elapsedMs, UsbTransferOutcome outcome)
-    {
-        UsbTrace.EmitTransfer(new UsbTransferEvent
-        {
-            Backend = "harmony-usbddk",
-            DevicePath = DevicePath,
-            Operation = operation,
-            RequestedBytes = requested,
-            TransferredBytes = transferred,
-            TimeoutMs = timeoutMs,
-            RetryCount = 0,
-            NativeErrorCode = null,
-            ElapsedMs = elapsedMs,
-            Outcome = outcome
-        });
-    }
 }

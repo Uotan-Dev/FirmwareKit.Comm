@@ -56,11 +56,11 @@ internal static class WinUSBAPI
     public static extern bool WinUsb_QueryPipe(IntPtr InterfaceHandle, byte AlternateInterfaceNumber, byte PipeIndex, out WinUSBPipeInfo PipeInformation);
 
     [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_WritePipe(IntPtr InterfaceHandle, byte PipeID, byte[] Buffer,
+    public static extern bool WinUsb_WritePipe(IntPtr InterfaceHandle, byte PipeID, IntPtr Buffer,
         uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
     [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
-    public static extern bool WinUsb_ReadPipe(IntPtr InterfaceHandle, byte PipeID, byte[] Buffer,
+    public static extern bool WinUsb_ReadPipe(IntPtr InterfaceHandle, byte PipeID, IntPtr Buffer,
         uint BufferLength, out uint LengthTransferred, IntPtr Overlapped);
 
     [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]

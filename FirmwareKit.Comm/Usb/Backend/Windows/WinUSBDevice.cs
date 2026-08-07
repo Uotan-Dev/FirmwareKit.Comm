@@ -251,14 +251,9 @@ internal class WinUSBDevice : UsbDevice
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         SetPipeTimeout(timeoutMs);
-        byte[] chunkBuffer = new byte[length];
         uint bytesRead;
-        if (WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), ReadBulkID, chunkBuffer, (uint)length, out bytesRead, IntPtr.Zero))
+        if (WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), ReadBulkID, buffer, (uint)length, out bytesRead, IntPtr.Zero))
         {
-            if (bytesRead > 0)
-            {
-                Marshal.Copy(chunkBuffer, 0, buffer, (int)bytesRead);
-            }
             return UsbChunkResult.Success((int)bytesRead);
         }
 
@@ -269,11 +264,8 @@ internal class WinUSBDevice : UsbDevice
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
         SetPipeTimeout(timeoutMs);
-        byte[] chunkBuffer = new byte[length];
-        Marshal.Copy(buffer, chunkBuffer, 0, length);
-
         uint bytesWritten;
-        if (WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), WriteBulkID, chunkBuffer, (uint)length, out bytesWritten, IntPtr.Zero))
+        if (WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), WriteBulkID, buffer, (uint)length, out bytesWritten, IntPtr.Zero))
         {
             return UsbChunkResult.Success((int)bytesWritten);
         }
@@ -304,23 +296,27 @@ internal class WinUSBDevice : UsbDevice
     private async Task<int> ReadIntoOverlappedAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
     {
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
-        int total = 0;
-        int remaining = length;
-        while (remaining > 0)
+        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int lenToRead = Math.Min(remaining, MaxChunkSize);
-            byte[] chunk = new byte[lenToRead];
-            uint transferred = await OverlappedTransferAsync(chunk, lenToRead, ReadBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-            if (transferred > 0)
+            int total = 0;
+            int remaining = length;
+            while (remaining > 0)
             {
-                Buffer.BlockCopy(chunk, 0, buffer, offset + total, (int)transferred);
+                cancellationToken.ThrowIfCancellationRequested();
+                int lenToRead = Math.Min(remaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + total);
+                uint transferred = await OverlappedTransferAsync(ptr, lenToRead, ReadBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
                 total += (int)transferred;
                 remaining -= (int)transferred;
+                if (transferred < lenToRead) break; // short packet or timeout
             }
-            if (transferred < lenToRead) break; // short packet or timeout
+            return total;
         }
-        return total;
+        finally
+        {
+            handle.Free();
+        }
     }
 
     public override Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
@@ -337,27 +333,34 @@ internal class WinUSBDevice : UsbDevice
     private async Task<long> WriteOverlappedAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken)
     {
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
-        int total = 0;
-        int remaining = length;
-        while (remaining > 0)
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int lenToSend = Math.Min(remaining, MaxChunkSize);
-            byte[] chunk = new byte[lenToSend];
-            Buffer.BlockCopy(data, total, chunk, 0, lenToSend);
-            uint transferred = await OverlappedTransferAsync(chunk, lenToSend, WriteBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-            total += (int)transferred;
-            remaining -= (int)transferred;
-            if (transferred < lenToSend) break;
+            int total = 0;
+            int remaining = length;
+            while (remaining > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                int lenToSend = Math.Min(remaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + total);
+                uint transferred = await OverlappedTransferAsync(ptr, lenToSend, WriteBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+                total += (int)transferred;
+                remaining -= (int)transferred;
+                if (transferred < lenToSend) break;
+            }
+            return total;
         }
-        return total;
+        finally
+        {
+            handle.Free();
+        }
     }
 
     /// <summary>
     /// Performs a single chunk transfer with native overlapped (asynchronous) I/O.
     /// <para>使用原生重叠（异步）I/O 执行单次分块传输。</para>
     /// </summary>
-    private async Task<uint> OverlappedTransferAsync(byte[] chunk, int length, byte pipeId, int timeoutMs, CancellationToken cancellationToken)
+    private async Task<uint> OverlappedTransferAsync(IntPtr buffer, int length, byte pipeId, int timeoutMs, CancellationToken cancellationToken)
     {
         using var evt = new EventWaitHandle(false, EventResetMode.AutoReset);
         var overlapped = new Win32API.OVERLAPPED
@@ -373,8 +376,8 @@ internal class WinUSBDevice : UsbDevice
         {
             uint transferred = 0;
             bool ok = pipeId == ReadBulkID
-                ? WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), pipeId, chunk, (uint)length, out transferred, ovHandle.AddrOfPinnedObject())
-                : WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), pipeId, chunk, (uint)length, out transferred, ovHandle.AddrOfPinnedObject());
+                ? WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), pipeId, buffer, (uint)length, out transferred, ovHandle.AddrOfPinnedObject())
+                : WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), pipeId, buffer, (uint)length, out transferred, ovHandle.AddrOfPinnedObject());
 
             if (ok)
             {
