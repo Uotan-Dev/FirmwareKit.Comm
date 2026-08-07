@@ -63,7 +63,15 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = false,
-            Notes = notes
+            Notes = notes,
+            Backends = new[]
+            {
+                new UsbBackendCapability { BackendName = "winusb", SupportsNativeAsyncIo = true },
+                new UsbBackendCapability { BackendName = "winusb-legacy", SupportsNativeAsyncIo = false },
+                new UsbBackendCapability { BackendName = "linux-usbfs", SupportsNativeAsyncIo = true },
+                new UsbBackendCapability { BackendName = "macos-iousbhost", SupportsNativeAsyncIo = false },
+                new UsbBackendCapability { BackendName = "harmony-ddk", SupportsNativeAsyncIo = false }
+            }
         };
     }
 

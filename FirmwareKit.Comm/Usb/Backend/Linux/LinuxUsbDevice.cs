@@ -314,7 +314,139 @@ internal class LinuxUsbDevice : UsbDevice
         return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
+    public override Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (_fd.IsInvalid)
+        {
+            return Task.FromException<int>(new UsbDeviceHandleClosedException("Device handle is closed."));
+        }
+        if (length <= 0) return Task.FromResult(0);
+        ValidateBufferRange(buffer, offset, length);
+        return ReadIntoUrbAsync(buffer, offset, length, timeoutMs, cancellationToken);
+    }
 
+    private async Task<int> ReadIntoUrbAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
+    {
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        int total = 0;
+        int remaining = length;
+        while (remaining > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int lenToRead = Math.Min(remaining, MaxChunkSize);
+            uint transferred = await SubmitUrbAsync(ep_in, buffer, offset + total, lenToRead, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            total += (int)transferred;
+            remaining -= (int)transferred;
+            if (transferred < lenToRead) break; // short packet or timeout
+        }
+        return total;
+    }
+
+    public override Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (_fd.IsInvalid)
+        {
+            return Task.FromException<long>(new UsbDeviceHandleClosedException("Device handle is closed."));
+        }
+        ValidateWriteData(data, length);
+        if (length == 0) return Task.FromResult(0L);
+        return WriteUrbAsync(data, length, timeoutMs, cancellationToken);
+    }
+
+    private async Task<long> WriteUrbAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken)
+    {
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        int total = 0;
+        int remaining = length;
+        while (remaining > 0)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            int lenToSend = Math.Min(remaining, MaxChunkSize);
+            uint transferred = await SubmitUrbAsync(ep_out, data, total, lenToSend, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            total += (int)transferred;
+            remaining -= (int)transferred;
+            if (transferred < lenToSend) break;
+        }
+        return total;
+    }
+
+    /// <summary>
+    /// Submits a bulk URB and waits for completion via poll(). The kernel performs the
+    /// transfer asynchronously; a thread-pool thread waits on poll() without blocking the caller.
+    /// <para>提交批量 URB 并通过 poll() 等待完成。内核异步执行传输；线程池线程在 poll() 上等待，不阻塞调用方。</para>
+    /// </summary>
+    private async Task<uint> SubmitUrbAsync(byte endpoint, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
+    {
+        GCHandle bufferHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        var urb = new usbdevfs_urb
+        {
+            type = USBDEVFS_URB_TYPE_BULK,
+            endpoint = endpoint,
+            flags = 0, // keep short reads completing normally (do not set SHORT_NOT_OK)
+            buffer = new IntPtr(bufferHandle.AddrOfPinnedObject().ToInt64() + offset),
+            buffer_length = length,
+            usercontext = IntPtr.Zero
+        };
+
+        GCHandle urbHandle = GCHandle.Alloc(urb, GCHandleType.Pinned);
+        try
+        {
+            uint submitCode = (IntPtr.Size == 8) ? USBDEVFS_SUBMITURB_X86_64 : USBDEVFS_SUBMITURB_X86;
+            if (ioctl(Fd, (UIntPtr)submitCode, urbHandle.AddrOfPinnedObject()) < 0)
+            {
+                throw new IOException($"USB async submit failed: {Marshal.GetLastWin32Error()}");
+            }
+
+            int pollResult = await Task.Run(() =>
+            {
+                var pfd = new pollfd { fd = Fd, events = (short)(POLLIN | POLLOUT) };
+                return poll(ref pfd, 1, timeoutMs);
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (pollResult == 0)
+            {
+                // Timeout: discard the pending URB and drain it so the pinned URB can be freed.
+                IntPtr drain = IntPtr.Zero;
+                uint discardCode = (IntPtr.Size == 8) ? USBDEVFS_DISCARDURB_X86_64 : USBDEVFS_DISCARDURB_X86;
+                uint reapCode = (IntPtr.Size == 8) ? USBDEVFS_REAPURBNDELAY_X86_64 : USBDEVFS_REAPURBNDELAY_X86;
+                _ = ioctl(Fd, (UIntPtr)discardCode, urbHandle.AddrOfPinnedObject());
+                _ = ioctl(Fd, (UIntPtr)reapCode, ref drain);
+                return 0;
+            }
+            if (pollResult < 0)
+            {
+                int err = Marshal.GetLastWin32Error();
+                if (err == EINTR) return 0;
+                throw new IOException($"USB async poll failed: {err}");
+            }
+
+            // Reap the completed URB and read its status/actual_length.
+            IntPtr reaped = IntPtr.Zero;
+            uint reapCode2 = (IntPtr.Size == 8) ? USBDEVFS_REAPURBNDELAY_X86_64 : USBDEVFS_REAPURBNDELAY_X86;
+            if (ioctl(Fd, (UIntPtr)reapCode2, ref reaped) < 0)
+            {
+                throw new IOException($"USB async reap failed: {Marshal.GetLastWin32Error()}");
+            }
+
+            var completed = Marshal.PtrToStructure<usbdevfs_urb>(reaped);
+            if (completed.status != 0)
+            {
+                int err = -completed.status; // kernel reports negative errno in status
+                if (err == ETIMEDOUT || err == EPIPE) return 0;
+                if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
+                {
+                    throw new IOException($"USB async transfer failed with fatal error: {err}");
+                }
+                return 0;
+            }
+            return (uint)Math.Max(0, completed.actual_length);
+        }
+        finally
+        {
+            urbHandle.Free();
+            bufferHandle.Free();
+        }
+    }
 }
 
 

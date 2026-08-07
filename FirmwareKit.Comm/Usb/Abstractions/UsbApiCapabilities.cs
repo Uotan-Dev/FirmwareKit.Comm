@@ -65,6 +65,32 @@ public sealed class UsbApiCapabilities
     /// <para>获取或设置后端轮廓的可选说明。</para>
     /// </summary>
     public string? Notes { get; set; }
+
+    /// <summary>
+    /// Gets or sets per-backend capability details for providers that dispatch to multiple
+    /// native backends (e.g. the "native" provider across Windows / Linux / macOS).
+    /// <para>获取或设置多原生后端提供器（如 Windows / Linux / macOS 的 "native"）的逐后端能力详情。</para>
+    /// </summary>
+    public IReadOnlyList<UsbBackendCapability>? Backends { get; set; }
+}
+
+/// <summary>
+/// Describes the capability of a single native backend within a multi-backend provider.
+/// <para>描述多后端提供器内部单个原生后端的能力。</para>
+/// </summary>
+public sealed class UsbBackendCapability
+{
+    /// <summary>
+    /// Gets or sets the backend tag (matches <see cref="UsbTransferEvent.Backend"/>).
+    /// <para>获取或设置后端标签（与 <see cref="UsbTransferEvent.Backend"/> 一致）。</para>
+    /// </summary>
+    public string BackendName { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Gets or sets whether this backend implements asynchronous I/O natively.
+    /// <para>获取或设置该后端是否原生实现异步 I/O。</para>
+    /// </summary>
+    public bool SupportsNativeAsyncIo { get; set; }
 }
 
 /// <summary>

@@ -61,6 +61,55 @@ internal static class LinuxUsbAPI
     [DllImport(Libc, SetLastError = true)]
     public static extern int ioctl(int fd, UIntPtr request, ref usbdevfs_ctrltransfer arg);
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct usbdevfs_urb
+    {
+        public byte type;
+        public byte endpoint;
+        public int status;
+        public uint flags;
+        public IntPtr buffer;
+        public int buffer_length;
+        public int actual_length;
+        public int start_frame;
+        public int number_of_packets;
+        public int error_count;
+        public uint signr;
+        public IntPtr usercontext;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct pollfd
+    {
+        public int fd;
+        public short events;
+        public short revents;
+    }
+
+    // URB control ioctls (kernel _IOWR('U', nr, struct usbdevfs_urb *), dir=3 on 64-bit).
+    public static uint USBDEVFS_SUBMITURB_X86_64 = 0xC008550A;
+    public static uint USBDEVFS_SUBMITURB_X86 = 0x8004550A;
+    public static uint USBDEVFS_DISCARDURB_X86_64 = 0xC008550B;
+    public static uint USBDEVFS_DISCARDURB_X86 = 0x8004550B;
+    public static uint USBDEVFS_REAPURB_X86_64 = 0xC008550C;
+    public static uint USBDEVFS_REAPURB_X86 = 0x8004550C;
+    public static uint USBDEVFS_REAPURBNDELAY_X86_64 = 0xC008550D;
+    public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x8004550D;
+
+    public const byte USBDEVFS_URB_TYPE_BULK = 2;
+    public const uint USBDEVFS_URB_SHORT_NOT_OK = 0x0002;
+
+    public const short POLLIN = 0x001;
+    public const short POLLOUT = 0x004;
+    public const short POLLERR = 0x008;
+    public const short POLLHUP = 0x010;
+
+    [DllImport(Libc, SetLastError = true)]
+    public static extern int ioctl(int fd, UIntPtr request, ref IntPtr arg);
+
+    [DllImport(Libc, SetLastError = true)]
+    public static extern int poll(ref pollfd fds, uint nfds, int timeout);
+
     public const int O_RDWR = 2;
     public const int O_CLOEXEC = 0x80000;
 

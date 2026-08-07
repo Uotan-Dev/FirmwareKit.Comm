@@ -94,6 +94,21 @@ public sealed class UsbCommunicationLayerIntegrationTests
     }
 
     [Fact]
+    public void NativeCapabilities_ReportPerBackendAsyncSupport()
+    {
+        var layer = new UsbCommunicationLayer();
+        var capabilities = layer.GetAvailableApiCapabilities();
+        var native = Assert.Single(capabilities, item => string.Equals(item.ApiName, "native", StringComparison.OrdinalIgnoreCase));
+
+        Assert.NotNull(native.Backends);
+        Assert.Contains(native.Backends!, b => b.BackendName == "winusb" && b.SupportsNativeAsyncIo);
+        Assert.Contains(native.Backends!, b => b.BackendName == "linux-usbfs" && b.SupportsNativeAsyncIo);
+        Assert.Contains(native.Backends!, b => b.BackendName == "winusb-legacy" && !b.SupportsNativeAsyncIo);
+        Assert.Contains(native.Backends!, b => b.BackendName == "macos-iousbhost" && !b.SupportsNativeAsyncIo);
+        Assert.Contains(native.Backends!, b => b.BackendName == "harmony-ddk" && !b.SupportsNativeAsyncIo);
+    }
+
+    [Fact]
     public void SessionTimeoutMethods_AreInvokableThroughRegisteredProvider()
     {
         var layer = new UsbCommunicationLayer(new UsbApiRegistry());
