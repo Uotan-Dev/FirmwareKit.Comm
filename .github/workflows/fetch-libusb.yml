@@ -1,0 +1,80 @@
+name: Fetch libusb native libraries
+
+# Manually triggered workflow that runs tools/fetch-libusb.sh to download the
+# native libusb-1.0 runtime for every supported platform, packages the results
+# into a tarball and uploads it as a GitHub Actions artifact.
+#
+# Artifact layout: libusb-native.tar.gz -> native/<target>/libusb-1.0.<ext>
+#   win-x64, win-arm64        (official release .7z primary, MSYS2 fallback)
+#   macos-x64, macos-arm64    (Homebrew bottles via ghcr.io)
+#   linux-x64/arm64/riscv64/loong64  (Ubuntu/Debian pool .deb)
+#
+# NOTE: a per-target failure is reported by the script as a warning and skipped;
+# the archive still contains whatever was fetched successfully.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mirror:
+        description: 'Mirror set for Ubuntu/Debian/MSYS2 sources'
+        required: false
+        default: 'none'
+        type: choice
+        options:
+          - none
+          - tuna
+          - ustc
+      github_mirror:
+        description: 'Proxy prefix for the official release .7z (e.g. https://ghproxy.com/)'
+        required: false
+        default: ''
+        type: string
+      ghcr_mirror:
+        description: 'Proxy base for Homebrew bottles (e.g. https://ghcr.nju.edu.cn)'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  fetch:
+    name: Fetch libusb for all platforms
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install extraction tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full zstd libarchive-tools binutils
+
+      - name: Fetch libusb native libraries
+        shell: bash
+        run: |
+          extra=""
+          if [ -n "${{ inputs.github_mirror }}" ]; then
+            extra="$extra --github-mirror '${{ inputs.github_mirror }}'"
+          fi
+          if [ -n "${{ inputs.ghcr_mirror }}" ]; then
+            extra="$extra --ghcr-mirror '${{ inputs.ghcr_mirror }}'"
+          fi
+          if [ "${{ inputs.mirror }}" != "none" ]; then
+            extra="$extra --mirror ${{ inputs.mirror }}"
+          fi
+          # shellcheck disable=SC2086
+          bash tools/fetch-libusb.sh --target all $extra
+
+      - name: List fetched artifacts
+        run: |
+          find native -type f | sort
+
+      - name: Package into archive
+        run: |
+          tar -czf libusb-native.tar.gz native/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libusb-native-libs
+          path: libusb-native.tar.gz
+          if-no-files-found: error
