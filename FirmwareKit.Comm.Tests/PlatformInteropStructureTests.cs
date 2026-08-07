@@ -230,15 +230,15 @@ public sealed class PlatformInteropStructureTests
     }
 
     [Fact]
-    public void MacOS_IOUSBFindInterfaceRequest_SizeIs8Bytes()
+    public void MacHost_IOUSBFindInterfaceRequest_SizeIs8Bytes()
     {
-        Assert.Equal(8, Marshal.SizeOf<MacOSUsbAPI.IOUSBFindInterfaceRequest>());
+        Assert.Equal(8, Marshal.SizeOf<MacHostUsbAPI.IOUSBFindInterfaceRequest>());
     }
 
     [Fact]
-    public void MacOS_IOUSBFindInterfaceRequest_FieldsAreUInt16()
+    public void MacHost_IOUSBFindInterfaceRequest_FieldsAreUInt16()
     {
-        var fields = typeof(MacOSUsbAPI.IOUSBFindInterfaceRequest).GetFields();
+        var fields = typeof(MacHostUsbAPI.IOUSBFindInterfaceRequest).GetFields();
         Assert.Equal(4, fields.Length);
         foreach (var field in fields)
         {
@@ -247,18 +247,45 @@ public sealed class PlatformInteropStructureTests
     }
 
     [Fact]
-    public void MacOS_IOUSBFindInterfaceRequest_DontCareIs0xFF()
+    public void MacHost_IOUSBFindInterfaceRequest_DontCareIs0xFF()
     {
-        Assert.Equal((ushort)0xFF, MacOSUsbAPI.kIOUSBFindInterfaceDontCare);
+        Assert.Equal((ushort)0xFF, MacHostUsbAPI.kIOUSBFindInterfaceDontCare);
     }
 
     [Fact]
-    public void MacOS_IOReturn_ErrorCodes_AreCorrect()
+    public void MacHost_IOUSBDeviceRequest_MatchesNativeLayout()
     {
-        Assert.Equal(unchecked((int)0xE00002C0), MacOSUsbAPI.kIOReturnNoDevice);
-        Assert.Equal(unchecked((int)0xE00002EB), MacOSUsbAPI.kIOReturnAborted);
-        Assert.Equal(unchecked((int)0xE00002D6), MacOSUsbAPI.kIOReturnTimeout);
-        Assert.Equal(unchecked((int)0xE00002ED), MacOSUsbAPI.kIOReturnNotResponding);
+        int expected = IntPtr.Size == 4 ? 16 : 24;
+        Assert.Equal(expected, Marshal.SizeOf<MacHostUsbAPI.IOUSBDeviceRequest>());
+    }
+
+    [Fact]
+    public void MacHost_IOUSBLib_ErrorCodes_AreCorrect()
+    {
+        Assert.Equal(0, MacHostUsbAPI.kIOReturnSuccess);
+        Assert.Equal(unchecked((int)0xE00002C0), MacHostUsbAPI.kIOReturnNoDevice);
+        Assert.Equal(unchecked((int)0xE00002EB), MacHostUsbAPI.kIOReturnAborted);
+        Assert.Equal(unchecked((int)0xE00002D6), MacHostUsbAPI.kIOReturnTimeout);
+        Assert.Equal(unchecked((int)0xE00002ED), MacHostUsbAPI.kIOReturnNotResponding);
+    }
+
+    [Fact]
+    public void MacHost_DescriptorStructs_MatchUsbLayout()
+    {
+        Assert.Equal(9, Marshal.SizeOf<MacHostUsbAPI.UsbConfigurationDescriptor>());
+        Assert.Equal(9, Marshal.SizeOf<MacHostUsbAPI.UsbInterfaceDescriptor>());
+        Assert.Equal(7, Marshal.SizeOf<MacHostUsbAPI.UsbEndpointDescriptor>());
+    }
+
+    [Fact]
+    public void MacHost_PipeConstants_MatchIOUSBLib()
+    {
+        Assert.Equal(0, (int)MacHostUsbAPI.kIOUSBHostPortTypeControl);
+        Assert.Equal(1, (int)MacHostUsbAPI.kIOUSBHostPortTypeIsochronous);
+        Assert.Equal(2, (int)MacHostUsbAPI.kIOUSBHostPortTypeBulk);
+        Assert.Equal(3, (int)MacHostUsbAPI.kIOUSBHostPortTypeInterrupt);
+        Assert.Equal(0, (int)MacHostUsbAPI.kIOUSBHostPipeDirectionOut);
+        Assert.Equal(1, (int)MacHostUsbAPI.kIOUSBHostPipeDirectionIn);
     }
 
     [Fact]

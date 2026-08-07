@@ -34,6 +34,8 @@ FirmwareKit.Comm 专注于跨平台原生 USB 传输能力：
 设备发现默认优先走“元数据发现”路径，避免为仅枚举场景建立长期读写会话；
 真正的数据收发会在调用 `OpenUsbDeviceSessions` 后进行。
 
+在 macOS 上，原生后端基于用户态 IOUSBHost（IOUSBLib）框架实现，要求 macOS 10.15 或更高版本；更旧的 macOS 版本请改用 `libusb` 后端。
+
 协议层不在本库中实现，由调用程序基于统一会话接口自行实现。
 
 ## 安装

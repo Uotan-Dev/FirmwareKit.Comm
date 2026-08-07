@@ -95,7 +95,16 @@ internal sealed class NativeUsbApiProvider : IUsbApiProvider, IUsbApiDiscoveryPr
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            return MacOSUsbFinder.FindDevice(filter);
+            try
+            {
+                // IOUSBHost (IOUSBLib) backend, requires macOS 10.15+.
+                return MacHostUsbFinder.FindDevice(filter);
+            }
+            catch (DllNotFoundException ex)
+            {
+                UsbTrace.Log($"IOUSBHost backend unavailable (requires macOS 10.15+): {ex.Message}");
+                return new List<UsbDevice>();
+            }
         }
 
         return new List<UsbDevice>();

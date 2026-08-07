@@ -34,6 +34,8 @@ FirmwareKit.Comm focuses on cross-platform native USB transport primitives:
 By default, discovery prefers metadata-first paths so simple enumeration does not require long-lived read/write sessions.
 Actual payload I/O starts after calling `OpenUsbDeviceSessions`.
 
+On macOS, the native backend is built on the user-space IOUSBHost (IOUSBLib) framework and requires macOS 10.15 or later; for older macOS releases, use the `libusb` backend instead.
+
 Protocol layers (for example Sahara, Firehose, Fastboot, or custom binary protocols) are intentionally out of scope and should be implemented by callers on top of the unified session interfaces.
 
 ## Installation
