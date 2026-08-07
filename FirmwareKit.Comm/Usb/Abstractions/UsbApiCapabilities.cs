@@ -1,3 +1,5 @@
+using FirmwareKit.Comm.Usb.Diagnostics;
+
 namespace FirmwareKit.Comm.Usb.Abstractions;
 
 /// <summary>

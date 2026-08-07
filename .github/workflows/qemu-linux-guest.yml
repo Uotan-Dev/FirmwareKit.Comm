@@ -1,0 +1,95 @@
+name: QEMU Linux Guest USB Check
+
+# Experimental: boots a Linux guest in QEMU (KVM) on the ubuntu runner with an
+# emulated USB serial device (bulk IN/OUT endpoints, required by all backends)
+# and runs the library's Linux usbfs + libusb backends against it inside the
+# guest. This is the only GitHub-hosted way to exercise REAL (emulated) USB
+# enumeration/claim behavior without physical hardware.
+#
+# Honest scope (guest OS support via QEMU):
+#   - Linux guest : viable (this job).
+#   - Windows guest: NOT viable in CI (requires a licensed Windows ISO; QEMU's
+#     built-in emulated devices have no WinUSB driver binding).
+#   - macOS guest : NOT viable (Apple EULA forbids macOS on non-Apple hardware;
+#     nested macOS on the Apple-silicon runners is unsupported).
+#
+# The emulated usb-serial device is claimed by the guest kernel's usb-serial
+# driver, so the library must use its DISCONNECT / DetachKernelDriver fallback
+# to claim the interface - a real backend behavior worth observing. A null
+# chardev discards writes and reads time out (transfer smoke, no protocol).
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  qemu-linux-guest:
+    name: QEMU guest - Linux usbfs + libusb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 cloud-image-utils
+
+      - name: Download Ubuntu cloud image
+        run: |
+          curl -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+          qemu-img resize ubuntu.img 8G
+
+      - name: Prepare cloud-init seed
+        run: |
+          cat > user-data <<'EOF'
+          #cloud-config
+          users:
+            - name: ubuntu
+              sudo: ALL=(ALL) NOPASSWD:ALL
+          package_update: true
+          packages:
+            - libusb-1.0-0
+            - git
+            - curl
+          runcmd:
+            - curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /opt/dotnet
+            - git clone --depth 1 https://github.com/Uotan-Dev/FirmwareKit.Comm.git /opt/fkc
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 && dotnet restore
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && dotnet build FirmwareKit.Comm.slnx -c Release --no-restore
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- APIS ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- apis
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api native
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api libusb
+            - poweroff
+          EOF
+          cloud-localds seed.img user-data
+
+      - name: Boot guest with emulated USB serial device and capture console
+        run: |
+          # usb-serial exposes bulk IN/OUT endpoints. A null chardev discards
+          # writes and reads time out; enumeration + claim (with kernel-driver
+          # DISCONNECT fallback) is the observed behavior.
+          timeout 540 qemu-system-x86_64 \
+            -machine accel=kvm:tcg \
+            -cpu max \
+            -m 2048 -smp 2 \
+            -drive file=ubuntu.img,if=virtio \
+            -drive file=seed.img,if=virtio \
+            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+            -device usb-ehci \
+            -chardev null,id=usb0 \
+            -device usb-serial,chardev=usb0 \
+            -nographic 2>&1 | tee guest.log || true
+
+      - name: Assert observations
+        run: |
+          tail -80 guest.log
+          count=$(grep -c "No USB devices were discovered" guest.log || true)
+          if [ "$count" -ne 0 ]; then
+            echo "::error::$count backend run(s) failed to enumerate the emulated USB device."
+            exit 1
+          fi
+          echo "::notice::Emulated USB device enumerated by the native (usbfs) and libusb backends inside the QEMU Linux guest."

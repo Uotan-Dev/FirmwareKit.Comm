@@ -79,7 +79,7 @@ internal static class LinuxUsbAPI
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct pollfd
+    public struct PollFd
     {
         public int fd;
         public short events;
@@ -108,7 +108,7 @@ internal static class LinuxUsbAPI
     public static extern int ioctl(int fd, UIntPtr request, ref IntPtr arg);
 
     [DllImport(Libc, SetLastError = true)]
-    public static extern int poll(ref pollfd fds, uint nfds, int timeout);
+    public static extern int poll(ref PollFd fds, uint nfds, int timeout);
 
     public const int O_RDWR = 2;
     public const int O_CLOEXEC = 0x80000;

@@ -399,7 +399,7 @@ internal class LinuxUsbDevice : UsbDevice
 
             int pollResult = await Task.Run(() =>
             {
-                var pfd = new pollfd { fd = Fd, events = (short)(POLLIN | POLLOUT) };
+                var pfd = new PollFd { fd = Fd, events = (short)(POLLIN | POLLOUT) };
                 return poll(ref pfd, 1, timeoutMs);
             }, cancellationToken).ConfigureAwait(false);
 

@@ -8,8 +8,12 @@ on:
 
 jobs:
   build:
-    name: Build & Test 
-    runs-on: macos-latest
+    name: Build & Test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - uses: actions/checkout@v4
@@ -19,6 +23,13 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
+    # GitHub-hosted runners expose no physical USB devices. Providing the native libusb
+    # runtime on Linux lets the libusb probe succeed and enumerate zero devices, which
+    # exercises the "supported but no hardware" path.
+    - name: Install libusb (Ubuntu)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0
+
     - name: Restore dependencies
       run: dotnet restore
 
@@ -27,3 +38,21 @@ jobs:
 
     - name: Test
       run: dotnet test --no-build -c Release --verbosity normal
+
+    # --- Behavior observation (no physical USB devices on hosted runners) ---
+    # Expected observations per platform:
+    #   windows-latest : native routes to winusb/winusb-legacy; enumeration is empty, exit 0.
+    #   ubuntu-latest  : native routes to linux-usbfs; libusb probe succeeds (runtime
+    #                    installed above) and lists zero devices; empty, exit 0.
+    #   macos-latest   : native routes to macos-iousbhost; IOUSBLib loads, so the P/Invoke
+    #                    entry points resolve (a bad signature would be logged as
+    #                    "IOUSBHost backend unavailable"); enumeration is empty, exit 0.
+    # In all cases the CLI must exit 0 with a "No USB devices were discovered" message.
+    - name: Observe backend APIs
+      run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- apis
+
+    - name: Observe device enumeration (native)
+      run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native
+
+    - name: Observe device enumeration (libusb)
+      run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api libusb
