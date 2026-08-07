@@ -261,7 +261,7 @@ internal class MacHostUsbDevice : UsbDevice
         done = ControlTransferRaw(0x80, 0x06, (ushort)((0x03 << 8) | serialIndex), 0x0409, buf, buf.Length, 1000);
         if (done <= 2) return -1;
 
-        SerialNumber = Encoding.Unicode.GetString(buf, 2, done - 2).TrimEnd('\0');
+        SerialNumber = UsbStringDescriptor.Decode(buf, done);
         return 0;
     }
 
@@ -314,186 +314,50 @@ internal class MacHostUsbDevice : UsbDevice
         return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
-    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    protected override string BackendName => "macos-iousbhost";
+
+    protected override bool IsOpen => interfacePtr != IntPtr.Zero && pipeIn != IntPtr.Zero && pipeOut != IntPtr.Zero;
+
+    protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        var stopwatch = Stopwatch.StartNew();
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-
-        if (interfacePtr == IntPtr.Zero || pipeIn == IntPtr.Zero)
+        uint transferred = 0;
+        int kr = IOUSBHostPipeBulkTransfer(pipeIn, buffer, (uint)length, out transferred, (uint)timeoutMs);
+        if (kr != kIOReturnSuccess)
         {
-            throw new UsbDeviceHandleClosedException("Device handle is closed.");
-        }
-        if (length <= 0) return 0;
-        ValidateBufferRange(buffer, offset, length);
-
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-
-        const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
-        int lenRemaining = length;
-        int count = 0;
-
-        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-        try
-        {
-            while (lenRemaining > 0)
+            if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
             {
-                int lenToRead = Math.Min(lenRemaining, maxLenToRead);
-                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count);
-                uint transferred = 0;
-
-                int kr = IOUSBHostPipeBulkTransfer(pipeIn, ptr, (uint)lenToRead, out transferred, (uint)effectiveTimeoutMs);
-                if (kr != kIOReturnSuccess)
-                {
-                    lastError = kr;
-                    if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
-                    {
-                        outcome = UsbTransferOutcome.FatalError;
-                        UsbTrace.EmitTransfer(new UsbTransferEvent
-                        {
-                            Backend = "macos-iousbhost",
-                            DevicePath = DevicePath,
-                            Operation = UsbTransferOperation.Read,
-                            RequestedBytes = length,
-                            TransferredBytes = count,
-                            TimeoutMs = effectiveTimeoutMs,
-                            RetryCount = 0,
-                            NativeErrorCode = kr,
-                            ElapsedMs = stopwatch.ElapsedMilliseconds,
-                            Outcome = outcome
-                        });
-                        throw new IOException($"USB read failed with fatal error: 0x{kr:X}");
-                    }
-                    if (kr == kIOReturnTimeout)
-                    {
-                        outcome = UsbTransferOutcome.Timeout;
-                    }
-                    break;
-                }
-
-                count += (int)transferred;
-                lenRemaining -= (int)transferred;
-
-                if (transferred < lenToRead) break;
+                return UsbChunkResult.Fatal(kr);
             }
-
-            if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+            if (kr == kIOReturnTimeout)
             {
-                outcome = UsbTransferOutcome.ShortTransfer;
+                return UsbChunkResult.Timeout(kr);
             }
-
-            UsbTrace.EmitTransfer(new UsbTransferEvent
-            {
-                Backend = "macos-iousbhost",
-                DevicePath = DevicePath,
-                Operation = UsbTransferOperation.Read,
-                RequestedBytes = length,
-                TransferredBytes = count,
-                TimeoutMs = effectiveTimeoutMs,
-                RetryCount = 0,
-                NativeErrorCode = lastError,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Outcome = outcome
-            });
-
-            return count;
+            return UsbChunkResult.Error(kr);
         }
-        finally
+        return UsbChunkResult.Success((int)transferred);
+    }
+
+    protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
+    {
+        uint transferred = 0;
+        int kr = IOUSBHostPipeWriteBulkData(pipeOut, buffer, (uint)length, out transferred, (uint)timeoutMs);
+        if (kr != kIOReturnSuccess)
         {
-            handle.Free();
+            if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
+            {
+                return UsbChunkResult.Fatal(kr);
+            }
+            if (kr == kIOReturnTimeout)
+            {
+                return UsbChunkResult.Timeout(kr);
+            }
+            return UsbChunkResult.Error(kr);
         }
+        return UsbChunkResult.Success((int)transferred);
     }
 
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
-    }
-
-    public override long Write(byte[] data, int length, int timeoutMs)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-
-        if (interfacePtr == IntPtr.Zero || pipeOut == IntPtr.Zero)
-        {
-            throw new UsbDeviceHandleClosedException("Device handle is closed.");
-        }
-        ValidateWriteData(data, length);
-
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-
-        const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
-        int lenRemaining = length;
-        int count = 0;
-
-        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-        try
-        {
-            while (lenRemaining > 0)
-            {
-                int lenToSend = Math.Min(lenRemaining, maxLenToSend);
-                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + count);
-                uint transferred = 0;
-
-                int kr = IOUSBHostPipeWriteBulkData(pipeOut, ptr, (uint)lenToSend, out transferred, (uint)effectiveTimeoutMs);
-                if (kr != kIOReturnSuccess)
-                {
-                    lastError = kr;
-                    if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
-                    {
-                        outcome = UsbTransferOutcome.FatalError;
-                        UsbTrace.EmitTransfer(new UsbTransferEvent
-                        {
-                            Backend = "macos-iousbhost",
-                            DevicePath = DevicePath,
-                            Operation = UsbTransferOperation.Write,
-                            RequestedBytes = length,
-                            TransferredBytes = count,
-                            TimeoutMs = effectiveTimeoutMs,
-                            RetryCount = 0,
-                            NativeErrorCode = kr,
-                            ElapsedMs = stopwatch.ElapsedMilliseconds,
-                            Outcome = outcome
-                        });
-                        throw new IOException($"USB write failed with fatal error: 0x{kr:X}");
-                    }
-                    if (kr == kIOReturnTimeout)
-                    {
-                        outcome = UsbTransferOutcome.Timeout;
-                    }
-                    break;
-                }
-
-                lenRemaining -= lenToSend;
-                count += lenToSend;
-            }
-
-            if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
-            {
-                outcome = UsbTransferOutcome.ShortTransfer;
-            }
-
-            UsbTrace.EmitTransfer(new UsbTransferEvent
-            {
-                Backend = "macos-iousbhost",
-                DevicePath = DevicePath,
-                Operation = UsbTransferOperation.Write,
-                RequestedBytes = length,
-                TransferredBytes = count,
-                TimeoutMs = effectiveTimeoutMs,
-                RetryCount = 0,
-                NativeErrorCode = lastError,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Outcome = outcome
-            });
-
-            // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
-            return count;
-        }
-        finally
-        {
-            handle.Free();
-        }
     }
 }

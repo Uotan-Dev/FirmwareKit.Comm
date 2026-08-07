@@ -103,8 +103,8 @@ public sealed class FirmwareKitCommFacadeTests
         var session = Assert.Single(sessions.Sessions);
         var asyncSession = session.AsAsync();
 
-        var read = await asyncSession.ReadAsync(8, 1000);
-        var written = await asyncSession.WriteAsync(new byte[] { 1, 2, 3 }, 3, 1000);
+        var read = await asyncSession.ReadAsync(8, 1000, TestContext.Current.CancellationToken);
+        var written = await asyncSession.WriteAsync(new byte[] { 1, 2, 3 }, 3, 1000, TestContext.Current.CancellationToken);
 
         Assert.Equal(8, read.Length);
         Assert.Equal(3, written);

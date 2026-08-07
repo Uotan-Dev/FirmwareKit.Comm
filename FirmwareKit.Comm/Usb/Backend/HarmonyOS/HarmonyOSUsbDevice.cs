@@ -219,24 +219,19 @@ internal class HarmonyOSUsbDevice : UsbDevice
         return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
-    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    protected override string BackendName => "harmony-ddk";
+
+    protected override bool IsOpen => !_disposed && _ddkInitialized;
+
+    protected override int MaxChunkSize => _devMmapSize > 0 ? _devMmapSize : base.MaxChunkSize;
+
+    protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        if (_disposed || !_ddkInitialized)
-        {
-            throw new UsbDeviceHandleClosedException("Device handle is closed.");
-        }
-
-        ValidateBufferRange(buffer, offset, length);
-        if (length <= 0) return 0;
-
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        var stopwatch = Stopwatch.StartNew();
-
         var pipe = new UsbRequestPipe
         {
             interfaceHandle = _interfaceHandle,
             endpointAddress = _epIn,
-            timeout = (uint)effectiveTimeoutMs
+            timeout = (uint)timeoutMs
         };
 
         var devMmap = new UsbDeviceMemMap
@@ -249,92 +244,58 @@ internal class HarmonyOSUsbDevice : UsbDevice
         };
 
         int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
-
-        stopwatch.Stop();
-
         if (ret == USB_DDK_NO_ERROR)
         {
             int transferred = (int)devMmap.length;
             if (transferred > 0)
             {
-                Marshal.Copy(devMmap.buffer, buffer, offset, Math.Min(transferred, length));
+                int copyLen = Math.Min(transferred, length);
+                byte[] tmp = new byte[copyLen];
+                Marshal.Copy(_devMmapBuffer, tmp, 0, copyLen);
+                Marshal.Copy(tmp, 0, buffer, copyLen);
             }
-
-            var outcome = transferred >= length ? UsbTransferOutcome.Success : UsbTransferOutcome.ShortTransfer;
-            EmitTransferTrace(UsbTransferOperation.Read, length, transferred, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
-            return transferred;
+            return UsbChunkResult.Success(transferred);
         }
 
-        var errorOutcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
-        EmitTransferTrace(UsbTransferOperation.Read, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, errorOutcome);
-
-        if (ret == USB_DDK_TIMEOUT) return 0;
-
-        throw new UsbTransferException($"USB read failed: {GetErrorMessage(ret)}", ret);
+        return ret == USB_DDK_TIMEOUT ? UsbChunkResult.Timeout(ret) : UsbChunkResult.Fatal(ret);
     }
 
-    public override long Write(byte[] data, int length)
+    protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        return Write(data, length, PlatformDefaultTimeoutMs);
-    }
-
-    public override long Write(byte[] data, int length, int timeoutMs)
-    {
-        if (_disposed || !_ddkInitialized)
-        {
-            throw new UsbDeviceHandleClosedException("Device handle is closed.");
-        }
-
-        if (length == 0) return 0;
-        ValidateWriteData(data, length);
-
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        var stopwatch = Stopwatch.StartNew();
-
         var pipe = new UsbRequestPipe
         {
             interfaceHandle = _interfaceHandle,
             endpointAddress = _epOut,
-            timeout = (uint)effectiveTimeoutMs
+            timeout = (uint)timeoutMs
         };
 
-        IntPtr bufferPtr = Marshal.AllocHGlobal(length);
-        try
+        var devMmap = new UsbDeviceMemMap
         {
-            Marshal.Copy(data, 0, bufferPtr, length);
+            deviceId = _deviceId,
+            buffer = buffer,
+            size = (UIntPtr)length,
+            offset = UIntPtr.Zero,
+            length = (UIntPtr)length
+        };
 
-            var devMmap = new UsbDeviceMemMap
-            {
-                deviceId = _deviceId,
-                buffer = bufferPtr,
-                size = (UIntPtr)length,
-                offset = UIntPtr.Zero,
-                length = (UIntPtr)length
-            };
-
-            int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
-
-            stopwatch.Stop();
-
-            if (ret == USB_DDK_NO_ERROR)
-            {
-                int transferred = (int)devMmap.length;
-                var outcome = transferred >= length ? UsbTransferOutcome.Success : UsbTransferOutcome.ShortTransfer;
-                EmitTransferTrace(UsbTransferOperation.Write, length, transferred, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, outcome);
-                return transferred;
-            }
-
-            var errorOutcome = ret == USB_DDK_TIMEOUT ? UsbTransferOutcome.Timeout : UsbTransferOutcome.FatalError;
-            EmitTransferTrace(UsbTransferOperation.Write, length, 0, effectiveTimeoutMs, stopwatch.ElapsedMilliseconds, errorOutcome);
-
-            if (ret == USB_DDK_TIMEOUT) return 0;
-
-            throw new UsbTransferException($"USB write failed: {GetErrorMessage(ret)}", ret);
-        }
-        finally
+        int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
+        if (ret == USB_DDK_NO_ERROR)
         {
-            Marshal.FreeHGlobal(bufferPtr);
+            return UsbChunkResult.Success((int)devMmap.length);
         }
+
+        return ret == USB_DDK_TIMEOUT ? UsbChunkResult.Timeout(ret) : UsbChunkResult.Fatal(ret);
+    }
+
+    protected override Exception CreateReadFatalException(int nativeError)
+        => new UsbTransferException($"USB read failed: {GetErrorMessage(nativeError)}", nativeError);
+
+    protected override Exception CreateWriteFatalException(int nativeError)
+        => new UsbTransferException($"USB write failed: {GetErrorMessage(nativeError)}", nativeError);
+
+    public override long Write(byte[] data, int length)
+    {
+        return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
     public override int GetSerialNumber()

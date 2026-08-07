@@ -34,7 +34,7 @@ internal static class LinuxUsbFinder
 
                     ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
                     ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
-                    byte iSerialNumber = desc[14];
+                    byte iSerialNumber = desc[16];
 
                     if (filter?.VendorId is ushort filterVid && idVendor != filterVid)
                     {

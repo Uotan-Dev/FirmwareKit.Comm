@@ -11,7 +11,10 @@ internal class LinuxUsbDevice : UsbDevice
 {
     private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
 
-    private int fd = -1;
+    private readonly LinuxUsbFd _fd = new LinuxUsbFd();
+
+    private int Fd => (int)_fd.DangerousGetHandle();
+
     public byte ep_in { get; set; }
     public byte ep_out { get; set; }
     public int InterfaceId { get; set; }
@@ -21,19 +24,18 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override int CreateHandle()
     {
-        fd = open(DevicePath, O_RDWR | O_CLOEXEC);
-        if (fd < 0) return fd;
+        _fd.SetFd(open(DevicePath, O_RDWR | O_CLOEXEC));
+        if (_fd.IsInvalid) return -1;
         int ifc = InterfaceId;
-        int n = ioctl(fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
+        int n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         if (n != 0)
         {
-            ioctl(fd, (UIntPtr)USBDEVFS_DISCONNECT, ref ifc);
-            n = ioctl(fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
+            ioctl(Fd, (UIntPtr)USBDEVFS_DISCONNECT, ref ifc);
+            n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         }
         if (n != 0)
         {
-            close(fd);
-            fd = -1;
+            _fd.Dispose();
             return n;
         }
         GetSerialNumber();
@@ -42,15 +44,15 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override void Reset()
     {
-        if (fd >= 0)
+        if (!_fd.IsInvalid)
         {
-            ioctl(fd, (UIntPtr)USBDEVFS_RESET, IntPtr.Zero);
+            ioctl(Fd, (UIntPtr)USBDEVFS_RESET, IntPtr.Zero);
         }
     }
 
     public override int ControlTransfer(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
     {
-        if (fd < 0)
+        if (_fd.IsInvalid)
         {
             throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
@@ -88,7 +90,7 @@ internal class LinuxUsbDevice : UsbDevice
                 try
                 {
                     ctrl.data = pinnedHandle.AddrOfPinnedObject();
-                    int result = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
+                    int result = ioctl(Fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
                     if (result < 0)
                     {
                         throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -112,7 +114,7 @@ internal class LinuxUsbDevice : UsbDevice
             try
             {
                 ctrl.data = transferHandle.AddrOfPinnedObject();
-                int result = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
+                int result = ioctl(Fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
                 if (result < 0)
                 {
                     throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -132,7 +134,7 @@ internal class LinuxUsbDevice : UsbDevice
         }
 
         ctrl.data = IntPtr.Zero;
-        int zeroResult = ioctl(fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
+        int zeroResult = ioctl(Fd, (UIntPtr)(IntPtr.Size == 8 ? USBDEVFS_CONTROL_X86_64 : USBDEVFS_CONTROL_X86), ref ctrl);
         if (zeroResult < 0)
         {
             throw new IOException($"USB control transfer failed with error: {Marshal.GetLastWin32Error()}");
@@ -143,12 +145,11 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override void Dispose()
     {
-        if (fd >= 0)
+        if (!_fd.IsInvalid)
         {
             int ifc = InterfaceId;
-            ioctl(fd, (UIntPtr)USBDEVFS_RELEASEINTERFACE, ref ifc);
-            close(fd);
-            fd = -1;
+            ioctl(Fd, (UIntPtr)USBDEVFS_RELEASEINTERFACE, ref ifc);
+            _fd.Dispose();
         }
     }
 
@@ -172,7 +173,7 @@ internal class LinuxUsbDevice : UsbDevice
             ctrl.data = handle.AddrOfPinnedObject();
             ctrl.timeout = 1000;
 
-            int n = ioctl(fd, ctrlCodePtr, ref ctrl);
+            int n = ioctl(Fd, ctrlCodePtr, ref ctrl);
             int languageCount = 0;
             ushort[] languages = new ushort[128];
             if (n > 2)
@@ -199,10 +200,10 @@ internal class LinuxUsbDevice : UsbDevice
                 ctrl.data = handle.AddrOfPinnedObject();
                 ctrl.timeout = 1000;
 
-                n = ioctl(fd, ctrlCodePtr, ref ctrl);
+                n = ioctl(Fd, ctrlCodePtr, ref ctrl);
                 if (n > 2)
                 {
-                    SerialNumber = Encoding.Unicode.GetString(descriptor, 2, n - 2).TrimEnd('\0');
+                    SerialNumber = UsbStringDescriptor.Decode(descriptor, n);
                     return 0;
                 }
             }
@@ -238,257 +239,79 @@ internal class LinuxUsbDevice : UsbDevice
         return ReadInto(buffer, offset, length, PlatformDefaultTimeoutMs);
     }
 
-    public override int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    protected override string BackendName => "linux-usbfs";
+
+    protected override bool IsOpen => !_fd.IsInvalid;
+
+    protected override int MaxChunkSize => UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
+
+    protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        const uint MAX_USBFS_BULK_SIZE = UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
-        const int MAX_RETRIES = UsbTransferPolicies.LinuxMaxRetries;
-        var stopwatch = Stopwatch.StartNew();
+        var bulk = new usbdevfs_bulktransfer
+        {
+            ep = ep_in,
+            len = (uint)length,
+            timeout = (uint)timeoutMs,
+            data = buffer
+        };
+
+        uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
+        UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
+        int n = -1;
+        int retry = 0;
         int retryCount = 0;
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-
-        if (length <= 0) return 0;
-        ValidateBufferRange(buffer, offset, length);
-
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-
-        int count = 0;
-        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-        try
+        do
         {
-            while (count < length)
+            n = ioctl(Fd, bulkCodePtr, ref bulk);
+            if (n < 0)
             {
-                int xfer = Math.Min(length - count, (int)MAX_USBFS_BULK_SIZE);
-                usbdevfs_bulktransfer bulk = new usbdevfs_bulktransfer
-                {
-                    ep = ep_in,
-                    len = (uint)xfer,
-                    timeout = (uint)effectiveTimeoutMs,
-                    data = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count)
-                };
-
-                uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
-                UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
-                int n = -1;
-                int retry = 0;
-                do
-                {
-                    n = ioctl(fd, bulkCodePtr, ref bulk);
-                    if (n < 0)
-                    {
-                        int err = Marshal.GetLastWin32Error();
-                        lastError = err;
-                        if (err == EINTR || err == EAGAIN) continue;
-                        if (err == ETIMEDOUT)
-                        {
-                            outcome = UsbTransferOutcome.Timeout;
-                            break;
-                        }
-                        if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
-                        {
-                            outcome = UsbTransferOutcome.FatalError;
-                            UsbTrace.EmitTransfer(new UsbTransferEvent
-                            {
-                                Backend = "linux-usbfs",
-                                DevicePath = DevicePath,
-                                Operation = UsbTransferOperation.Read,
-                                RequestedBytes = length,
-                                TransferredBytes = count,
-                                TimeoutMs = effectiveTimeoutMs,
-                                RetryCount = retryCount,
-                                NativeErrorCode = err,
-                                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                                Outcome = outcome
-                            });
-                            throw new IOException($"USB read failed with fatal error: {err}");
-                        }
-
-                        if (++retry > MAX_RETRIES) break;
-                        retryCount++;
-                        Thread.Sleep(500);
-                    }
-                } while (n < 0);
-
-                if (n < 0) break;
-                count += n;
-                if (n < xfer) break;
+                int err = Marshal.GetLastWin32Error();
+                if (err == EINTR || err == EAGAIN) continue;
+                if (err == ETIMEDOUT) return UsbChunkResult.Timeout(err);
+                if (err == ENODEV || err == ESHUTDOWN || err == EPROTO) return UsbChunkResult.Fatal(err);
+                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Error(err);
+                retryCount++;
+                Thread.Sleep(500);
             }
-        }
-        finally
-        {
-            handle.Free();
-        }
+        } while (n < 0);
+        return new UsbChunkResult(UsbChunkStatus.Success, n, 0, retryCount);
+    }
 
-        if (outcome == UsbTransferOutcome.Success)
+    protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
+    {
+        var bulk = new usbdevfs_bulktransfer
         {
-            if (lastError == ETIMEDOUT)
+            ep = ep_out,
+            len = (uint)length,
+            timeout = (uint)timeoutMs,
+            data = buffer
+        };
+
+        uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
+        UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
+        int n = -1;
+        int retry = 0;
+        int retryCount = 0;
+        do
+        {
+            n = ioctl(Fd, bulkCodePtr, ref bulk);
+            if (n < 0)
             {
-                outcome = UsbTransferOutcome.Timeout;
+                int err = Marshal.GetLastWin32Error();
+                if (err == EINTR || err == EAGAIN) continue;
+                if (err == ETIMEDOUT) return UsbChunkResult.Timeout(err);
+                if (err == ENODEV || err == ESHUTDOWN || err == EPROTO) return UsbChunkResult.Fatal(err);
+                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Timeout(err);
+                retryCount++;
+                Thread.Sleep(500);
             }
-            else if (count > 0 && count < length)
-            {
-                outcome = UsbTransferOutcome.ShortTransfer;
-            }
-        }
-
-        UsbTrace.EmitTransfer(new UsbTransferEvent
-        {
-            Backend = "linux-usbfs",
-            DevicePath = DevicePath,
-            Operation = UsbTransferOperation.Read,
-            RequestedBytes = length,
-            TransferredBytes = count,
-            TimeoutMs = effectiveTimeoutMs,
-            RetryCount = retryCount,
-            NativeErrorCode = lastError,
-            ElapsedMs = stopwatch.ElapsedMilliseconds,
-            Outcome = outcome
-        });
-
-        return count;
+        } while (n < 0);
+        return new UsbChunkResult(UsbChunkStatus.Success, n, 0, retryCount);
     }
 
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
-    }
-
-    public override long Write(byte[] data, int length, int timeoutMs)
-    {
-        const uint MAX_USBFS_BULK_SIZE = UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
-        const int MAX_RETRIES = UsbTransferPolicies.LinuxMaxRetries;
-        var stopwatch = Stopwatch.StartNew();
-        int retryCount = 0;
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-        int count = 0;
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-
-        if (length == 0)
-        {
-            // Align with AOSP host behavior: avoid forcing explicit host-side ZLP.
-            UsbTrace.EmitTransfer(new UsbTransferEvent
-            {
-                Backend = "linux-usbfs",
-                DevicePath = DevicePath,
-                Operation = UsbTransferOperation.Write,
-                RequestedBytes = 0,
-                TransferredBytes = 0,
-                TimeoutMs = effectiveTimeoutMs,
-                RetryCount = 0,
-                NativeErrorCode = null,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Outcome = UsbTransferOutcome.Success
-            });
-            return 0;
-        }
-
-        ValidateWriteData(data, length);
-
-        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-        try
-        {
-            while (count < length)
-            {
-                int xfer = (length - count > (int)MAX_USBFS_BULK_SIZE) ? (int)MAX_USBFS_BULK_SIZE : (length - count);
-                usbdevfs_bulktransfer bulk = new usbdevfs_bulktransfer
-                {
-                    ep = ep_out,
-                    len = (uint)xfer,
-                    timeout = (uint)effectiveTimeoutMs,
-                    data = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + count)
-                };
-
-                uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
-                UIntPtr bulkCodePtr = (UIntPtr)bulkCode;
-                int n = -1;
-                int retry = 0;
-                do
-                {
-                    n = ioctl(fd, bulkCodePtr, ref bulk);
-                    if (n < 0)
-                    {
-                        int err = Marshal.GetLastWin32Error();
-                        lastError = err;
-                        if (err == EINTR || err == EAGAIN) continue;
-                        if (err == ETIMEDOUT)
-                        {
-                            outcome = UsbTransferOutcome.Timeout;
-                            break;
-                        }
-                        if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
-                        {
-                            outcome = UsbTransferOutcome.FatalError;
-                            UsbTrace.EmitTransfer(new UsbTransferEvent
-                            {
-                                Backend = "linux-usbfs",
-                                DevicePath = DevicePath,
-                                Operation = UsbTransferOperation.Write,
-                                RequestedBytes = length,
-                                TransferredBytes = count,
-                                TimeoutMs = effectiveTimeoutMs,
-                                RetryCount = retryCount,
-                                NativeErrorCode = err,
-                                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                                Outcome = outcome
-                            });
-                            throw new IOException($"USB write failed with fatal error: {err}");
-                        }
-
-                        if (++retry > MAX_RETRIES) break;
-                        retryCount++;
-                        Thread.Sleep(500);
-                    }
-                } while (n < 0);
-
-                if (n < 0)
-                {
-                    outcome = outcome == UsbTransferOutcome.Success && lastError.HasValue ? UsbTransferOutcome.Timeout : outcome;
-                    var partial = (count > 0) ? count : 0;
-                    UsbTrace.EmitTransfer(new UsbTransferEvent
-                    {
-                        Backend = "linux-usbfs",
-                        DevicePath = DevicePath,
-                        Operation = UsbTransferOperation.Write,
-                        RequestedBytes = length,
-                        TransferredBytes = Math.Max(count, 0),
-                        TimeoutMs = effectiveTimeoutMs,
-                        RetryCount = retryCount,
-                        NativeErrorCode = lastError,
-                        ElapsedMs = stopwatch.ElapsedMilliseconds,
-                        Outcome = outcome == UsbTransferOutcome.Success ? UsbTransferOutcome.Timeout : outcome
-                    });
-                    return partial;
-                }
-                count += n;
-                if (n < (int)xfer) break;
-            }
-        }
-        finally
-        {
-            handle.Free();
-        }
-
-        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
-        {
-            outcome = UsbTransferOutcome.ShortTransfer;
-        }
-
-        UsbTrace.EmitTransfer(new UsbTransferEvent
-        {
-            Backend = "linux-usbfs",
-            DevicePath = DevicePath,
-            Operation = UsbTransferOperation.Write,
-            RequestedBytes = length,
-            TransferredBytes = count,
-            TimeoutMs = effectiveTimeoutMs,
-            RetryCount = retryCount,
-            NativeErrorCode = lastError,
-            ElapsedMs = stopwatch.ElapsedMilliseconds,
-            Outcome = outcome
-        });
-
-        return count;
     }
 
 

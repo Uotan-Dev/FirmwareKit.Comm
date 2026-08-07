@@ -1,3 +1,8 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Usb.Abstractions;
+using FirmwareKit.Comm.Usb.Diagnostics;
+
 namespace FirmwareKit.Comm.Usb.Backend;
 
 /// <summary>
@@ -65,6 +70,95 @@ internal abstract class UsbDevice : IDisposable
     /// <para>获取或设置平台特定的 USB 设备类型。</para>
     /// </summary>
     public UsbDeviceType UsbDeviceType { get; set; }
+
+    /// <summary>
+    /// Gets the backend tag used in transfer trace events.
+    /// <para>获取传输跟踪事件中使用的后端标签。</para>
+    /// </summary>
+    protected abstract string BackendName { get; }
+
+    /// <summary>
+    /// Gets the maximum payload size for a single chunk transfer.
+    /// <para>获取单次分块传输的最大载荷大小。</para>
+    /// </summary>
+    protected virtual int MaxChunkSize => UsbTransferPolicies.MaxChunkSize;
+
+    /// <summary>
+    /// Gets a value indicating whether the device handle is open and ready for I/O.
+    /// <para>获取一个值，指示设备句柄是否已打开并可用于 I/O。</para>
+    /// </summary>
+    protected abstract bool IsOpen { get; }
+
+    /// <summary>
+    /// Performs a single chunked bulk read.
+    /// <para>执行单次分块批量读取。</para>
+    /// </summary>
+    /// <param name="buffer">The pinned target buffer pointer. <para>已固定的目标缓冲区指针。</para></param>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The chunk transfer result. <para>分块传输结果。</para></returns>
+    protected abstract UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs);
+
+    /// <summary>
+    /// Performs a single chunked bulk write.
+    /// <para>执行单次分块批量写入。</para>
+    /// </summary>
+    /// <param name="buffer">The pinned source buffer pointer. <para>已固定的源缓冲区指针。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The chunk transfer result. <para>分块传输结果。</para></returns>
+    protected abstract UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs);
+
+    /// <summary>
+    /// Creates the exception thrown when a read fails with a fatal native error.
+    /// <para>创建在读取遇到致命原生错误时抛出的异常。</para>
+    /// </summary>
+    protected virtual Exception CreateReadFatalException(int nativeError)
+        => new IOException($"USB read failed with fatal error: 0x{nativeError:X}");
+
+    /// <summary>
+    /// Creates the exception thrown when a write fails with a fatal native error.
+    /// <para>创建在写入遇到致命原生错误时抛出的异常。</para>
+    /// </summary>
+    protected virtual Exception CreateWriteFatalException(int nativeError)
+        => new IOException($"USB write failed with fatal error: 0x{nativeError:X}");
+
+    /// <summary>
+    /// Describes the outcome of a single chunk transfer.
+    /// <para>描述单次分块传输的结果。</para>
+    /// </summary>
+    protected readonly struct UsbChunkResult
+    {
+        public UsbChunkResult(UsbChunkStatus status, int transferred, int nativeError = 0, int retryCount = 0)
+        {
+            Status = status;
+            Transferred = transferred;
+            NativeError = nativeError;
+            RetryCount = retryCount;
+        }
+
+        public UsbChunkStatus Status { get; }
+        public int Transferred { get; }
+        public int NativeError { get; }
+        public int RetryCount { get; }
+
+        public static UsbChunkResult Success(int transferred) => new(UsbChunkStatus.Success, transferred);
+        public static UsbChunkResult Timeout(int nativeError) => new(UsbChunkStatus.Timeout, 0, nativeError);
+        public static UsbChunkResult Fatal(int nativeError) => new(UsbChunkStatus.FatalError, 0, nativeError);
+        public static UsbChunkResult Error(int nativeError) => new(UsbChunkStatus.Error, 0, nativeError);
+    }
+
+    /// <summary>
+    /// Classifies a chunk transfer outcome.
+    /// <para>对分块传输结果进行分类。</para>
+    /// </summary>
+    protected enum UsbChunkStatus
+    {
+        Success,
+        Timeout,
+        FatalError,
+        Error
+    }
 
     /// <summary>
     /// Reads data from the device using the default timeout.
@@ -167,6 +261,27 @@ internal abstract class UsbDevice : IDisposable
     }
 
     /// <summary>
+    /// Emits a transfer trace event using the backend tag.
+    /// <para>使用后端标签发出传输跟踪事件。</para>
+    /// </summary>
+    private void EmitTransfer(UsbTransferOperation operation, int requestedBytes, int transferredBytes, int timeoutMs, int retryCount, int? nativeErrorCode, long elapsedMs, UsbTransferOutcome outcome)
+    {
+        UsbTrace.EmitTransfer(new UsbTransferEvent
+        {
+            Backend = BackendName,
+            DevicePath = DevicePath,
+            Operation = operation,
+            RequestedBytes = requestedBytes,
+            TransferredBytes = transferredBytes,
+            TimeoutMs = timeoutMs,
+            RetryCount = retryCount,
+            NativeErrorCode = nativeErrorCode,
+            ElapsedMs = elapsedMs,
+            Outcome = outcome
+        });
+    }
+
+    /// <summary>
     /// Reads data from the device directly into the specified buffer with a specified timeout.
     /// <para>使用指定超时时间将数据直接读入指定的缓冲区。</para>
     /// </summary>
@@ -175,7 +290,75 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <returns>The number of bytes actually read. <para>实际读取的字节数。</para></returns>
-    public virtual int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => ReadInto(buffer, offset, length);
+    public virtual int ReadInto(byte[] buffer, int offset, int length, int timeoutMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+
+        if (!IsOpen)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return 0;
+        ValidateBufferRange(buffer, offset, length);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int lenRemaining = length;
+        int count = 0;
+        int retryCount = 0;
+
+        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            while (lenRemaining > 0)
+            {
+                int lenToRead = Math.Min(lenRemaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count);
+
+                var chunk = ReadChunk(ptr, lenToRead, effectiveTimeoutMs);
+                retryCount += chunk.RetryCount;
+
+                if (chunk.Status == UsbChunkStatus.Timeout)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Timeout;
+                    break;
+                }
+
+                if (chunk.Status == UsbChunkStatus.FatalError)
+                {
+                    lastError = chunk.NativeError;
+                    EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError);
+                    throw CreateReadFatalException(chunk.NativeError);
+                }
+
+                if (chunk.Status == UsbChunkStatus.Error)
+                {
+                    lastError = chunk.NativeError;
+                    break;
+                }
+
+                int transferred = chunk.Transferred;
+                count += transferred;
+                lenRemaining -= transferred;
+
+                if (transferred < lenToRead) break;
+            }
+        }
+        finally
+        {
+            handle.Free();
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome);
+        return count;
+    }
 
     /// <summary>
     /// Asynchronously reads data from the device.
@@ -222,7 +405,81 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <returns>The number of bytes actually written. <para>实际写入的字节数。</para></returns>
-    public virtual long Write(byte[] data, int length, int timeoutMs) => Write(data, length);
+    public virtual long Write(byte[] data, int length, int timeoutMs)
+    {
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+        int retryCount = 0;
+
+        if (!IsOpen)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        ValidateWriteData(data, length);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+
+        if (length == 0)
+        {
+            EmitTransfer(UsbTransferOperation.Write, 0, 0, effectiveTimeoutMs, 0, null, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
+            return 0;
+        }
+
+        int lenRemaining = length;
+        int count = 0;
+
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            while (lenRemaining > 0)
+            {
+                int lenToSend = Math.Min(lenRemaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + count);
+
+                var chunk = WriteChunk(ptr, lenToSend, effectiveTimeoutMs);
+                retryCount += chunk.RetryCount;
+
+                if (chunk.Status == UsbChunkStatus.Timeout)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Timeout;
+                    break;
+                }
+
+                if (chunk.Status == UsbChunkStatus.FatalError)
+                {
+                    lastError = chunk.NativeError;
+                    EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError);
+                    throw CreateWriteFatalException(chunk.NativeError);
+                }
+
+                if (chunk.Status == UsbChunkStatus.Error)
+                {
+                    lastError = chunk.NativeError;
+                    break;
+                }
+
+                int transferred = chunk.Transferred;
+                count += transferred;
+                lenRemaining -= transferred;
+
+                if (transferred < lenToSend) break;
+            }
+        }
+        finally
+        {
+            handle.Free();
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome);
+        return count;
+    }
 
     /// <summary>
     /// Asynchronously writes data to the device.

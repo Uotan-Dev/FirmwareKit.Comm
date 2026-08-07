@@ -142,6 +142,24 @@ internal class Win32API
             overlapped ? FILE_FLAG_OVERLAPPED : 0, IntPtr.Zero);
     }
 
+    public const int ERROR_IO_PENDING = 997;
     public const int ERROR_INSUFFICIENT_BUFFER = 122;
     public const int ERROR_NO_MORE_ITEMS = 259;
+
+    /// <summary>
+    /// OVERLAPPED structure used for native asynchronous (overlapped) I/O.
+    /// <para>用于原生异步（重叠）I/O 的 OVERLAPPED 结构。</para>
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct OVERLAPPED
+    {
+        public IntPtr Internal;
+        public IntPtr InternalHigh;
+        public uint OffsetLow;
+        public uint OffsetHigh;
+        public IntPtr hEvent;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool CancelIoEx(IntPtr handle, IntPtr overlapped);
 }

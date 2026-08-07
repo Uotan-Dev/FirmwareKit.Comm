@@ -29,7 +29,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
             ProductId = 0xFFFF
         };
 
-        var devices = layer.EnumerateDevices(UsbApiKind.Auto, filter);
+        var devices = layer.EnumerateDevices(UsbApiKind.Auto, filter, TestContext.Current.CancellationToken);
         Assert.NotNull(devices);
         Assert.Empty(devices);
     }
@@ -40,7 +40,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var layer = new UsbCommunicationLayer(new UsbApiRegistry());
         _ = layer.RegisterApi("custom", () => new EmptyProvider());
 
-        var devices = await layer.EnumerateDevicesAsync(UsbApiKind.Auto, new UsbDeviceFilter());
+        var devices = await layer.EnumerateDevicesAsync(UsbApiKind.Auto, new UsbDeviceFilter(), TestContext.Current.CancellationToken);
         Assert.NotNull(devices);
         Assert.Empty(devices);
     }
@@ -67,7 +67,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var apis = layer.GetAvailableApis();
         Assert.Contains("custom", apis, StringComparer.OrdinalIgnoreCase);
 
-        var devices = layer.EnumerateDevices(UsbApiKind.Auto, new UsbDeviceFilter());
+        var devices = layer.EnumerateDevices(UsbApiKind.Auto, new UsbDeviceFilter(), TestContext.Current.CancellationToken);
         Assert.Empty(devices);
     }
 
@@ -146,11 +146,11 @@ public sealed class UsbCommunicationLayerIntegrationTests
         var session = Assert.Single(sessions.Sessions);
         var asyncSession = Assert.IsAssignableFrom<IAsyncUsbDeviceSession>(session);
 
-        var read = await asyncSession.ReadAsync(4, 2000);
+        var read = await asyncSession.ReadAsync(4, 2000, TestContext.Current.CancellationToken);
         var buffer = new byte[8];
-        var count = await asyncSession.ReadIntoAsync(buffer, 0, 8, 3000);
-        var written = await asyncSession.WriteAsync(new byte[] { 1, 2, 3 }, 3, 4000);
-        await asyncSession.ResetAsync();
+        var count = await asyncSession.ReadIntoAsync(buffer, 0, 8, 3000, TestContext.Current.CancellationToken);
+        var written = await asyncSession.WriteAsync(new byte[] { 1, 2, 3 }, 3, 4000, TestContext.Current.CancellationToken);
+        await asyncSession.ResetAsync(TestContext.Current.CancellationToken);
 
         Assert.Equal(4, read.Length);
         Assert.Equal(8, count);
@@ -178,7 +178,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
             InterfaceProtocol = 0xFF
         };
 
-        var devices = layer.EnumerateDevices(UsbApiKind.Auto, filter);
+        var devices = layer.EnumerateDevices(UsbApiKind.Auto, filter, TestContext.Current.CancellationToken);
         Assert.Empty(devices);
 
         Assert.NotNull(provider.LastFilter);
@@ -211,7 +211,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         {
             VendorId = 0x1F3A,
             ProductId = 0xEFE8
-        });
+        }, TestContext.Current.CancellationToken);
 
         var device = Assert.Single(devices);
         Assert.Equal((ushort)0x1F3A, device.VendorId);
@@ -257,7 +257,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
 
         Assert.Equal(0, createCount);
 
-        _ = layer.EnumerateDevices(UsbApiKind.Auto, new UsbDeviceFilter());
+        _ = layer.EnumerateDevices(UsbApiKind.Auto, new UsbDeviceFilter(), TestContext.Current.CancellationToken);
         Assert.Equal(1, createCount);
     }
 
@@ -286,11 +286,11 @@ public sealed class UsbCommunicationLayerIntegrationTests
             fireInitialSnapshot: false);
 
         provider.DevicePresent = true;
-        Assert.True(signal.Wait(TimeSpan.FromSeconds(3)));
+        Assert.True(signal.Wait(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken));
 
         signal.Reset();
         provider.DevicePresent = false;
-        Assert.True(signal.Wait(TimeSpan.FromSeconds(3)));
+        Assert.True(signal.Wait(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken));
 
         var allChanges = changesQueue.ToArray();
         Assert.Contains(allChanges, c => c.Kind == UsbDeviceChangeKind.Added);
