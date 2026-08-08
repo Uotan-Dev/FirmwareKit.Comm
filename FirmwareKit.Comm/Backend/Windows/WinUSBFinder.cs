@@ -13,97 +13,289 @@ namespace FirmwareKit.Comm.Backend.Windows
 
         private static readonly Guid[] KnownInterfaceGUIDs = new[]
         {
-            new Guid("a5dcbf10-6530-11d2-901f-00c04fb951ed"), // USB Device
+            // Function-interface GUIDs only. GUID_DEVINTERFACE_USB_DEVICE (a5dcbf10) is the
+            // device-level interface every USB device registers; opening it yields a WinUSB
+            // handle whose control transfers fail (no function interface context). A Zadig
+            // WinUSB install assigns its own function GUID, which must be present here.
             new Guid("f72fe0d4-cbcb-407d-8814-9ed673d0dd6b"), // WinUSB generic
             new Guid("77395066-6C05-4B91-8071-3D7E2409546E"), // ADB
-            new Guid("4D36E978-E325-11CE-BFC1-08002BE10318")  // Ports
+            new Guid("4D36E978-E325-11CE-BFC1-08002BE10318"), // Ports
+            new Guid("88bae032-5a81-49f0-bc3d-a4ff138216d6"), // Zadig WinUSB device class
+            new Guid("c73fa344-bf0b-459d-9222-a60437c27d29")  // FTDI FT2232H/FT232H WinUSB interface GUID
         };
 
         public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
         {
             var devices = new List<UsbDevice>();
             var uniqueKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var guid in KnownInterfaceGUIDs)
+
+            // Enumerate ALL device nodes (no interface-GUID whitelist), then for each USB
+            // node read its registered DeviceInterfaceGUIDs from the registry and enumerate
+            // the interfaces under those GUIDs. This discovers any driver (WinUSB/Zadig/
+            // libusb-win32/vendor) without a hardcoded GUID list.
+            IntPtr devInfoSet = Win32API.SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero,
+                Win32API.DIGCF_PRESENT | Win32API.DIGCF_ALLCLASSES);
+            if (devInfoSet == (IntPtr)(-1))
             {
-                Win32API.GUID apiGuid = ToApiGuid(guid);
-                var devInfo = Win32API.SetupDiGetClassDevsW(ref apiGuid, null, IntPtr.Zero,
-                    Win32API.DIGCF_PRESENT | Win32API.DIGCF_DEVICEINTERFACE);
+                UsbTrace.Log($"WinUSBFinder: SetupDiGetClassDevsW(all classes) failed err={Marshal.GetLastWin32Error()}");
+                return devices;
+            }
 
-                if (devInfo == (IntPtr)(-1)) continue;
+            try
+            {
+                var seenGuids = new HashSet<Guid>();
+                uint memberIndex = 0;
+                while (true)
+                {
+                    var devInfoData = new Win32API.SpDevInfoData();
+                    devInfoData.cbSize = (uint)Marshal.SizeOf(devInfoData);
+                    if (!Win32API.SetupDiEnumDeviceInfo(devInfoSet, memberIndex++, ref devInfoData))
+                    {
+                        break;
+                    }
 
+                    string instanceId = GetDeviceInstanceId(devInfoSet, ref devInfoData);
+                    if (string.IsNullOrEmpty(instanceId) ||
+                        instanceId.IndexOf("VID_", StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
+
+                    UsbTrace.Log($"WinUSBFinder: node [{instanceId}]");
+                    foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId))
+                    {
+                        if (!seenGuids.Add(guid))
+                        {
+                            continue;
+                        }
+
+                        UsbTrace.Log($"WinUSBFinder:   interface GUID {guid}");
+                        EnumerateInterfacesForGuid(guid, filter, devices, uniqueKeys);
+                    }
+                }
+            }
+            finally
+            {
+                Win32API.SetupDiDestroyDeviceInfoList(devInfoSet);
+            }
+
+            return devices;
+        }
+
+        private static string GetDeviceInstanceId(IntPtr devInfoSet, ref Win32API.SpDevInfoData devInfoData)
+        {
+            uint required = 0;
+            Win32API.SetupDiGetDeviceInstanceIdW(devInfoSet, ref devInfoData, null, 0, out required);
+            if (required == 0)
+            {
+                return string.Empty;
+            }
+
+            var sb = new System.Text.StringBuilder((int)required);
+            return Win32API.SetupDiGetDeviceInstanceIdW(devInfoSet, ref devInfoData, sb, (uint)sb.Capacity, out required)
+                ? sb.ToString()
+                : string.Empty;
+        }
+
+        /// <summary>
+        /// Reads the DeviceInterfaceGUIDs (REG_MULTI_SZ) registered for a device node under
+        /// HKLM\SYSTEM\CurrentControlSet\Enum\&lt;instance&gt;\Device Parameters.
+        /// <para>读取设备节点在 HKLM\SYSTEM\CurrentControlSet\Enum\&lt;instance&gt;\Device Parameters
+        /// 下注册的 DeviceInterfaceGUIDs（REG_MULTI_SZ）。</para>
+        /// </summary>
+        private static IEnumerable<Guid> ReadDeviceInterfaceGuids(string instanceId)
+        {
+            var result = new List<Guid>();
+            string subKey = @"SYSTEM\CurrentControlSet\Enum\" + instanceId + @"\Device Parameters";
+            IntPtr key;
+            if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, subKey, 0, Win32API.KEY_READ, out key) != 0)
+            {
+                return result;
+            }
+
+            try
+            {
+                uint type = 0;
+                uint size = 0;
+                if (Win32API.RegQueryValueExW(key, "DeviceInterfaceGUIDs", IntPtr.Zero, out type, IntPtr.Zero, ref size) != 0 ||
+                    size == 0)
+                {
+                    return result;
+                }
+
+                IntPtr buffer = Marshal.AllocHGlobal((int)size);
                 try
                 {
-                    uint index = 0;
-                    Win32API.SpDeviceInterfaceData interfaceData = new Win32API.SpDeviceInterfaceData();
-                    interfaceData.cbSize = (uint)Marshal.SizeOf(interfaceData);
-
-                    while (Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, ref apiGuid, index++, ref interfaceData))
+                    if (Win32API.RegQueryValueExW(key, "DeviceInterfaceGUIDs", IntPtr.Zero, out type, buffer, ref size) == 0)
                     {
-                        uint detailSize = 0;
-                        Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, IntPtr.Zero, 0, out detailSize, IntPtr.Zero);
-
-                        IntPtr detailBuffer = Marshal.AllocHGlobal((int)detailSize);
-                        try
+                        // REG_MULTI_SZ: NUL-separated strings ending with double NUL.
+                        string multi = Marshal.PtrToStringUni(buffer, (int)size / 2) ?? string.Empty;
+                        foreach (string part in multi.Split('\0'))
                         {
-                            // SP_DEVICE_INTERFACE_DETAIL_DATA_W: cbSize is 6 on x86 and 8 on
-                            // x64, and DevicePath starts right after the DWORD (offset 4 / 8).
-                            // Hardcoding 6 + offset 4 breaks path parsing on 64-bit Windows.
-                            int cbSize = IntPtr.Size == 8 ? 8 : 6;
-                            int pathOffset = IntPtr.Size == 8 ? 8 : 4;
-                            Marshal.WriteInt32(detailBuffer, cbSize);
-                            uint requiredSize;
-                            if (Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, detailBuffer, detailSize, out requiredSize, IntPtr.Zero))
+                            string trimmed = part.Trim();
+                            if (Guid.TryParse(trimmed.Trim('{', '}'), out Guid guid))
                             {
-                                string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + pathOffset)) ?? "";
-                                string lowerPath = path.ToLower();
-
-                                if (!PathMatchesFilter(path, filter))
-                                {
-                                    continue;
-                                }
-
-                                // Prefer WinUSB for Google devices
-                                bool isGoogleWinUsb = lowerPath.Contains(PreferWinUsbVidPid);
-
-                                UsbDevice? device = null;
-                                if (isGoogleWinUsb)
-                                {
-                                    UsbTrace.Log($"Prefers WinUSB for Google device: {path}");
-                                    device = TryOpenWinUSB(path);
-                                }
-
-                                if (device == null)
-                                {
-                                    device = ProbeDevice(path);
-                                }
-
-                                if (device != null)
-                                {
-                                    var key = BuildDeviceKey(device);
-                                    if (uniqueKeys.Add(key))
-                                    {
-                                        UsbTrace.Log($"Confirmed device added: key={key} using {(device is WinUSBDevice ? "WinUSB" : "Legacy")}");
-                                        devices.Add(device);
-                                    }
-                                    else
-                                    {
-                                        device.Dispose();
-                                    }
-                                }
+                                result.Add(guid);
                             }
-                        }
-                        finally
-                        {
-                            Marshal.FreeHGlobal(detailBuffer);
                         }
                     }
                 }
                 finally
                 {
-                    Win32API.SetupDiDestroyDeviceInfoList(devInfo);
+                    Marshal.FreeHGlobal(buffer);
                 }
             }
-            return devices;
+            finally
+            {
+                Win32API.RegCloseKey(key);
+            }
+
+            return result;
+        }
+
+        private static void EnumerateInterfacesForGuid(
+            Guid guid,
+            UsbDeviceFilter? filter,
+            List<UsbDevice> devices,
+            HashSet<string> uniqueKeys)
+        {
+            Win32API.GUID apiGuid = ToApiGuid(guid);
+            IntPtr devInfo = Win32API.SetupDiGetClassDevsW(ref apiGuid, null, IntPtr.Zero,
+                Win32API.DIGCF_PRESENT | Win32API.DIGCF_DEVICEINTERFACE);
+            if (devInfo == (IntPtr)(-1))
+            {
+                UsbTrace.Log($"WinUSBFinder: SetupDiGetClassDevsW({guid}) failed err={Marshal.GetLastWin32Error()}");
+                return;
+            }
+
+            try
+            {
+                EnumerateInterfaces(devInfo, ref apiGuid, filter, devices, uniqueKeys);
+            }
+            finally
+            {
+                Win32API.SetupDiDestroyDeviceInfoList(devInfo);
+            }
+        }
+
+        private delegate bool InterfaceEnumerator(uint index, ref Win32API.SpDeviceInterfaceData interfaceData);
+
+        private static void EnumerateInterfaces(
+            IntPtr devInfo,
+            ref Win32API.GUID interfaceClassGuid,
+            UsbDeviceFilter? filter,
+            List<UsbDevice> devices,
+            HashSet<string> uniqueKeys)
+        {
+            // Copy to a local so the local function can capture it (ref parameters cannot
+            // be captured); SetupDiEnumDeviceInterfaces only reads the GUID per call.
+            Win32API.GUID guid = interfaceClassGuid;
+            bool Enumerate(uint index, ref Win32API.SpDeviceInterfaceData iface)
+                => Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, ref guid, index, ref iface);
+
+            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys, requireUsbStylePath: false);
+        }
+
+        private static void EnumerateInterfaces(
+            IntPtr devInfo,
+            IntPtr interfaceClassGuid,
+            UsbDeviceFilter? filter,
+            List<UsbDevice> devices,
+            HashSet<string> uniqueKeys,
+            bool requireUsbStylePath)
+        {
+            bool Enumerate(uint index, ref Win32API.SpDeviceInterfaceData iface)
+                => Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, interfaceClassGuid, index, ref iface);
+
+            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys, requireUsbStylePath);
+        }
+
+        private static void EnumerateInterfacesCore(
+            IntPtr devInfo,
+            InterfaceEnumerator enumerator,
+            UsbDeviceFilter? filter,
+            List<UsbDevice> devices,
+            HashSet<string> uniqueKeys,
+            bool requireUsbStylePath)
+        {
+            uint index = 0;
+            Win32API.SpDeviceInterfaceData interfaceData = new Win32API.SpDeviceInterfaceData();
+            interfaceData.cbSize = (uint)Marshal.SizeOf(interfaceData);
+
+            while (enumerator(index++, ref interfaceData))
+            {
+                uint detailSize = 0;
+                Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, IntPtr.Zero, 0, out detailSize, IntPtr.Zero);
+
+                IntPtr detailBuffer = Marshal.AllocHGlobal((int)detailSize);
+                try
+                {
+                    // SP_DEVICE_INTERFACE_DETAIL_DATA_W: cbSize (DWORD, 4 bytes) is followed
+                    // immediately by DevicePath (WCHAR[]) — the field offset is 4 on BOTH
+                    // x86 and x64 (no pointer padding inside the struct). Using 8 on x64
+                    // skips the leading "\\" of "\\?\..." and makes CreateFile fail (err=123).
+                    int cbSize = IntPtr.Size == 8 ? 8 : 6;
+                    int pathOffset = 4;
+                    Marshal.WriteInt32(detailBuffer, cbSize);
+                    uint requiredSize;
+                    if (Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, detailBuffer, detailSize, out requiredSize, IntPtr.Zero))
+                    {
+                        string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + pathOffset)) ?? "";
+                        string lowerPath = path.ToLower();
+
+                        // The all-classes sweep also returns HID/disk/network interfaces; only
+                        // probe paths that look like a USB device (contain VID_&PID_).
+                        if (requireUsbStylePath && !(lowerPath.Contains("vid_") && lowerPath.Contains("pid_")))
+                        {
+                            continue;
+                        }
+
+                        if (!PathMatchesFilter(path, filter))
+                        {
+                            continue;
+                        }
+
+                        // Prefer WinUSB for Google devices
+                        bool isGoogleWinUsb = lowerPath.Contains(PreferWinUsbVidPid);
+
+                        UsbDevice? device = null;
+                        if (isGoogleWinUsb)
+                        {
+                            UsbTrace.Log($"Prefers WinUSB for Google device: {path}");
+                            device = TryOpenWinUSB(path);
+                        }
+
+                        if (device == null)
+                        {
+                            device = ProbeDevice(path);
+                        }
+
+                        if (device != null)
+                        {
+                            var key = BuildDeviceKey(device);
+                            if (uniqueKeys.Add(key))
+                            {
+                                UsbTrace.Log($"Confirmed device added: key={key} using {(device is WinUSBDevice ? "WinUSB" : "Legacy")}");
+                                devices.Add(device);
+                            }
+                            else
+                            {
+                                device.Dispose();
+                            }
+                        }
+                        else
+                        {
+                            UsbTrace.Log($"WinUSBFinder: ProbeDevice returned null for [{path}]");
+                        }
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(detailBuffer);
+                }
+            }
+
+            UsbTrace.Log($"WinUSBFinder: EnumerateInterfacesCore done, lastErr={Marshal.GetLastWin32Error()}, devices={devices.Count}");
         }
 
         private static bool PathMatchesFilter(string path, UsbDeviceFilter? filter)

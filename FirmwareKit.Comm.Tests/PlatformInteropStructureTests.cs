@@ -284,7 +284,11 @@ public sealed class PlatformInteropStructureTests
     [Fact]
     public void Win32_SetupDiGetClassDevsW_HasUnicodeCharSet()
     {
-        var method = typeof(Win32API).GetMethod("SetupDiGetClassDevsW");
+        // Multiple overloads exist now (ref GUID + NULL GUID); pick the ref-GUID one.
+        var method = typeof(Win32API).GetMethods()
+            .First(m => m.Name == "SetupDiGetClassDevsW" &&
+                        m.GetParameters().Length == 4 &&
+                        m.GetParameters()[0].ParameterType.IsByRef);
         Assert.NotNull(method);
         var attr = method!.GetCustomAttributes(typeof(DllImportAttribute), false);
         Assert.Single(attr);
@@ -295,7 +299,11 @@ public sealed class PlatformInteropStructureTests
     [Fact]
     public void Win32_SetupDiGetClassDevsW_HwndParentIsIntPtr()
     {
-        var method = typeof(Win32API).GetMethod("SetupDiGetClassDevsW");
+        // Multiple overloads exist now (ref GUID + NULL GUID); pick the ref-GUID one.
+        var method = typeof(Win32API).GetMethods()
+            .First(m => m.Name == "SetupDiGetClassDevsW" &&
+                        m.GetParameters().Length == 4 &&
+                        m.GetParameters()[0].ParameterType.IsByRef);
         Assert.NotNull(method);
         var parameters = method!.GetParameters();
         Assert.Equal(4, parameters.Length);

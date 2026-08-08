@@ -67,6 +67,37 @@ internal class Win32API
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    public struct SpDevInfoData
+    {
+        public uint cbSize;
+        public GUID ClassGuid;
+        public uint DevInst;
+        public IntPtr Reserved;
+    }
+
+    // ---- advapi32 registry (used to read DeviceInterfaceGUIDs per device node) ----
+    public const uint KEY_READ = 0x20019;
+    public const uint REG_MULTI_SZ = 7;
+    public static readonly IntPtr HKEY_LOCAL_MACHINE = new IntPtr(0x80000002);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int RegOpenKeyExW(IntPtr hKey, string lpSubKey, uint ulOptions, uint samDesired, out IntPtr phkResult);
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int RegQueryValueExW(IntPtr hKey, string lpValueName, IntPtr lpReserved, out uint lpType, IntPtr lpData, ref uint lpcbData);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    public static extern int RegCloseKey(IntPtr hKey);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Winapi, SetLastError = true)]
+    public static extern bool SetupDiEnumDeviceInfo(IntPtr deviceInfoSet, uint memberIndex, ref SpDevInfoData deviceInfoData);
+
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Winapi, SetLastError = true)]
+    public static extern bool SetupDiGetDeviceInstanceIdW(IntPtr deviceInfoSet, ref SpDevInfoData deviceInfoData,
+                                                          System.Text.StringBuilder deviceInstanceId, uint deviceInstanceIdSize,
+                                                          out uint requiredSize);
+
+    [StructLayout(LayoutKind.Sequential)]
     public struct USBDeviceDescriptor
     {
         public byte bLength;
@@ -114,13 +145,26 @@ internal class Win32API
 
     public const uint DIGCF_PRESENT = 0x00000002;
     public const uint DIGCF_DEVICEINTERFACE = 0x00000010;
+    public const uint DIGCF_ALLCLASSES = 0x00000004;
 
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern IntPtr SetupDiGetClassDevsW(ref GUID guid, string? enumerator, IntPtr parent, uint flag);
 
+    // NULL class GUID overload: with DIGCF_ALLCLASSES | DIGCF_DEVICEINTERFACE it returns every
+    // device interface on the system, so discovery no longer depends on a hardcoded GUID list
+    // (e.g. Zadig installs WinUSB with an arbitrary interface GUID).
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern IntPtr SetupDiGetClassDevsW(IntPtr classGuid, string? enumerator, IntPtr parent, uint flag);
+
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool SetupDiEnumDeviceInterfaces(IntPtr deviceInfoSet, IntPtr deviceInfoData,
                                                           ref GUID interfaceClassGuid, uint index,
+                                                          ref SpDeviceInterfaceData deviceInterfaceData);
+
+    // NULL interface-GUID overload: enumerates interfaces of every class in the set.
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool SetupDiEnumDeviceInterfaces(IntPtr deviceInfoSet, IntPtr deviceInfoData,
+                                                          IntPtr interfaceClassGuid, uint index,
                                                           ref SpDeviceInterfaceData deviceInterfaceData);
 
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Winapi, SetLastError = true)]
