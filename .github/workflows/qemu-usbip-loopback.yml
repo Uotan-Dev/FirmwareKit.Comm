@@ -1,21 +1,24 @@
-name: QEMU USB/IP Loopback (Linux + Windows host)
+name: QEMU USB Loopback Self-test (Linux + Windows host)
 
-# Experimental: boots a minimal Linux guest in QEMU that shares a QEMU-emulated
-# USB serial device (0403:6001, bulk IN/OUT, always-plugged) over the USB/IP
-# protocol (usbipd on port 3240). The HOST then attaches that remote device via
-# its platform USB/IP client (vhci-hcd on Linux, usbip-win2 UDE driver on
-# Windows), so the library's NATIVE host stack (usbfs/winusb) enumerates the
-# emulated device as if it were physically attached - the only hosted way to
-# exercise the host-side native backends with a real device tree.
+# Experimental: boots a minimal Ubuntu guest in QEMU that presents a QEMU-
+# emulated USB serial device (0403:6001, bulk IN/OUT, always-plugged) directly
+# to the GUEST's kernel. The FirmwareKit.Comm CLI is published self-contained
+# for linux-x64, handed to the guest over the QEMU user-net gateway (host HTTP
+# server on 10.0.2.2:8000) and run INSIDE the guest with the native (usbfs)
+# and libusb backends - real enumeration, session open, GET_DESCRIPTOR and
+# reads, with no physical USB hardware anywhere.
 #
-# Host coverage: Linux (usbfs + libusb) and Windows (winusb). macOS has no
-# usable USB/IP client (carlossless/usbip-macos needs SIP disabled), so macOS
-# host testing stays in-guest / on physical hardware.
+# Host coverage: Linux (KVM) and Windows (TCG). The earlier USB/IP loopback
+# approach was dropped: the guest's usbip-host module could not be reliably
+# provisioned ("unable to bind device on 1-1"), and cdrtfe's mkisofs.exe on
+# Windows runners dies with STATUS_DLL_NOT_FOUND (0xC0000135), so the seed ISO
+# is now built with pycdlib.
 #
-# Guest: Ubuntu noble cloud image via cloud-init. cloud-init provisions
-# linux-tools-generic (usbipd/usbip), unbinds the kernel serial driver from the
-# emulated interface and exports busid 1-1. The guest stays running (no
-# poweroff) so the host can attach; the workflow tears QEMU down afterwards.
+# Guest: Ubuntu noble cloud image via cloud-init (NoCloud cidata seed).
+# cloud-init installs libusb, downloads the published CLI tarball, runs
+# `apis`, `all-devices` (native+libusb) and the read-only `selftest`
+# (open session, GET_DESCRIPTOR, short ReadExact; no writes/reset). Results
+# are echoed to the serial console (host-side guest.log) and polled here.
 
 on:
   push:
@@ -26,7 +29,7 @@ on:
 
 jobs:
   linux-host-loopback:
-    name: Linux host - usbfs/libusb via USB/IP
+    name: Linux host - guest selftest via QEMU USB
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -37,25 +40,27 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
-    - name: Install QEMU, usbip tools and libusb runtime
+    - name: Install QEMU and libusb runtime
       run: |
         sudo apt-get update
-        sudo apt-get install -y qemu-system-x86 cloud-image-utils linux-tools-generic usbutils libusb-1.0-0 libusb-1.0-0-dev
-
-    - name: Load vhci-hcd (host USB/IP client kernel module)
-      run: |
-        sudo modprobe vhci-hcd 2>/dev/null || {
-          sudo apt-get install -y linux-modules-extra-$(uname -r)
-          sudo modprobe vhci-hcd
-        }
-        lsmod | grep vhci
+        sudo apt-get install -y qemu-system-x86 cloud-image-utils libusb-1.0-0
 
     - name: Download Ubuntu cloud image
       run: |
         curl -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
         qemu-img resize ubuntu.img 8G
 
-    - name: Prepare cloud-init seed (guest provisions usbipd server)
+    - name: Publish CLI for linux-x64 (self-contained)
+      run: dotnet publish FirmwareKit.Comm.CLI -c Release -r linux-x64 --self-contained -o publish
+
+    - name: Pack CLI and serve it over HTTP for the guest
+      run: |
+        tar czf publish.tar.gz -C publish .
+        nohup python3 -m http.server 8000 --bind 127.0.0.1 > http.log 2>&1 &
+        echo "HTTP_PID=$!" >> "$GITHUB_ENV"
+        sleep 1
+
+    - name: Prepare cloud-init seed (guest runs CLI selftest)
       run: |
         cat > user-data <<'EOF'
         #cloud-config
@@ -64,30 +69,22 @@ jobs:
             sudo: ALL=(ALL) NOPASSWD:ALL
         package_update: true
         packages:
-          - linux-tools-generic
-        # Mirror cloud-init output onto the serial console (host-side guest.log),
-        # so a failing wait step shows exactly what the guest did.
+          - libusb-1.0-0
+        # Mirror cloud-init output onto the serial console (host-side guest.log).
         output:
           all: '| tee -a /var/log/cloud-init-output.log /dev/console'
         runcmd:
-          - echo '[usbip] provisioning start'
-          # usbip-core/usbip-host ship in linux-modules-extra-*, which cloud
-          # images do not install; load them or install for the RUNNING kernel.
-          # A fast apt failure here is diagnostic gold - keep it visible.
-          - 'modprobe usbip-core usbip-host 2>/dev/null || { apt-get update >/dev/null 2>&1; apt-get install -y linux-modules-extra-$(uname -r) && modprobe usbip-core usbip-host; } || echo "[usbip] FAILED: usbip modules could not be loaded"'
-          - 'lsmod | grep -E "usbip|vhci" || echo "[usbip] FAILED: usbip modules NOT in lsmod"'
-          - sleep 1
-          - usbip list -l
-          # Detach the kernel serial driver from the emulated interface first,
-          # then bind; usbip fails with "unable to bind device" otherwise.
-          - 'usbip bind -b 1-1 || { echo 1-1:1.0 > /sys/bus/usb/drivers/ftdi_sio/unbind 2>/dev/null || true; rmmod ftdi_sio usbserial 2>/dev/null || true; sleep 1; usbip bind -b 1-1 || echo "[usbip] FAILED: bind 1-1"; }'
-          - usbipd -D
-          - sleep 2
-          - 'usbip list -r localhost | grep -q "1-1" && echo "[usbip] self-check OK" || echo "[usbip] FAILED: no export on localhost"'
+          - 'curl -fsSL --retry 5 --retry-delay 2 -o /tmp/fkc.tgz http://10.0.2.2:8000/publish.tar.gz && mkdir -p /opt/fkc && tar xzf /tmp/fkc.tgz -C /opt/fkc && chmod -R a+rx /opt/fkc && echo "[selftest] download OK" || echo "[selftest] download FAILED"'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI apis > /tmp/apis.log 2>&1; echo "[selftest] apis rc=$?"; tail -5 /tmp/apis.log'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI all-devices --api native > /tmp/dev-native.log 2>&1; echo "[selftest] native rc=$?"; grep -m1 "vid=0x0403 pid=0x6001" /tmp/dev-native.log || true'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI all-devices --api libusb > /tmp/dev-libusb.log 2>&1; echo "[selftest] libusb rc=$?"; grep -m1 "vid=0x0403 pid=0x6001" /tmp/dev-libusb.log || true'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI selftest --api native --vid 0x0403 --pid 0x6001 > /tmp/st-native.log 2>&1; echo "[selftest] selftest-native rc=$?"; tail -15 /tmp/st-native.log'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI selftest --api libusb --vid 0x0403 --pid 0x6001 > /tmp/st-libusb.log 2>&1; echo "[selftest] selftest-libusb rc=$?"; tail -15 /tmp/st-libusb.log'
+          - 'grep -q "vid=0x0403 pid=0x6001" /tmp/dev-native.log && grep -q "vid=0x0403 pid=0x6001" /tmp/dev-libusb.log && grep -q "PASS control transfer" /tmp/st-native.log && grep -q "PASS control transfer" /tmp/st-libusb.log && echo "[selftest] RESULT: PASS" || echo "[selftest] RESULT: FAIL"'
         EOF
         cloud-localds seed.img user-data
 
-    - name: Boot guest sharing usb-serial (background)
+    - name: Boot guest with emulated usb-serial (background)
       run: |
         sudo qemu-system-x86_64 \
           -machine accel=kvm:tcg \
@@ -95,70 +92,49 @@ jobs:
           -m 2048 -smp 2 \
           -drive file=ubuntu.img,if=virtio \
           -drive file=seed.img,if=virtio,format=raw \
-          -netdev user,id=n0,hostfwd=tcp::3240-:3240 -device virtio-net-pci,netdev=n0 \
+          -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
           -device piix3-usb-uhci \
           -chardev null,id=usb0 \
           -device usb-serial,chardev=usb0,always-plugged=on \
           -display none -serial file:guest.log -monitor none > qemu.err 2>&1 &
         echo "QEMU_PID=$!" >> "$GITHUB_ENV"
 
-    - name: Wait for guest usbip server (busid 1-1)
+    - name: Wait for guest selftest result
       run: |
         for i in $(seq 1 120); do
-          if usbip list -r 127.0.0.1 2>/dev/null | grep -q "1-1"; then
-            echo "usbip server ready after $((i * 5))s"
-            usbip list -r 127.0.0.1
+          if grep -q "\[selftest\] RESULT: PASS" guest.log 2>/dev/null; then
+            echo "guest selftest PASSED after $((i * 5))s"
+            grep "\[selftest\]" guest.log
             exit 0
           fi
-          # Periodic diagnostics: distinguish "guest still booting" from
-          # "guest never started usbipd" (port 3240 closed), and surface the
-          # guest provisioning markers even after they scroll off the tail.
+          if grep -q "\[selftest\] RESULT: FAIL" guest.log 2>/dev/null; then
+            echo "::error::guest selftest FAILED"
+            grep -E '\[selftest\]|PASS control|FAIL control|SKIP|No devices|error' guest.log | tail -80
+            exit 1
+          fi
+          # Periodic diagnostics: show guest provisioning progress.
           if [ $((i % 12)) -eq 0 ]; then
-            if (exec 3<>/dev/tcp/127.0.0.1/3240) 2>/dev/null; then port=open; else port=closed; fi
-            echo "[debug] attempt $i ($((i * 5))s): port 3240 $port; guest provisioning markers:"
-            grep -E '\[usbip\]|usbip:|apt|Unable' guest.log 2>/dev/null | tail -40 || true
+            echo "[debug] attempt $i ($((i * 5))s): guest markers:"
+            grep -E '\[selftest\]|download|9p|mount|error|failed' guest.log 2>/dev/null | tail -30 || true
             tail -5 qemu.err 2>/dev/null || true
           fi
           sleep 5
         done
-        echo "::error::guest usbip server did not become ready in time"
-        tail -50 guest.log || true
+        echo "::error::guest selftest did not complete in time"
+        tail -60 guest.log || true
         tail -10 qemu.err || true
         exit 1
-
-    - name: Attach remote USB device via vhci-hcd
-      run: |
-        sudo usbip attach -r 127.0.0.1 -b 1-1
-        sudo usbip port
-        lsusb | grep -i 0403 || true
-        # usbfs nodes are root-only by default; open them for the runner user.
-        sudo chmod 666 /dev/bus/usb/*/* 2>/dev/null || true
-
-    - name: Build
-      run: dotnet build -c Release
-
-    - name: Enumerate with native (usbfs) backend
-      run: |
-        out=$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1) || true
-        echo "$out"
-        echo "$out" | grep -q "vid=0x0403 pid=0x6001"
-
-    - name: Enumerate with libusb backend
-      run: |
-        out=$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api libusb 2>&1) || true
-        echo "$out"
-        echo "$out" | grep -q "vid=0x0403 pid=0x6001"
 
     - name: Cleanup
       if: always()
       run: |
-        sudo usbip detach -p 0 2>/dev/null || true
         sudo kill "$QEMU_PID" 2>/dev/null || true
+        kill "$HTTP_PID" 2>/dev/null || true
 
   windows-host-loopback:
-    name: Windows host - winusb via USB/IP
+    name: Windows host - guest selftest via QEMU USB (TCG)
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
     - uses: actions/checkout@v7
 
@@ -167,17 +143,27 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
-    - name: Install QEMU and mkisofs
+    - name: Setup Python (for seed ISO)
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - name: Install QEMU and pycdlib
+      shell: powershell
       run: |
         choco install qemu -y --no-progress
-        choco install cdrtfe -y --no-progress
+        python -m pip install --disable-pip-version-check -q pycdlib
 
     - name: Download Ubuntu cloud image
+      shell: powershell
       run: |
         curl.exe -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
         & 'C:\Program Files\qemu\qemu-img.exe' resize ubuntu.img 8G
 
-    - name: Prepare cloud-init seed (guest provisions usbipd server)
+    - name: Publish CLI for linux-x64 (self-contained)
+      run: dotnet publish FirmwareKit.Comm.CLI -c Release -r linux-x64 --self-contained -o publish
+
+    - name: Prepare cloud-init seed (guest runs CLI selftest)
       shell: powershell
       run: |
         $userData = @'
@@ -187,26 +173,18 @@ jobs:
             sudo: ALL=(ALL) NOPASSWD:ALL
         package_update: true
         packages:
-          - linux-tools-generic
-        # Mirror cloud-init output onto the serial console (host-side guest.log),
-        # so a failing wait step shows exactly what the guest did.
+          - libusb-1.0-0
+        # Mirror cloud-init output onto the serial console (host-side guest.log).
         output:
           all: '| tee -a /var/log/cloud-init-output.log /dev/console'
         runcmd:
-          - echo '[usbip] provisioning start'
-          # usbip-core/usbip-host ship in linux-modules-extra-*, which cloud
-          # images do not install; load them or install for the RUNNING kernel.
-          # A fast apt failure here is diagnostic gold - keep it visible.
-          - 'modprobe usbip-core usbip-host 2>/dev/null || { apt-get update >/dev/null 2>&1; apt-get install -y linux-modules-extra-$(uname -r) && modprobe usbip-core usbip-host; } || echo "[usbip] FAILED: usbip modules could not be loaded"'
-          - 'lsmod | grep -E "usbip|vhci" || echo "[usbip] FAILED: usbip modules NOT in lsmod"'
-          - sleep 1
-          - usbip list -l
-          # Detach the kernel serial driver from the emulated interface first,
-          # then bind; usbip fails with "unable to bind device" otherwise.
-          - 'usbip bind -b 1-1 || { echo 1-1:1.0 > /sys/bus/usb/drivers/ftdi_sio/unbind 2>/dev/null || true; rmmod ftdi_sio usbserial 2>/dev/null || true; sleep 1; usbip bind -b 1-1 || echo "[usbip] FAILED: bind 1-1"; }'
-          - usbipd -D
-          - sleep 2
-          - 'usbip list -r localhost | grep -q "1-1" && echo "[usbip] self-check OK" || echo "[usbip] FAILED: no export on localhost"'
+          - 'curl -fsSL --retry 5 --retry-delay 2 -o /tmp/fkc.tgz http://10.0.2.2:8000/publish.tar.gz && mkdir -p /opt/fkc && tar xzf /tmp/fkc.tgz -C /opt/fkc && chmod -R a+rx /opt/fkc && echo "[selftest] download OK" || echo "[selftest] download FAILED"'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI apis > /tmp/apis.log 2>&1; echo "[selftest] apis rc=$?"; tail -5 /tmp/apis.log'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI all-devices --api native > /tmp/dev-native.log 2>&1; echo "[selftest] native rc=$?"; grep -m1 "vid=0x0403 pid=0x6001" /tmp/dev-native.log || true'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI all-devices --api libusb > /tmp/dev-libusb.log 2>&1; echo "[selftest] libusb rc=$?"; grep -m1 "vid=0x0403 pid=0x6001" /tmp/dev-libusb.log || true'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI selftest --api native --vid 0x0403 --pid 0x6001 > /tmp/st-native.log 2>&1; echo "[selftest] selftest-native rc=$?"; tail -15 /tmp/st-native.log'
+          - 'cd /opt/fkc && ./FirmwareKit.Comm.CLI selftest --api libusb --vid 0x0403 --pid 0x6001 > /tmp/st-libusb.log 2>&1; echo "[selftest] selftest-libusb rc=$?"; tail -15 /tmp/st-libusb.log'
+          - 'grep -q "vid=0x0403 pid=0x6001" /tmp/dev-native.log && grep -q "vid=0x0403 pid=0x6001" /tmp/dev-libusb.log && grep -q "PASS control transfer" /tmp/st-native.log && grep -q "PASS control transfer" /tmp/st-libusb.log && echo "[selftest] RESULT: PASS" || echo "[selftest] RESULT: FAIL"'
         '@
         # cloud-init rejects CRLF line endings; write UTF-8 with LF explicitly.
         $userData = $userData -replace "`r`n", "`n"
@@ -217,26 +195,39 @@ jobs:
         '@
         $metaData = $metaData -replace "`r`n", "`n"
         [System.IO.File]::WriteAllText("$PWD\meta-data", $metaData, (New-Object System.Text.UTF8Encoding($false)))
-        # Surface any mkisofs failure loudly - it exits 1 silently on some runs.
-        $mkisofs = 'C:\Program Files (x86)\cdrtfe\tools\cdrtools\mkisofs.exe'
-        if (-not (Test-Path $mkisofs)) { throw "mkisofs not found at $mkisofs" }
-        & $mkisofs -o seed.img -volid cidata -joliet -rock user-data meta-data 2>&1 | ForEach-Object { Write-Host "mkisofs: $_" }
-        if ($LASTEXITCODE -ne 0) { throw "mkisofs failed with exit code $LASTEXITCODE" }
+        # Build the cidata ISO with pycdlib. cdrtfe's mkisofs.exe is unusable on
+        # Windows runners (exits 0xC0000135 STATUS_DLL_NOT_FOUND).
+        @'
+        import io
+        import os
+        import pycdlib
+        iso = pycdlib.PyCdlib()
+        iso.new(interchange_level=3, joliet=3, rock_ridge='1.09', vol_ident='cidata')
+        for src, iso_name, joliet, rr in (
+            ('user-data', '/USERDATA.;1', '/user-data', 'user-data'),
+            ('meta-data', '/METADATA.;1', '/meta-data', 'meta-data'),
+        ):
+            # pycdlib reads file contents lazily at iso.write(), so hand it an
+            # in-memory buffer rather than a file handle that may close early.
+            with open(src, 'rb') as f:
+                data = f.read()
+            iso.add_fp(io.BytesIO(data), len(data), iso_name, joliet_path=joliet, rr_name=rr)
+        iso.write('seed.img')
+        iso.close()
+        print('[seed] seed.img written')
+        '@ | Set-Content -Path make_seed.py -Encoding ascii
+        python make_seed.py
+        if ($LASTEXITCODE -ne 0) { throw "seed.img creation failed with exit code $LASTEXITCODE" }
 
-    - name: Install usbip-win2 client (UDE driver)
+    - name: Pack CLI and serve it over HTTP for the guest
       shell: powershell
       run: |
-        curl.exe -fL -o usbip-win2.exe https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.8/USBip-0.9.7.8-x64.exe
-        # Silent install is best-effort (installer flag set unknown); retry with
-        # the Inno/NSIS flags and verify by file presence.
-        Start-Process -FilePath .\usbip-win2.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -NoNewWindow
-        if (-not (Test-Path 'C:\Program Files\USBip\usbip.exe')) {
-          Start-Process -FilePath .\usbip-win2.exe -ArgumentList '/S' -Wait -NoNewWindow
-        }
-        if (-not (Test-Path 'C:\Program Files\USBip\usbip.exe')) { throw 'usbip.exe not found after install' }
-        & 'C:\Program Files\USBip\usbip.exe' version
+        tar.exe -czf publish.tar.gz -C publish .
+        $p = Start-Process -FilePath python -ArgumentList '-m','http.server','8000','--bind','127.0.0.1' -PassThru -NoNewWindow -RedirectStandardOutput http.log -RedirectStandardError http.err
+        "HTTP_PID=$($p.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+        Start-Sleep -Seconds 1
 
-    - name: Boot guest sharing usb-serial (background)
+    - name: Boot guest with emulated usb-serial (background)
       shell: powershell
       run: |
         $p = Start-Process -FilePath 'C:\Program Files\qemu\qemu-system-x86_64.exe' -ArgumentList @(
@@ -245,7 +236,7 @@ jobs:
           '-m','2048','-smp','2',
           '-drive','file=ubuntu.img,if=virtio',
           '-drive','file=seed.img,if=virtio,format=raw',
-          '-netdev','user,id=n0,hostfwd=tcp::3240-:3240','-device','virtio-net-pci,netdev=n0',
+          '-netdev','user,id=n0','-device','virtio-net-pci,netdev=n0',
           '-device','piix3-usb-uhci',
           '-chardev','null,id=usb0',
           '-device','usb-serial,chardev=usb0,always-plugged=on',
@@ -253,53 +244,33 @@ jobs:
         ) -PassThru -NoNewWindow -RedirectStandardError qemu.err
         "QEMU_PID=$($p.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-    - name: Wait for guest usbip server (busid 1-1)
+    - name: Wait for guest selftest result
       shell: powershell
       run: |
-        $usbip = 'C:\Program Files\USBip\usbip.exe'
-        for ($i = 0; $i -lt 150; $i++) {
-          $out = (& $usbip list -r 127.0.0.1 2>&1) -join "`n"
-          if ($out -match '1-1') {
-            Write-Host "usbip server ready after $($i * 5)s"
-            Write-Host $out
+        for ($i = 0; $i -lt 180; $i++) {
+          if (Select-String -Path guest.log -Pattern '\[selftest\] RESULT: PASS' -Quiet -ErrorAction SilentlyContinue) {
+            Write-Host "guest selftest PASSED after $($i * 5)s"
+            Get-Content guest.log | Select-String -Pattern '\[selftest\]' | ForEach-Object { Write-Host $_.Line }
             exit 0
           }
+          if (Select-String -Path guest.log -Pattern '\[selftest\] RESULT: FAIL' -Quiet -ErrorAction SilentlyContinue) {
+            Write-Host '::error::guest selftest FAILED'
+            Get-Content guest.log | Select-String -Pattern '\[selftest\]|PASS control|FAIL control|SKIP|No devices|error' | Select-Object -Last 80 | ForEach-Object { Write-Host $_.Line }
+            exit 1
+          }
           if ($i -gt 0 -and ($i % 24) -eq 0) {
-            Write-Host "[debug] attempt $($i * 5)s: guest provisioning markers:"
-            Get-Content guest.log -ErrorAction SilentlyContinue |
-              Select-String -Pattern '\[usbip\]|usbip:|apt|Unable' | Select-Object -Last 25
+            Write-Host "[debug] attempt $($i * 5)s: guest markers:"
+            Get-Content guest.log -ErrorAction SilentlyContinue | Select-String -Pattern '\[selftest\]|download|9p|mount|error|failed' | Select-Object -Last 30 | ForEach-Object { Write-Host $_.Line }
           }
           Start-Sleep -Seconds 5
         }
-        Write-Host '::error::guest usbip server did not become ready in time'
-        Get-Content guest.log -Tail 50 -ErrorAction SilentlyContinue
+        Write-Host '::error::guest selftest did not complete in time'
+        Get-Content guest.log -Tail 60 -ErrorAction SilentlyContinue
         exit 1
-
-    - name: Attach remote USB device via usbip-win2
-      shell: powershell
-      run: |
-        $usbip = 'C:\Program Files\USBip\usbip.exe'
-        & $usbip attach -r 127.0.0.1 -b 1-1
-        & $usbip port
-
-    - name: Build
-      run: dotnet build -c Release
-
-    - name: Enumerate with native (winusb) backend
-      shell: powershell
-      run: |
-        $out = (dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1) -join "`n"
-        Write-Host $out
-        if ($out -notmatch 'vid=0x0403 pid=0x6001') {
-          Write-Host '::error::winusb backend did not enumerate the emulated 0403:6001 device'
-          pnputil /enum-devices /connected | Select-String -Pattern 'USB' | Select-Object -First 30
-          exit 1
-        }
 
     - name: Cleanup
       if: always()
       shell: powershell
       run: |
-        $usbip = 'C:\Program Files\USBip\usbip.exe'
-        & $usbip detach -p 0 2>&1 | Out-Null
         Stop-Process -Id $env:QEMU_PID -Force -ErrorAction SilentlyContinue
+        Stop-Process -Id $env:HTTP_PID -Force -ErrorAction SilentlyContinue
