@@ -9,6 +9,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FirmwareKit.Comm\FirmwareKit.Comm.csproj" />
+    <ProjectReference Include="..\FirmwareKit.Comm.Tests\FirmwareKit.Comm.Tests.csproj" />
   </ItemGroup>
 
 </Project>

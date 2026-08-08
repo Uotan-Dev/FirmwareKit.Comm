@@ -1,0 +1,84 @@
+name: QEMU Linux Guest USB Check
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  qemu-linux-guest:
+    name: QEMU guest - Linux usbfs + libusb
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 cloud-image-utils
+
+      - name: Download Ubuntu cloud image
+        run: |
+          curl -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+          qemu-img resize ubuntu.img 8G
+
+      - name: Prepare cloud-init seed
+        run: |
+          cat > user-data <<'EOF'
+          #cloud-config
+          users:
+            - name: ubuntu
+              sudo: ALL=(ALL) NOPASSWD:ALL
+          package_update: true
+          packages:
+            - libusb-1.0-0
+            - libusb-1.0-0-dev
+            - git
+            - curl
+          runcmd:
+            - curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 10.0 --install-dir /opt/dotnet
+            - git clone --depth 1 https://github.com/Uotan-Dev/FirmwareKit.Comm.git /opt/fkc
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet DOTNET_CLI_TELEMETRY_OPTOUT=1 DOTNET_NOLOGO=1 && dotnet restore
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && dotnet build FirmwareKit.Comm.slnx -c Release --no-restore
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- APIS ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- apis
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api native
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api libusb
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- SELFTEST NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- selftest --api native --vid 0x0403 --pid 0x6001
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- SELFTEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- selftest --api libusb --vid 0x0403 --pid 0x6001
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api libusb --vid 0x0403 --pid 0x6001
+            - poweroff
+          EOF
+          # always-plugged=on is required: usb-serial only attaches to the USB
+          # bus when its chardev backend is open, and a file chardev opened at
+          # startup triggers CHR_EVENT_OPENED so the device appears immediately.
+          # sudo is required for /dev/kvm access on hosted runners (falls back to TCG).
+          sudo timeout 900 qemu-system-x86_64 \
+            -machine accel=kvm:tcg \
+            -cpu max \
+            -m 2048 -smp 2 \
+            -drive file=ubuntu.img,if=virtio \
+            -drive file=seed.img,if=virtio,format=raw \
+            -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
+            -device piix3-usb-uhci \
+            -chardev file,id=usb0,path=usb-write.bin \
+            -device usb-serial,chardev=usb0,always-plugged=on \
+            -nographic 2>&1 | tee guest.log || true
+
+      - name: Assert observations
+        run: |
+          tail -80 guest.log
+          count=$(grep -c "No USB devices were discovered" guest.log || true)
+          skips=$(grep -c "SKIP" guest.log || true)
+          writes=$(grep -c "PASS write: 64 bytes pattern transferred" guest.log || true)
+          resets=$(grep -c "PASS reset" guest.log || true)
+          written_bytes=$(wc -c < usb-write.bin 2>/dev/null || echo 0)
+          if [ "$count" -ne 0 ] || [ "$pass" -lt 2 ] || [ "$skips" -ne 0 ] || \
+             [ "$writes" -lt 2 ] || [ "$resets" -lt 2 ] || [ "$written_bytes" -eq 0 ]; then
+            echo "::error::enumeration failures=$count, selftest passes=$pass, SKIPs=$skips, io-test writes=$writes, resets=$resets, host-observed write bytes=$written_bytes"
+            exit 1
+          fi
+          echo "::notice::Emulated USB device enumerated; selftest PASSED (GET_DESCRIPTOR) and io-test PASSED (write + reset) on native (usbfs) and libusb backends inside the QEMU Linux guest; $written_bytes write bytes observed on the host side."

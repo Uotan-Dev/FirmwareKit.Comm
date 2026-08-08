@@ -38,6 +38,10 @@ switch (command)
         ExecuteSelftest(layer, argsList.Skip(1).ToArray());
         break;
 
+    case "io-test":
+        ExecuteIoTest(layer, argsList.Skip(1).ToArray());
+        break;
+
     default:
         ShowHelp();
         break;
@@ -482,6 +486,133 @@ static void ExecuteSelftest(UsbCommunicationLayer layer, string[] args)
     Environment.ExitCode = failures == 0 ? 0 : 1;
 }
 
+/// <summary>
+/// Runs a write/reset smoke test against a device. Unlike the read-only
+/// <c>selftest</c>, this exercises the bulk OUT write path and the device reset -
+/// intended for emulated devices (QEMU usb-serial with a file chardev the host
+/// can verify) or hardware the user explicitly accepts writes to.
+/// <para>对设备执行写入/重置冒烟测试。与只读 <c>selftest</c> 不同，本命令覆盖
+/// bulk OUT 写入路径与设备重置——适用于 QEMU 模拟设备（file chardev 时宿主可
+/// 校验写入内容）或用户明确接受写入的硬件。</para>
+/// </summary>
+static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
+{
+    UsbApiKind apiKind = UsbApiKind.Auto;
+    ushort? vid = null;
+    ushort? pid = null;
+    int patternSize = 64;
+
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        switch (arg)
+        {
+            case "--api" when i + 1 < args.Length:
+                apiKind = ParseApi(args[++i]);
+                continue;
+            case "--vid" when i + 1 < args.Length:
+                vid = ParseUShort(args[++i]);
+                continue;
+            case "--pid" when i + 1 < args.Length:
+                pid = ParseUShort(args[++i]);
+                continue;
+            case "--pattern-size" when i + 1 < args.Length:
+                patternSize = int.Parse(args[++i], CultureInfo.InvariantCulture);
+                continue;
+            case "-h" or "--help":
+                ShowHelp();
+                return;
+            default:
+                throw new ArgumentException($"Unknown argument: {arg}");
+        }
+    }
+
+    if (patternSize <= 0)
+    {
+        throw new ArgumentOutOfRangeException(nameof(patternSize), "Pattern size must be positive.");
+    }
+
+    var filter = new UsbDeviceFilter { VendorId = vid, ProductId = pid };
+    int failures = 0;
+
+    // 1) Enumeration - same SKIP contract as selftest.
+    var devices = layer.EnumerateDevices(apiKind, filter);
+    if (devices.Count == 0)
+    {
+        Console.WriteLine("SKIP enumeration: no matching device present (attach hardware and retry).");
+        Environment.ExitCode = 0;
+        return;
+    }
+
+    Console.WriteLine($"PASS enumeration: {devices.Count} device(s)");
+
+    // 2) Open session
+    using var session = layer.OpenDeviceSession(apiKind, filter);
+    if (session == null)
+    {
+        Console.WriteLine("FAIL open session: no session could be opened (device busy? permissions?).");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    Console.WriteLine("PASS open session");
+
+    // 3) Write a deterministic pattern. On QEMU's file chardev the bytes land on the
+    //    host side, so the workflow can verify the write really reached the device.
+    try
+    {
+        byte[] pattern = new byte[patternSize];
+        for (var i = 0; i < pattern.Length; i++)
+        {
+            pattern[i] = (byte)(i & 0x3F);
+        }
+
+        long written = session.Write(pattern, pattern.Length, 3000);
+        if (written == pattern.Length)
+        {
+            Console.WriteLine($"PASS write: {written} bytes pattern transferred");
+        }
+        else
+        {
+            Console.WriteLine($"FAIL write: expected {pattern.Length} bytes, got {written}.");
+            failures++;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"FAIL write: {ex.GetType().Name}: {ex.Message}");
+        failures++;
+    }
+
+    // 4) Short read - informational only: QEMU's file/null chardev never returns data,
+    //    a read error is not treated as a failure here.
+    try
+    {
+        byte[] data = session.ReadExact(16, 1000);
+        Console.WriteLine($"INFO read: {data.Length} bytes received (short/zero is normal for idle devices).");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"INFO read: {ex.GetType().Name}: {ex.Message}");
+    }
+
+    // 5) Reset - the key "beyond read" operation. On QEMU the emulated device
+    //    re-enumerates; we only verify the reset call itself succeeds.
+    try
+    {
+        session.Reset();
+        Console.WriteLine("PASS reset");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"FAIL reset: {ex.GetType().Name}: {ex.Message}");
+        failures++;
+    }
+
+    Console.WriteLine($"=== io-test result: {(failures == 0 ? "PASS" : "FAIL")}, {failures} failure(s) ===");
+    Environment.ExitCode = failures == 0 ? 0 : 1;
+}
+
 static UsbApiKind ParseApi(string value)
 {
     return value.ToLowerInvariant() switch
@@ -513,6 +644,11 @@ static void ShowHelp()
     Console.WriteLine("  selftest [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--duration <seconds>]");
     Console.WriteLine("    Read-only device smoke test for real hardware: enumerate, open a session,");
     Console.WriteLine("    GET_DESCRIPTOR control transfer and a short ReadExact (no writes/reset).");
+    Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
+    Console.WriteLine();
+    Console.WriteLine("  io-test [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--pattern-size <bytes>]");
+    Console.WriteLine("    Write/reset smoke test for emulated or accepted hardware: enumerate, open a");
+    Console.WriteLine("    session, write a deterministic pattern, short read and reset the device.");
     Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
     Console.WriteLine();
     Console.WriteLine("devices filters:");
