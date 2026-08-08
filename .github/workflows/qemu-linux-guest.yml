@@ -72,6 +72,9 @@ jobs:
           # usb-serial exposes bulk IN/OUT endpoints. A null chardev discards
           # writes and reads time out; enumeration + claim (with kernel-driver
           # DISCONNECT fallback) is the observed behavior.
+          # always-plugged=on is required: usb-serial only attaches to the USB
+          # bus when its chardev backend is open, and a null chardev never
+          # triggers CHR_EVENT_OPENED, so the device would never appear.
           # sudo is required for /dev/kvm access on hosted runners (falls back to TCG).
           sudo timeout 900 qemu-system-x86_64 \
             -machine accel=kvm:tcg \
@@ -82,7 +85,7 @@ jobs:
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
             -device piix3-usb-uhci \
             -chardev null,id=usb0 \
-            -device usb-serial,chardev=usb0 \
+            -device usb-serial,chardev=usb0,always-plugged=on \
             -nographic 2>&1 | tee guest.log || true
 
       - name: Assert observations
