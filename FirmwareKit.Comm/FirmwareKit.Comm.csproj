@@ -34,6 +34,28 @@
     <None Include="..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
+  <!-- Native libusb-1.0 runtimes (fetched by tools/fetch-libusb.sh, layout documented in
+       .github/workflows/fetch-libusb.yml). Bundled into the package under the standard
+       runtimes/<rid>/native/ layout so consumers get the matching RID's library copied to
+       their output directory and the DllImport("libusb-1.0") probe in LibUsbFinder resolves
+       without a system-wide libusb install.
+       Linux ships both the versioned soname (libusb-1.0.so.0) and an unversioned
+       libusb-1.0.so copy because the P/Invoke probe targets the unversioned name. -->
+  <ItemGroup>
+    <None Include="..\native\win-x64\libusb-1.0.dll" Pack="true" PackagePath="runtimes\win-x64\native\" />
+    <None Include="..\native\win-arm64\libusb-1.0.dll" Pack="true" PackagePath="runtimes\win-arm64\native\" />
+    <None Include="..\native\macos-x64\libusb-1.0.dylib" Pack="true" PackagePath="runtimes\osx-x64\native\" />
+    <None Include="..\native\macos-arm64\libusb-1.0.dylib" Pack="true" PackagePath="runtimes\osx-arm64\native\" />
+    <None Include="..\native\linux-x64\libusb-1.0.so.0" Pack="true" PackagePath="runtimes\linux-x64\native\" />
+    <None Include="..\native\linux-x64\libusb-1.0.so" Pack="true" PackagePath="runtimes\linux-x64\native\" />
+    <None Include="..\native\linux-arm64\libusb-1.0.so.0" Pack="true" PackagePath="runtimes\linux-arm64\native\" />
+    <None Include="..\native\linux-arm64\libusb-1.0.so" Pack="true" PackagePath="runtimes\linux-arm64\native\" />
+    <None Include="..\native\linux-riscv64\libusb-1.0.so.0" Pack="true" PackagePath="runtimes\linux-riscv64\native\" />
+    <None Include="..\native\linux-riscv64\libusb-1.0.so" Pack="true" PackagePath="runtimes\linux-riscv64\native\" />
+    <None Include="..\native\linux-loong64\libusb-1.0.so.0" Pack="true" PackagePath="runtimes\linux-loong64\native\" />
+    <None Include="..\native\linux-loong64\libusb-1.0.so" Pack="true" PackagePath="runtimes\linux-loong64\native\" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="LibUsbDotNet" Version="3.0.224" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
