@@ -11,19 +11,6 @@ namespace FirmwareKit.Comm.Backend.Windows
         // Kept as a named constant so it can be lifted into configuration later.
         private const string PreferWinUsbVidPid = "vid_18d1&pid_d00d";
 
-        private static readonly Guid[] KnownInterfaceGUIDs = new[]
-        {
-            // Function-interface GUIDs only. GUID_DEVINTERFACE_USB_DEVICE (a5dcbf10) is the
-            // device-level interface every USB device registers; opening it yields a WinUSB
-            // handle whose control transfers fail (no function interface context). A Zadig
-            // WinUSB install assigns its own function GUID, which must be present here.
-            new Guid("f72fe0d4-cbcb-407d-8814-9ed673d0dd6b"), // WinUSB generic
-            new Guid("77395066-6C05-4B91-8071-3D7E2409546E"), // ADB
-            new Guid("4D36E978-E325-11CE-BFC1-08002BE10318"), // Ports
-            new Guid("88bae032-5a81-49f0-bc3d-a4ff138216d6"), // Zadig WinUSB device class
-            new Guid("c73fa344-bf0b-459d-9222-a60437c27d29")  // FTDI FT2232H/FT232H WinUSB interface GUID
-        };
-
         public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
         {
             var devices = new List<UsbDevice>();
