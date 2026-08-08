@@ -1,5 +1,17 @@
 name: QEMU Linux Guest USB Check
 
+# Experimental: boots a Linux guest in QEMU (KVM) on the ubuntu runner with an
+# emulated USB serial device (bulk IN/OUT endpoints, required by all backends)
+# and runs the library's Linux usbfs + libusb backends against it inside the
+# guest. This is the only GitHub-hosted way to exercise REAL (emulated) USB
+# enumeration/claim behavior without physical hardware.
+#
+# The guest runs `apis`, `all-devices` (native + libusb), the read-only
+# `selftest` (open session, GET_DESCRIPTOR, short ReadExact) and the
+# write/reset `io-test`. The emulated device is backed by a FILE chardev, so
+# every byte the guest writes lands on the host (usb-write.bin) and the host
+# step can prove write traffic reached the device; reads return EOF/timeout.
+
 on:
   push:
     branches: [ "main" ]
@@ -35,6 +47,9 @@ jobs:
           package_update: true
           packages:
             - libusb-1.0-0
+            # The libusb runtime package ships only the versioned soname
+            # (libusb-1.0.so.0); the library's DllImport("libusb-1.0") probe needs
+            # the unversioned symlink that only the -dev package provides.
             - libusb-1.0-0-dev
             - git
             - curl
@@ -52,6 +67,20 @@ jobs:
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api libusb --vid 0x0403 --pid 0x6001
             - poweroff
           EOF
+          cloud-localds seed.img user-data
+
+      - name: Boot guest with emulated USB serial device and capture console
+        run: |
+          # Fail fast when the drive images are missing instead of letting QEMU
+          # die silently (a missing seed.img once made this step look green and
+          # only surfaced in the Assert step).
+          test -f ubuntu.img && test -f seed.img || {
+            echo "::error::ubuntu.img or seed.img missing - run the Download/Prepare steps first"
+            exit 1
+          }
+          # usb-serial exposes bulk IN/OUT endpoints. A file chardev persists
+          # everything the guest writes (usb-write.bin) so the host can verify
+          # write traffic actually reached the device; reads return EOF/timeout.
           # always-plugged=on is required: usb-serial only attaches to the USB
           # bus when its chardev backend is open, and a file chardev opened at
           # startup triggers CHR_EVENT_OPENED so the device appears immediately.
@@ -72,12 +101,13 @@ jobs:
         run: |
           tail -80 guest.log
           count=$(grep -c "No USB devices were discovered" guest.log || true)
+          pass=$(grep -c "PASS control transfer" guest.log || true)
           skips=$(grep -c "SKIP" guest.log || true)
           writes=$(grep -c "PASS write: 64 bytes pattern transferred" guest.log || true)
           resets=$(grep -c "PASS reset" guest.log || true)
           written_bytes=$(wc -c < usb-write.bin 2>/dev/null || echo 0)
-          if [ "$count" -ne 0 ] || [ "$pass" -lt 2 ] || [ "$skips" -ne 0 ] || \
-             [ "$writes" -lt 2 ] || [ "$resets" -lt 2 ] || [ "$written_bytes" -eq 0 ]; then
+          if [ "${count:-0}" -ne 0 ] || [ "${pass:-0}" -lt 2 ] || [ "${skips:-0}" -ne 0 ] || \
+             [ "${writes:-0}" -lt 2 ] || [ "${resets:-0}" -lt 2 ] || [ "${written_bytes:-0}" -eq 0 ]; then
             echo "::error::enumeration failures=$count, selftest passes=$pass, SKIPs=$skips, io-test writes=$writes, resets=$resets, host-observed write bytes=$written_bytes"
             exit 1
           fi
