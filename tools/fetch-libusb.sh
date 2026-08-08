@@ -228,7 +228,7 @@ target_win() { # arch
 }
 
 target_macos() { # arch (x64|arm64)
-  local arch="$1" out="$OUTPUT_DIR/macos-$arch"
+  local arch="$1" out="$OUTPUT_DIR/macos-$1"
   local bottle sha
   if [ "$arch" = "x64" ]; then bottle="$BREW_BOTTLE_MACOS_X64_NAME"; sha="$BREW_BOTTLE_MACOS_X64_SHA256"; else bottle="$BREW_BOTTLE_MACOS_ARM64_NAME"; sha="$BREW_BOTTLE_MACOS_ARM64_SHA256"; fi
 
