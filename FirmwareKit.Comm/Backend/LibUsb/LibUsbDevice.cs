@@ -16,8 +16,13 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     private IUsbDevice? usbDevice;
     private UsbEndpointReader? reader;
     private UsbEndpointWriter? writer;
-    public ushort Vid { get; set; }
-    public ushort Pid { get; set; }
+    // Vid/Pid delegate to the base UsbDevice.VendorId/ProductId so that both the
+    // shorthand used by CreateHandle() and the projection in
+    // UsbDeviceInfoFactory (which reads VendorId/ProductId) see the same values.
+    // <para>Vid/Pid 委托到基类 UsbDevice.VendorId/ProductId，使 CreateHandle() 使用的简写
+    // 与 UsbDeviceInfoFactory 投影读取的 VendorId/ProductId 保持同一份数据。</para>
+    public ushort Vid { get => VendorId; set => VendorId = value; }
+    public ushort Pid { get => ProductId; set => ProductId = value; }
     public byte BusNumber { get; set; }
     public byte DeviceAddress { get; set; }
     public byte InterfaceId { get; set; } = 0;

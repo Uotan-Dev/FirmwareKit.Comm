@@ -27,4 +27,21 @@ internal static class UsbSpeedInference
         if (bcdUsb >= 0x0200) return UsbDeviceSpeed.High;
         return UsbDeviceSpeed.Full;
     }
+
+    /// <summary>
+    /// Maps a negotiated link speed in Mbps (as reported by the sysfs <c>speed</c>
+    /// attribute) to a <see cref="UsbDeviceSpeed"/>.
+    /// <para>将协商链路速度（Mbps，由 sysfs <c>speed</c> 属性报告）映射到
+    /// <see cref="UsbDeviceSpeed"/>。</para>
+    /// </summary>
+    /// <param name="mbps">The link speed in Mbps. <para>链路速度（Mbps）。</para></param>
+    /// <returns>The mapped speed. <para>映射后的速度。</para></returns>
+    public static UsbDeviceSpeed FromMbps(double mbps)
+    {
+        if (mbps <= 2) return UsbDeviceSpeed.Low;
+        if (mbps <= 12) return UsbDeviceSpeed.Full;
+        if (mbps <= 480) return UsbDeviceSpeed.High;
+        if (mbps <= 5000) return UsbDeviceSpeed.Super;
+        return UsbDeviceSpeed.SuperPlus;
+    }
 }

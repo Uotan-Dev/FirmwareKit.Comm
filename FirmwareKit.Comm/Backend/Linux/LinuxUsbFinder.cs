@@ -294,25 +294,49 @@ internal static class LinuxUsbFinder
         => UsbSpeedInference.FromBcdUsb(bcdUsb);
 
     /// <summary>
-    /// Resolves the negotiated link speed: prefer the sysfs <c>speed</c> file
-    /// (<c>/sys/bus/usb/devices/usb{DDD}/speed</c>), falling back to bcdUSB inference.
-    /// <para>解析协商链路速度：优先读取 sysfs 的 <c>speed</c> 文件
-    /// （<c>/sys/bus/usb/devices/usb{DDD}/speed</c>），失败时回退到 bcdUSB 推断。</para>
+    /// Resolves the negotiated link speed: prefer the sysfs <c>speed</c> file of the
+    /// device matched by bus/device number, falling back to bcdUSB inference.
+    /// <para>解析协商链路速度：优先读取按总线/设备号匹配到的 sysfs <c>speed</c> 文件，
+    /// 失败时回退到 bcdUSB 推断。</para>
+    /// sysfs names devices by <c>bus-port</c> (e.g. <c>1-1</c>), not by device number,
+    /// so the directory is located via the <c>busnum</c>/<c>devnum</c> attributes.
+    /// <para>sysfs 按 <c>bus-port</c>（如 <c>1-1</c>）而非设备号命名设备目录，
+    /// 因此通过 <c>busnum</c>/<c>devnum</c> 属性定位目录。</para>
+    /// The sysfs root is injectable for tests; production uses the real path.
+    /// <para>sysfs 根目录可注入以便测试；生产环境使用真实路径。</para>
     /// </summary>
-    private static UsbDeviceSpeed ResolveSpeed(string devPath, ushort bcdUsb)
+    internal static UsbDeviceSpeed ResolveSpeed(
+        string devPath,
+        ushort bcdUsb,
+        string sysfsDevicesRoot = "/sys/bus/usb/devices")
     {
-        // /dev/bus/usb/BBB/DDD -> /sys/bus/usb/devices/usbDDD/speed
+        // /dev/bus/usb/BBB/DDD -> match <sysfsDevicesRoot>/* via busnum+devnum.
         try
         {
-            string sysfsSpeed = Path.Combine("/sys/bus/usb/devices", "usb" + Path.GetFileName(devPath), "speed");
-            if (File.Exists(sysfsSpeed) &&
-                double.TryParse(File.ReadAllText(sysfsSpeed).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double mbps))
+            string? busPart = Path.GetFileName(Path.GetDirectoryName(devPath));
+            string? devPart = Path.GetFileName(devPath);
+            if (int.TryParse(busPart, NumberStyles.Integer, CultureInfo.InvariantCulture, out int busNum) &&
+                int.TryParse(devPart, NumberStyles.Integer, CultureInfo.InvariantCulture, out int devNum))
             {
-                if (mbps <= 2) return UsbDeviceSpeed.Low;
-                if (mbps <= 12) return UsbDeviceSpeed.Full;
-                if (mbps <= 480) return UsbDeviceSpeed.High;
-                if (mbps <= 5000) return UsbDeviceSpeed.Super;
-                return UsbDeviceSpeed.SuperPlus;
+                foreach (string deviceDir in Directory.EnumerateDirectories(sysfsDevicesRoot))
+                {
+                    if (!TryReadSysfsInt(Path.Combine(deviceDir, "busnum"), out int dirBus) ||
+                        !TryReadSysfsInt(Path.Combine(deviceDir, "devnum"), out int dirDev) ||
+                        dirBus != busNum || dirDev != devNum)
+                    {
+                        continue;
+                    }
+
+                    string sysfsSpeed = Path.Combine(deviceDir, "speed");
+                    if (File.Exists(sysfsSpeed) &&
+                        double.TryParse(File.ReadAllText(sysfsSpeed).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double mbps))
+                    {
+                        return UsbSpeedInference.FromMbps(mbps);
+                    }
+
+                    // Device directory found but speed unreadable; fall through to inference.
+                    break;
+                }
             }
         }
         catch
@@ -321,6 +345,20 @@ internal static class LinuxUsbFinder
         }
 
         return InferSpeed(bcdUsb);
+    }
+
+    private static bool TryReadSysfsInt(string path, out int value)
+    {
+        value = 0;
+        try
+        {
+            if (!File.Exists(path)) return false;
+            return int.TryParse(File.ReadAllText(path).Trim(), NumberStyles.Integer, CultureInfo.InvariantCulture, out value);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
 

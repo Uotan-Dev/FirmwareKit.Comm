@@ -1,0 +1,262 @@
+name: QEMU USB/IP Loopback (Linux + Windows host)
+
+# Experimental: boots a minimal Linux guest in QEMU that shares a QEMU-emulated
+# USB serial device (0403:6001, bulk IN/OUT, always-plugged) over the USB/IP
+# protocol (usbipd on port 3240). The HOST then attaches that remote device via
+# its platform USB/IP client (vhci-hcd on Linux, usbip-win2 UDE driver on
+# Windows), so the library's NATIVE host stack (usbfs/winusb) enumerates the
+# emulated device as if it were physically attached - the only hosted way to
+# exercise the host-side native backends with a real device tree.
+#
+# Host coverage: Linux (usbfs + libusb) and Windows (winusb). macOS has no
+# usable USB/IP client (carlossless/usbip-macos needs SIP disabled), so macOS
+# host testing stays in-guest / on physical hardware.
+#
+# Guest: Ubuntu noble cloud image via cloud-init. cloud-init provisions
+# linux-tools-generic (usbipd/usbip), unbinds the kernel serial driver from the
+# emulated interface and exports busid 1-1. The guest stays running (no
+# poweroff) so the host can attach; the workflow tears QEMU down afterwards.
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  linux-host-loopback:
+    name: Linux host - usbfs/libusb via USB/IP
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Install QEMU, usbip tools and libusb runtime
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y qemu-system-x86 cloud-image-utils linux-tools-generic usbutils libusb-1.0-0 libusb-1.0-0-dev
+
+    - name: Load vhci-hcd (host USB/IP client kernel module)
+      run: |
+        sudo modprobe vhci-hcd 2>/dev/null || {
+          sudo apt-get install -y linux-modules-extra-$(uname -r)
+          sudo modprobe vhci-hcd
+        }
+        lsmod | grep vhci
+
+    - name: Download Ubuntu cloud image
+      run: |
+        curl -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+        qemu-img resize ubuntu.img 8G
+
+    - name: Prepare cloud-init seed (guest provisions usbipd server)
+      run: |
+        cat > user-data <<'EOF'
+        #cloud-config
+        users:
+          - name: ubuntu
+            sudo: ALL=(ALL) NOPASSWD:ALL
+        package_update: true
+        packages:
+          - linux-tools-generic
+        runcmd:
+          - modprobe usbip-core usbip-host
+          - sleep 1
+          - usbip list -l
+          - usbip bind -b 1-1 || (rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1)
+          - usbipd -D
+          - sleep 1
+          - usbip list -r localhost
+        EOF
+        cloud-localds seed.img user-data
+
+    - name: Boot guest sharing usb-serial (background)
+      run: |
+        sudo qemu-system-x86_64 \
+          -machine accel=kvm:tcg \
+          -cpu max \
+          -m 2048 -smp 2 \
+          -drive file=ubuntu.img,if=virtio \
+          -drive file=seed.img,if=virtio,format=raw \
+          -netdev user,id=n0,hostfwd=tcp::3240-:3240 -device virtio-net-pci,netdev=n0 \
+          -device piix3-usb-uhci \
+          -chardev null,id=usb0 \
+          -device usb-serial,chardev=usb0,always-plugged=on \
+          -display none -serial file:guest.log -monitor none > qemu.err 2>&1 &
+        echo "QEMU_PID=$!" >> "$GITHUB_ENV"
+
+    - name: Wait for guest usbip server (busid 1-1)
+      run: |
+        for i in $(seq 1 120); do
+          if usbip list -r 127.0.0.1 2>/dev/null | grep -q "1-1"; then
+            echo "usbip server ready after $((i * 5))s"
+            usbip list -r 127.0.0.1
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "::error::guest usbip server did not become ready in time"
+        tail -50 guest.log || true
+        exit 1
+
+    - name: Attach remote USB device via vhci-hcd
+      run: |
+        sudo usbip attach -r 127.0.0.1 -b 1-1
+        sudo usbip port
+        lsusb | grep -i 0403 || true
+        # usbfs nodes are root-only by default; open them for the runner user.
+        sudo chmod 666 /dev/bus/usb/*/* 2>/dev/null || true
+
+    - name: Build
+      run: dotnet build -c Release
+
+    - name: Enumerate with native (usbfs) backend
+      run: |
+        out=$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1) || true
+        echo "$out"
+        echo "$out" | grep -q "vid=0x0403 pid=0x6001"
+
+    - name: Enumerate with libusb backend
+      run: |
+        out=$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api libusb 2>&1) || true
+        echo "$out"
+        echo "$out" | grep -q "vid=0x0403 pid=0x6001"
+
+    - name: Cleanup
+      if: always()
+      run: |
+        sudo usbip detach -p 0 2>/dev/null || true
+        sudo kill "$QEMU_PID" 2>/dev/null || true
+
+  windows-host-loopback:
+    name: Windows host - winusb via USB/IP
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Install QEMU and mkisofs
+      run: |
+        choco install qemu -y --no-progress
+        choco install cdrtfe -y --no-progress
+
+    - name: Download Ubuntu cloud image
+      run: |
+        curl.exe -fL -o ubuntu.img https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img
+        & 'C:\Program Files\qemu\qemu-img.exe' resize ubuntu.img 8G
+
+    - name: Prepare cloud-init seed (guest provisions usbipd server)
+      shell: powershell
+      run: |
+        @'
+        #cloud-config
+        users:
+          - name: ubuntu
+            sudo: ALL=(ALL) NOPASSWD:ALL
+        package_update: true
+        packages:
+          - linux-tools-generic
+        runcmd:
+          - modprobe usbip-core usbip-host
+          - sleep 1
+          - usbip list -l
+          - usbip bind -b 1-1 || (rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1)
+          - usbipd -D
+          - sleep 1
+          - usbip list -r localhost
+        '@ | Set-Content -Path user-data -Encoding ascii
+        @'
+        instance-id: iid-local01
+        local-hostname: fkc-guest
+        '@ | Set-Content -Path meta-data -Encoding ascii
+        # cloud-init rejects CRLF line endings; normalize to LF.
+        (Get-Content user-data -Raw) -replace "`r`n", "`n" | Set-Content -Path user-data -NoNewline -Encoding ascii
+        (Get-Content meta-data -Raw) -replace "`r`n", "`n" | Set-Content -Path meta-data -NoNewline -Encoding ascii
+        & 'C:\Program Files (x86)\cdrtfe\tools\cdrtools\mkisofs.exe' -o seed.img -volid cidata -joliet -rock user-data meta-data
+
+    - name: Install usbip-win2 client (UDE driver)
+      shell: powershell
+      run: |
+        curl.exe -fL -o usbip-win2.exe https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.7.8/USBip-0.9.7.8-x64.exe
+        # Silent install is best-effort (installer flag set unknown); retry with
+        # the Inno/NSIS flags and verify by file presence.
+        Start-Process -FilePath .\usbip-win2.exe -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -NoNewWindow
+        if (-not (Test-Path 'C:\Program Files\USBip\usbip.exe')) {
+          Start-Process -FilePath .\usbip-win2.exe -ArgumentList '/S' -Wait -NoNewWindow
+        }
+        if (-not (Test-Path 'C:\Program Files\USBip\usbip.exe')) { throw 'usbip.exe not found after install' }
+        & 'C:\Program Files\USBip\usbip.exe' version
+
+    - name: Boot guest sharing usb-serial (background)
+      shell: powershell
+      run: |
+        $p = Start-Process -FilePath 'C:\Program Files\qemu\qemu-system-x86_64.exe' -ArgumentList @(
+          '-machine','accel=tcg',
+          '-cpu','max',
+          '-m','2048','-smp','2',
+          '-drive','file=ubuntu.img,if=virtio',
+          '-drive','file=seed.img,if=virtio,format=raw',
+          '-netdev','user,id=n0,hostfwd=tcp::3240-:3240','-device','virtio-net-pci,netdev=n0',
+          '-device','piix3-usb-uhci',
+          '-chardev','null,id=usb0',
+          '-device','usb-serial,chardev=usb0,always-plugged=on',
+          '-display','none','-serial','file:guest.log','-monitor','none'
+        ) -PassThru -NoNewWindow -RedirectStandardError qemu.err
+        "QEMU_PID=$($p.Id)" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+    - name: Wait for guest usbip server (busid 1-1)
+      shell: powershell
+      run: |
+        $usbip = 'C:\Program Files\USBip\usbip.exe'
+        for ($i = 0; $i -lt 150; $i++) {
+          $out = (& $usbip list -r 127.0.0.1 2>&1) -join "`n"
+          if ($out -match '1-1') {
+            Write-Host "usbip server ready after $($i * 5)s"
+            Write-Host $out
+            exit 0
+          }
+          Start-Sleep -Seconds 5
+        }
+        Write-Host '::error::guest usbip server did not become ready in time'
+        Get-Content guest.log -Tail 50 -ErrorAction SilentlyContinue
+        exit 1
+
+    - name: Attach remote USB device via usbip-win2
+      shell: powershell
+      run: |
+        $usbip = 'C:\Program Files\USBip\usbip.exe'
+        & $usbip attach -r 127.0.0.1 -b 1-1
+        & $usbip port
+
+    - name: Build
+      run: dotnet build -c Release
+
+    - name: Enumerate with native (winusb) backend
+      shell: powershell
+      run: |
+        $out = (dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1) -join "`n"
+        Write-Host $out
+        if ($out -notmatch 'vid=0x0403 pid=0x6001') {
+          Write-Host '::error::winusb backend did not enumerate the emulated 0403:6001 device'
+          pnputil /enum-devices /connected | Select-String -Pattern 'USB' | Select-Object -First 30
+          exit 1
+        }
+
+    - name: Cleanup
+      if: always()
+      shell: powershell
+      run: |
+        $usbip = 'C:\Program Files\USBip\usbip.exe'
+        & $usbip detach -p 0 2>&1 | Out-Null
+        Stop-Process -Id $env:QEMU_PID -Force -ErrorAction SilentlyContinue
