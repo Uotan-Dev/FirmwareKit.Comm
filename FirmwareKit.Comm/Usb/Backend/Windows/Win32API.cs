@@ -162,4 +162,86 @@ internal class Win32API
 
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool CancelIoEx(IntPtr handle, IntPtr overlapped);
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr GetModuleHandleW(string? lpModuleName);
+
+    // ---- Windows device notification (WM_DEVICECHANGE via hidden message window) ----
+    public const uint WM_DEVICECHANGE = 0x0219;
+    public const uint WM_QUIT = 0x0012;
+    public const uint DBT_DEVICEARRIVAL = 0x8000;
+    public const uint DBT_DEVICEREMOVECOMPLETE = 0x8004;
+    public const uint DBT_DEVTYP_DEVICEINTERFACE = 0x00000005;
+    public const uint DEVICE_NOTIFY_WINDOW_HANDLE = 0x00000000;
+
+    public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct WNDCLASSW
+    {
+        public uint style;
+        public WndProcDelegate lpfnWndProc;
+        public int cbClsExtra;
+        public int cbWndExtra;
+        public IntPtr hInstance;
+        public IntPtr hIcon;
+        public IntPtr hCursor;
+        public IntPtr hbrBackground;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string lpszMenuName;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string lpszClassName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DEV_BROADCAST_DEVICEINTERFACE_W
+    {
+        public uint dbcc_size;
+        public uint dbcc_devicetype;
+        public uint dbcc_reserved;
+        public GUID dbcc_classguid;
+        public ushort dbcc_name;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public int pt_x;
+        public int pt_y;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern ushort RegisterClassW(ref WNDCLASSW lpWndClass);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr CreateWindowExW(uint dwExStyle, string lpClassName, string lpWindowName, uint dwStyle, int x, int y, int nWidth, int nHeight, IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DefWindowProcW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr RegisterDeviceNotificationW(IntPtr hRecipient, IntPtr notificationFilter, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool UnregisterDeviceNotification(IntPtr handle);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetMessageW(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessageW(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern bool PostMessageW(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool DestroyWindow(IntPtr hWnd);
 }

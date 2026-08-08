@@ -336,6 +336,11 @@ internal abstract class UsbDevice : IDisposable
     /// <summary>
     /// Reads data from the device directly into the specified buffer with a specified timeout.
     /// <para>使用指定超时时间将数据直接读入指定的缓冲区。</para>
+    /// <b>Timeout semantics:</b> the timeout applies per chunk (see <see cref="MaxChunkSize"/>),
+    /// not to the whole operation - a large read spanning several chunks can take up to
+    /// chunkCount × timeoutMs. Use <c>ReadExact</c> when a total-budget read is needed.
+    /// <para><b>超时语义：</b>超时作用于每块（见 <see cref="MaxChunkSize"/>）而非整个操作——
+    /// 跨多块的大读取最多耗时 块数 × timeoutMs。需要整体预算读取时使用 <c>ReadExact</c>。</para>
     /// </summary>
     /// <param name="buffer">The target buffer. <para>目标缓冲区。</para></param>
     /// <param name="offset">The byte offset within the buffer. <para>缓冲区内的字节偏移量。</para></param>
@@ -453,6 +458,11 @@ internal abstract class UsbDevice : IDisposable
     /// <summary>
     /// Writes data to the device with a specified timeout.
     /// <para>使用指定超时时间向设备写入数据。</para>
+    /// <b>Timeout semantics:</b> the timeout applies per chunk (see <see cref="MaxChunkSize"/>),
+    /// not to the whole operation - a large write spanning several chunks can take up to
+    /// chunkCount × timeoutMs.
+    /// <para><b>超时语义：</b>超时作用于每块（见 <see cref="MaxChunkSize"/>）而非整个操作——
+    /// 跨多块的大写入最多耗时 块数 × timeoutMs。</para>
     /// </summary>
     /// <param name="data">The data to write. <para>要写入的数据。</para></param>
     /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>

@@ -36,7 +36,7 @@ internal static class MacHostUsbFinder
                 if (filter?.VendorId is ushort filterVid && vid != filterVid) continue;
                 if (filter?.ProductId is ushort filterPid && pid != filterPid) continue;
 
-                if (!TryGetBulkEndpoints(device, out byte bulkIn, out byte bulkOut, out byte ifcClass, out byte ifcSubClass, out byte ifcProtocol, out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
+                if (!TryGetBulkEndpoints(device, filter?.InterfaceNumber, out byte bulkIn, out byte bulkOut, out byte ifcClass, out byte ifcSubClass, out byte ifcProtocol, out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
 
                 var dev = new MacHostUsbDevice
                 {
@@ -81,6 +81,7 @@ internal static class MacHostUsbFinder
     /// </summary>
     private static bool TryGetBulkEndpoints(
         IntPtr device,
+        byte? interfaceNumber,
         out byte bulkIn,
         out byte bulkOut,
         out byte interfaceClass,
@@ -130,6 +131,13 @@ internal static class MacHostUsbFinder
                     curClass = ifcDesc.bInterfaceClass;
                     curSubClass = ifcDesc.bInterfaceSubClass;
                     curProtocol = ifcDesc.bInterfaceProtocol;
+                    if (interfaceNumber.HasValue && ifcDesc.bInterfaceNumber != interfaceNumber.Value)
+                    {
+                        // Not the requested interface: still walk it, but do not collect
+                        // its endpoints or let its bulk endpoints drive the match.
+                        currentEndpoints = null;
+                        continue;
+                    }
                     currentEndpoints = new List<UsbEndpointInfo>();
                     collected.Add(new UsbInterfaceInfo
                     {
@@ -150,7 +158,7 @@ internal static class MacHostUsbFinder
                         MaxPacketSize = ep.wMaxPacketSize,
                         Interval = ep.bInterval
                     });
-                    if ((ep.bmAttributes & 0x03) == 0x02) // bulk transfer type
+                    if (currentEndpoints != null && (ep.bmAttributes & 0x03) == 0x02) // bulk transfer type
                     {
                         bool isIn = (ep.bEndpointAddress & 0x80) != 0;
                         byte pipeId = (byte)(ep.bEndpointAddress & 0x0F);

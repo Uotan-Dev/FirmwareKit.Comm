@@ -76,6 +76,9 @@ internal static class WinUSBAPI
     [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
     public static extern bool WinUsb_SetPipePolicy(IntPtr InterfaceHandle, byte PipeID, uint PolicyType, uint ValueLength, ref byte Value);
 
+    [DllImport("Winusb.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.StdCall, SetLastError = true)]
+    public static extern bool WinUsb_QueryDeviceInformation(IntPtr InterfaceHandle, uint InformationType, ref uint BufferLength, out uint Buffer);
+
     public const uint SHORT_PACKET_TERMINATE = 0x01;
     public const uint AUTO_CLEAR_STALL = 0x02;
     public const uint PIPE_TRANSFER_TIMEOUT = 0x03;
@@ -83,4 +86,10 @@ internal static class WinUSBAPI
     public const uint ALLOW_PARTIAL_READS = 0x05;
     public const uint AUTO_FLUSH = 0x06;
     public const uint RAW_IO = 0x07;
+
+    /// <summary>
+    /// WinUsb_QueryDeviceInformation information type: negotiated USB speed.
+    /// <para>WinUsb_QueryDeviceInformation 信息类型：协商的 USB 速度。</para>
+    /// </summary>
+    public const uint DEVICE_SPEED = 0x01;
 }

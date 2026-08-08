@@ -7,7 +7,15 @@ namespace FirmwareKit.Comm.Usb.Backend.HarmonyOS;
 
 internal static class HarmonyOSUsbFinder
 {
-    private const int MaxDeviceId = 256;
+    // The USB DDK exposes no "list devices" API, so discovery probes device IDs 1..N.
+    // Device IDs are normally assigned sequentially by the system, but gaps can appear;
+    // callers that know their device ID can raise the limit to scan further, or lower it
+    // to reduce probing time.
+    /// <summary>
+    /// Gets or sets the maximum device ID probed during discovery (default 256).
+    /// <para>获取或设置发现期间探测的最大设备 ID（默认 256）。</para>
+    /// </summary>
+    public static int MaxDeviceId { get; set; } = 256;
 
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
@@ -25,7 +33,8 @@ internal static class HarmonyOSUsbFinder
 
         try
         {
-            for (ulong deviceId = 1; deviceId <= MaxDeviceId; deviceId++)
+            ulong maxProbe = (ulong)Math.Max(0, MaxDeviceId);
+            for (ulong deviceId = 1; deviceId <= maxProbe; deviceId++)
             {
                 ProbeDevice(deviceId, filter, devices);
             }
@@ -122,6 +131,7 @@ internal static class HarmonyOSUsbFinder
                 if (filter?.InterfaceClass is byte c && ifcClass != c) continue;
                 if (filter?.InterfaceSubClass is byte s && ifcSubClass != s) continue;
                 if (filter?.InterfaceProtocol is byte p && ifcProtocol != p) continue;
+                if (filter?.InterfaceNumber is byte n && ifaceDesc.bInterfaceNumber != n) continue;
 
                 if (epIn != 0 && epOut != 0)
                 {
@@ -139,6 +149,7 @@ internal static class HarmonyOSUsbFinder
                         devDesc.iSerialNumber == 0 ? null : "UNKNOWN"
                     );
                     dev.Interfaces = interfaces;
+                    dev.Speed = UsbSpeedInference.FromBcdUsb(devDesc.bcdUSB);
 
                     if (dev.CreateHandle() == 0)
                     {

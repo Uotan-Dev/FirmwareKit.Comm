@@ -268,10 +268,13 @@ internal class MacHostUsbDevice : UsbDevice
     {
         if (devicePtr == IntPtr.Zero) return -1;
 
-        // Read the device descriptor via a control request; iSerialNumber lives at offset 16.
+        // Read the device descriptor via a control request; iSerialNumber lives at offset 16,
+        // bcdUSB at offset 2 (used to infer the USB speed like the Linux fallback).
         byte[] dd = new byte[18];
         int done = ControlTransferRaw(0x80, 0x06, 0x0100, 0x0000, dd, dd.Length, 1000);
         if (done < 18) return -1;
+
+        Speed = UsbSpeedInference.FromBcdUsb((ushort)(dd[2] | (dd[3] << 8)));
 
         byte serialIndex = dd[16];
         if (serialIndex == 0) return -1;

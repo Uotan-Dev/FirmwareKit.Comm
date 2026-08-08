@@ -11,7 +11,9 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
         // Kept as a named constant so it can be lifted into configuration later.
         private const string PreferWinUsbVidPid = "vid_18d1&pid_d00d";
 
-        private static readonly Guid[] KnownInterfaceGUIDs = new[]
+        // Shared with UsbWindowsHotplugMonitor so device-notification registration covers
+        // the same interface GUIDs the finder enumerates.
+        internal static readonly Guid[] KnownInterfaceGUIDs = new[]
         {
             new Guid("a5dcbf10-6530-11d2-901f-00c04fb951ed"), // USB Device
             new Guid("f72fe0d4-cbcb-407d-8814-9ed673d0dd6b"), // WinUSB generic
@@ -229,7 +231,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
             return $"path:{device.DevicePath}|vid:{device.VendorId:X4}|pid:{device.ProductId:X4}|type:{device.GetType().Name}";
         }
 
-        private static Win32API.GUID ToApiGuid(Guid guid)
+        internal static Win32API.GUID ToApiGuid(Guid guid)
         {
             byte[] bytes = guid.ToByteArray();
             return new Win32API.GUID

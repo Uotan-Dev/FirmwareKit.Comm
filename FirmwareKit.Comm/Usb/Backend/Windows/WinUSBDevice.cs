@@ -27,6 +27,7 @@ internal class WinUSBDevice : UsbDevice
     private Win32API.USBDeviceDescriptor USBDeviceDescriptor;
     private Win32API.USBDeviceConfigDescriptor USBDeviceConfigDescriptor;
     private Win32API.USBDeviceInterfaceDescriptor USBDeviceInterfaceDescriptor;
+    private int _configuredPipeTimeoutMs = -1;
 
     public override int CreateHandle()
     {
@@ -127,17 +128,31 @@ internal class WinUSBDevice : UsbDevice
             return Fail(-1);
         }
 
+        // Negotiated USB speed (UsbLowSpeed=1, UsbFullSpeed=2, UsbHighSpeed=3,
+        // UsbSuperSpeed=4, UsbSuperSpeedPlus=5). Failure leaves Speed as Unknown.
+        uint speedLength = sizeof(uint);
+        if (WinUsb_QueryDeviceInformation(WinUSBHandle.DangerousGetHandle(), DEVICE_SPEED, ref speedLength, out uint deviceSpeed))
+        {
+            Speed = deviceSpeed switch
+            {
+                1 => UsbDeviceSpeed.Low,
+                2 => UsbDeviceSpeed.Full,
+                3 => UsbDeviceSpeed.High,
+                4 => UsbDeviceSpeed.Super,
+                5 => UsbDeviceSpeed.SuperPlus,
+                _ => UsbDeviceSpeed.Unknown
+            };
+        }
+
         GetSerialNumber();
 
         byte bTrue = 1;
         byte bFalse = 0;
-        uint timeout = 60000; // Increased to 60s for large flash operations
 
-        // Policy configuration
+        // Policy configuration (60s initial timeout for large flash operations).
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, AUTO_CLEAR_STALL, 1, ref bTrue);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, AUTO_CLEAR_STALL, 1, ref bTrue);
-        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
-        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
+        SetPipeTimeout(WinUsbDefaultTimeoutMs);
 
         // WinUSB RAW_IO can significantly improve stability for large transfers.
         // It requires that the transfer size is a multiple of the packet size (typically 512).
@@ -159,9 +174,17 @@ internal class WinUSBDevice : UsbDevice
             return;
         }
 
+        // Cache the configured value so per-chunk calls do not hit WinUsb_SetPipePolicy
+        // (a kernel transition) when the timeout has not changed.
+        if (_configuredPipeTimeoutMs == timeoutMs)
+        {
+            return;
+        }
+
         uint timeout = (uint)timeoutMs;
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
+        _configuredPipeTimeoutMs = timeoutMs;
     }
 
     public override void Reset()

@@ -16,7 +16,15 @@ public enum UsbDeviceChangeKind
     /// The device is no longer present.
     /// <para>设备已不再存在。</para>
     /// </summary>
-    Removed = 1
+    Removed = 1,
+
+    /// <summary>
+    /// The device is still present but its metadata changed (serial, interface class,
+    /// speed, etc.) - e.g. a mode switch that keeps the identity key stable.
+    /// <para>设备仍在但元数据发生变化（序列号、接口类、速度等）——例如身份键保持
+    /// 稳定的模式切换。</para>
+    /// </summary>
+    Changed = 2
 }
 
 /// <summary>

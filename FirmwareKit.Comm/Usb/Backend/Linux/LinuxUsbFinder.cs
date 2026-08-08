@@ -9,6 +9,7 @@ namespace FirmwareKit.Comm.Usb.Backend.Linux;
 internal static class LinuxUsbFinder
 {
     private static int _permissionDeniedCount;
+    private static int _busyCount;
 
     /// <summary>
     /// Gets the number of /dev/bus/usb devices skipped because the process lacked
@@ -26,6 +27,19 @@ internal static class LinuxUsbFinder
     public static bool HasPermissionIssues => PermissionDeniedCount > 0;
 
     /// <summary>
+    /// Gets the number of devices skipped because the interface could not be claimed
+    /// (EBUSY - another process, e.g. an adb server, already claimed it).
+    /// <para>获取因接口无法声明（EBUSY——其他进程，例如 adb server，已占用）而跳过的设备数。</para>
+    /// </summary>
+    public static int BusyCount => Volatile.Read(ref _busyCount);
+
+    /// <summary>
+    /// Gets whether any device was skipped because its interface is busy.
+    /// <para>获取是否有设备因接口被占用而跳过。</para>
+    /// </summary>
+    public static bool HasBusyIssues => BusyCount > 0;
+
+    /// <summary>
     /// Records a permission-denied open attempt and logs a udev hint. Used by the finder
     /// and by <see cref="LinuxUsbDevice.CreateHandle"/>.
     /// <para>记录一次权限不足的打开尝试并记录 udev 提示。由查找器与
@@ -38,10 +52,24 @@ internal static class LinuxUsbFinder
         UsbTrace.Log($"LinuxUsbFinder: permission denied opening '{path}' (EACCES) - ensure udev rules grant access to the current user/group.");
     }
 
+    /// <summary>
+    /// Records an interface-claim failure (EBUSY) and logs a hint. Used by
+    /// <see cref="LinuxUsbDevice.CreateHandle"/>.
+    /// <para>记录一次接口声明失败（EBUSY）并记录提示。由
+    /// <see cref="LinuxUsbDevice.CreateHandle"/> 使用。</para>
+    /// </summary>
+    /// <param name="path">The device node path. <para>设备节点路径。</para></param>
+    internal static void ReportBusy(string path)
+    {
+        Interlocked.Increment(ref _busyCount);
+        UsbTrace.Log($"LinuxUsbFinder: interface busy on '{path}' (EBUSY) - another process (e.g. adb server) may have claimed it.");
+    }
+
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
         Volatile.Write(ref _permissionDeniedCount, 0);
+        Volatile.Write(ref _busyCount, 0);
         const string base_path = "/dev/bus/usb";
         if (!Directory.Exists(base_path)) return devices;
 
@@ -69,12 +97,35 @@ internal static class LinuxUsbFinder
                     }
                 }
 
-                byte[] desc = new byte[1024];
-                IntPtr ptr = Marshal.AllocHGlobal(desc.Length);
+                byte[] desc;
+                IntPtr ptr;
+                int n;
+
+                // Start with a 1 KiB buffer; if the configuration descriptor's wTotalLength
+                // exceeds it (rare), re-read into a buffer sized from the descriptor.
+                int capacity = 1024;
+                desc = new byte[capacity];
+                ptr = Marshal.AllocHGlobal(capacity);
                 try
                 {
-                    int n = (int)read(fd, ptr, (UIntPtr)desc.Length);
+                    n = (int)read(fd, ptr, (UIntPtr)capacity);
                     if (n < 18) { close(fd); fd = -1; continue; }
+
+                    // wTotalLength lives at offset 2 of the configuration descriptor, which
+                    // starts right after the 18-byte device descriptor.
+                    if (n > 20)
+                    {
+                        int wTotalLength = Marshal.ReadByte(ptr, 20) | (Marshal.ReadByte(ptr, 21) << 8);
+                        if (wTotalLength > capacity)
+                        {
+                            Marshal.FreeHGlobal(ptr);
+                            ptr = Marshal.AllocHGlobal(wTotalLength);
+                            desc = new byte[wTotalLength];
+                            n = (int)read(fd, ptr, (UIntPtr)wTotalLength);
+                            if (n < 18) { close(fd); fd = -1; continue; }
+                        }
+                    }
+
                     Marshal.Copy(ptr, desc, 0, n);
 
                     ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
@@ -150,7 +201,9 @@ internal static class LinuxUsbFinder
                             iface.Endpoints = endpoints;
                             interfaces.Add(iface);
 
-                            if (InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter))
+                            bool matchesFilter = InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter) &&
+                                (!(filter?.InterfaceNumber is byte fn) || ifcId == fn);
+                            if (matchesFilter)
                             {
                                 foreach (var ep in endpoints)
                                 {
@@ -238,12 +291,7 @@ internal static class LinuxUsbFinder
     /// （例如 EDL 区分 USB3/USB2 路径）。</para>
     /// </summary>
     private static UsbDeviceSpeed InferSpeed(ushort bcdUsb)
-    {
-        if (bcdUsb >= 0x0301) return UsbDeviceSpeed.SuperPlus;
-        if (bcdUsb >= 0x0300) return UsbDeviceSpeed.Super;
-        if (bcdUsb >= 0x0200) return UsbDeviceSpeed.High;
-        return UsbDeviceSpeed.Full;
-    }
+        => UsbSpeedInference.FromBcdUsb(bcdUsb);
 
     /// <summary>
     /// Resolves the negotiated link speed: prefer the sysfs <c>speed</c> file

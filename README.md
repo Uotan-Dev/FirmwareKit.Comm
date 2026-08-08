@@ -38,6 +38,16 @@ On macOS, the native backend is built on the user-space IOUSBHost (IOUSBLib) fra
 
 Protocol layers (for example Sahara, Firehose, Fastboot, or custom binary protocols) are intentionally out of scope and should be implemented by callers on top of the unified session interfaces.
 
+## Transfer Timeout Semantics
+
+- The timeout passed to `Read` / `Write` (and their `ReadInto` variants) applies **per chunk**, not to the whole operation: a transfer larger than the backend chunk size is split into multiple chunks, so the total time can reach `chunkCount × timeoutMs`.
+- When an exact number of bytes must be read within a total budget (e.g. fixed-size fastboot/EDL responses), use `ReadExact(length, timeoutMs)` / `ReadExactAsync` — they loop over short reads with a total deadline and return the bytes actually received on timeout.
+- Short reads/writes stop the transfer and return the partial byte count; a disconnected device throws `UsbDeviceDisconnectedException` (distinct from ordinary `IOException`/`UsbTransferException`).
+
+## Hot-Plug Monitoring
+
+`MonitorUsbDevices` prefers event-driven notifications where available: `WM_DEVICECHANGE` (Windows native backend) and libusb hotplug (Linux/macOS, `UsbApiKind.LibUsbDotNet`); unsupported platforms fall back to polling (`pollInterval`, default 1 s). Change events include `Added`, `Removed` and `Changed` (metadata changed while keeping the same physical identity). Pass a `CancellationToken` to auto-dispose the monitor handle, or use the `WaitForUsbDeviceAppearAsync` / `WaitForUsbDeviceDisappearAsync` / `WaitForUsbDeviceModeSwitchAsync` helpers for mode-switch workflows.
+
 ## Installation
 
 Install via NuGet:

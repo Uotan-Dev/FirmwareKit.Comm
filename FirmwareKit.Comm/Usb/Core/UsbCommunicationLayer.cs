@@ -1,6 +1,7 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
 using FirmwareKit.Comm.Usb.Providers;
+using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Usb.Core;
 
@@ -144,15 +145,16 @@ public sealed class UsbCommunicationLayer
     }
 
     /// <summary>
-    /// Monitors USB device additions and removals by polling snapshots.
-    /// <para>通过轮询快照监视 USB 设备新增与移除。</para>
+    /// Monitors USB device additions and removals.
+    /// <para>监视 USB 设备新增与移除。</para>
     /// </summary>
     /// <param name="onChanged">Change callback. <para>设备变化回调。</para></param>
     /// <param name="apiKind">The backend selection mode. <para>后端选择模式。</para></param>
     /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
-    /// <param name="pollInterval">Polling interval. <para>轮询间隔。</para></param>
+    /// <param name="pollInterval">Polling interval used by the polling fallback. <para>轮询回退使用的轮询间隔。</para></param>
     /// <param name="fireInitialSnapshot">Whether to emit initial Added events. <para>是否触发初始 Added 事件。</para></param>
     /// <param name="onError">Optional error callback invoked when enumeration or callback handling fails. <para>枚举或回调失败时触发的可选错误回调。</para></param>
+    /// <param name="cancellationToken">Cancelling it disposes the returned monitor handle. <para>取消该令牌会释放返回的监视句柄。</para></param>
     /// <returns>A disposable monitor handle. <para>可释放的监视句柄。</para></returns>
     public IDisposable MonitorDevices(
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
@@ -160,7 +162,8 @@ public sealed class UsbCommunicationLayer
         UsbDeviceFilter? filter = null,
         TimeSpan? pollInterval = null,
         bool fireInitialSnapshot = false,
-        Action<Exception>? onError = null)
+        Action<Exception>? onError = null,
+        CancellationToken cancellationToken = default)
     {
         if (onChanged == null)
         {
@@ -215,7 +218,22 @@ public sealed class UsbCommunicationLayer
             }
         }
 
-        return new UsbDeviceMonitor(enumerator, onChanged, onError, interval, fireInitialSnapshot);
+        // On Windows, prefer event-driven WM_DEVICECHANGE notifications for the native
+        // backend; fall back to polling when the hidden message window cannot be created.
+        if (apiKind == UsbApiKind.Native && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            try
+            {
+                return new UsbWindowsHotplugMonitor(enumerator, onChanged, onError);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+                UsbTrace.Log($"UsbWindowsHotplugMonitor creation failed: {ex.GetType().Name}: {ex.Message} - falling back to polling monitor.");
+            }
+        }
+
+        return new UsbDeviceMonitor(enumerator, onChanged, onError, interval, fireInitialSnapshot, cancellationToken);
     }
 
     /// <summary>

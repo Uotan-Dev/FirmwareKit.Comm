@@ -87,6 +87,7 @@ internal static class LibUsbFinder
                     if (filter?.InterfaceClass is byte c && (byte)ifc.Class != c) continue;
                     if (filter?.InterfaceSubClass is byte s && (byte)ifc.SubClass != s) continue;
                     if (filter?.InterfaceProtocol is byte p && (byte)ifc.Protocol != p) continue;
+                    if (filter?.InterfaceNumber is byte n && (byte)ifc.Number != n) continue;
 
                     bool hasIn = false;
                     bool hasOut = false;

@@ -298,7 +298,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
             UsbApiKind.Auto,
             filter: null,
             pollInterval: TimeSpan.FromMilliseconds(50),
-            fireInitialSnapshot: false);
+            fireInitialSnapshot: false,
+            cancellationToken: TestContext.Current.CancellationToken);
 
         provider.DevicePresent = true;
         Assert.True(signal.Wait(TimeSpan.FromSeconds(3), TestContext.Current.CancellationToken));
@@ -326,7 +327,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
             filter: null,
             pollInterval: TimeSpan.FromMilliseconds(50),
             fireInitialSnapshot: true,
-            onError: ex => capturedError = ex);
+            onError: ex => capturedError = ex,
+            cancellationToken: TestContext.Current.CancellationToken);
 
         Assert.NotNull(capturedError);
         Assert.IsType<InvalidOperationException>(capturedError);

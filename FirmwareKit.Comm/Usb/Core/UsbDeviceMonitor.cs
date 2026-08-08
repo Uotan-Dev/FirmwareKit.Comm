@@ -16,6 +16,7 @@ internal sealed class UsbDeviceMonitor : IDisposable
     private readonly object _gate = new();
     private Timer? _timer;
     private Dictionary<string, UsbDeviceInfo> _lastSnapshot = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenRegistration? _cancellationRegistration;
     private bool _isPolling;
     private bool _disposed;
 
@@ -24,12 +25,18 @@ internal sealed class UsbDeviceMonitor : IDisposable
         Action<IReadOnlyList<UsbDeviceChange>> onChanged,
         Action<Exception>? onError,
         TimeSpan pollInterval,
-        bool fireInitialSnapshot)
+        bool fireInitialSnapshot,
+        CancellationToken cancellationToken = default)
     {
         _enumerator = enumerator ?? throw new ArgumentNullException(nameof(enumerator));
         _onChanged = onChanged ?? throw new ArgumentNullException(nameof(onChanged));
         _onError = onError;
         _pollInterval = pollInterval <= TimeSpan.Zero ? TimeSpan.FromSeconds(1) : pollInterval;
+
+        if (cancellationToken.CanBeCanceled)
+        {
+            _cancellationRegistration = cancellationToken.Register(static state => ((UsbDeviceMonitor)state!).Dispose(), this);
+        }
 
         IReadOnlyList<UsbDeviceInfo> initialDevices;
         try
@@ -76,6 +83,8 @@ internal sealed class UsbDeviceMonitor : IDisposable
             _disposed = true;
             _timer?.Dispose();
             _timer = null;
+            _cancellationRegistration?.Dispose();
+            _cancellationRegistration = null;
             _lastSnapshot.Clear();
         }
     }
@@ -136,10 +145,14 @@ internal sealed class UsbDeviceMonitor : IDisposable
     }
 
     /// <summary>
-    /// Computes Added/Removed changes between two device snapshots.
-    /// <para>计算两个设备快照之间的新增/移除变化。</para>
-    /// Shared by the polling monitor and the libusb native hotplug monitor.
-    /// <para>由轮询监视器与 libusb 原生热插拔监视器共用。</para>
+    /// Computes Added/Removed/Changed changes between two device snapshots.
+    /// <para>计算两个设备快照之间的新增/移除/变化。</para>
+    /// A device whose identity key is present in both snapshots but whose metadata differs
+    /// (serial, interface class/subclass/protocol, speed) is reported as Changed.
+    /// <para>身份键在两次快照中都存在但元数据不同（序列号、接口类/子类/协议、速度）的
+    /// 设备被报告为 Changed。</para>
+    /// Shared by the polling monitor and the native hotplug monitors.
+    /// <para>由轮询监视器与原生热插拔监视器共用。</para>
     /// </summary>
     /// <param name="current">The new snapshot. <para>新快照。</para></param>
     /// <param name="last">The previous snapshot. <para>旧快照。</para></param>
@@ -152,8 +165,18 @@ internal sealed class UsbDeviceMonitor : IDisposable
 
         foreach (var pair in current)
         {
-            if (last.ContainsKey(pair.Key))
+            if (last.TryGetValue(pair.Key, out var previous))
             {
+                if (HasMetadataChanged(previous, pair.Value))
+                {
+                    changes ??= new List<UsbDeviceChange>();
+                    changes.Add(new UsbDeviceChange
+                    {
+                        Kind = UsbDeviceChangeKind.Changed,
+                        Device = pair.Value
+                    });
+                }
+
                 continue;
             }
 
@@ -183,6 +206,15 @@ internal sealed class UsbDeviceMonitor : IDisposable
         return changes;
     }
 
+    private static bool HasMetadataChanged(UsbDeviceInfo previous, UsbDeviceInfo current)
+    {
+        return !string.Equals(previous.SerialNumber, current.SerialNumber, StringComparison.Ordinal) ||
+               previous.InterfaceClass != current.InterfaceClass ||
+               previous.InterfaceSubClass != current.InterfaceSubClass ||
+               previous.InterfaceProtocol != current.InterfaceProtocol ||
+               previous.Speed != current.Speed;
+    }
+
     internal static Dictionary<string, UsbDeviceInfo> BuildMap(IReadOnlyList<UsbDeviceInfo> devices)
     {
         var map = new Dictionary<string, UsbDeviceInfo>(StringComparer.OrdinalIgnoreCase);
@@ -196,11 +228,9 @@ internal sealed class UsbDeviceMonitor : IDisposable
 
     internal static string BuildIdentityKey(UsbDeviceInfo device)
     {
-        if (!string.IsNullOrWhiteSpace(device.DeviceKey))
-        {
-            return device.DeviceKey;
-        }
-
-        return UsbDeviceIdentity.BuildKey(device);
+        // Use the backend-independent physical key for monitoring/dedup so the same
+        // physical device is not reported twice when Auto resolves both native and libusb.
+        // (UsbDeviceInfo.DeviceKey retains the backend-specific key for reopen purposes.)
+        return UsbDeviceIdentity.BuildPhysicalKey(device);
     }
 }

@@ -45,6 +45,11 @@ internal class LinuxUsbDevice : UsbDevice
         }
         if (n != 0)
         {
+            int err = Marshal.GetLastWin32Error();
+            if (err == EBUSY)
+            {
+                LinuxUsbFinder.ReportBusy(DevicePath);
+            }
             _fd.Dispose();
             return n;
         }

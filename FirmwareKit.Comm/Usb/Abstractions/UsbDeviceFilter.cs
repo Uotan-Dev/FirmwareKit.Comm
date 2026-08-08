@@ -55,6 +55,17 @@ public sealed class UsbDeviceFilter
     public byte? InterfaceProtocol { get; set; }
 
     /// <summary>
+    /// Gets or sets the required USB interface number.
+    /// <para>获取或设置要求的 USB 接口编号。</para>
+    /// Backends that can select an interface (Linux/macOS/libusb/HarmonyOS) prefer this
+    /// interface when opening a session; on WinUSB the bound interface is determined by the
+    /// driver, so mismatches are filtered out during projection.
+    /// <para>可选择接口的后端（Linux/macOS/libusb/HarmonyOS）打开会话时优先使用该接口；
+    /// WinUSB 的绑定接口由驱动决定，不匹配的设备会在投影阶段被过滤。</para>
+    /// </summary>
+    public byte? InterfaceNumber { get; set; }
+
+    /// <summary>
     /// Determines whether the supplied metadata matches this filter.
     /// <para>判断给定元数据是否匹配当前过滤器。</para>
     /// </summary>
@@ -73,6 +84,8 @@ public sealed class UsbDeviceFilter
         if (InterfaceClass.HasValue && info.InterfaceClass != InterfaceClass.Value) return false;
         if (InterfaceSubClass.HasValue && info.InterfaceSubClass != InterfaceSubClass.Value) return false;
         if (InterfaceProtocol.HasValue && info.InterfaceProtocol != InterfaceProtocol.Value) return false;
+        if (InterfaceNumber.HasValue &&
+            !info.Interfaces.Any(i => i.InterfaceNumber == InterfaceNumber.Value)) return false;
 
         return true;
     }
