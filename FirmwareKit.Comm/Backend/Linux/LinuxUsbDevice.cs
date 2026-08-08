@@ -20,6 +20,9 @@ internal class LinuxUsbDevice : UsbDevice
     public int InterfaceId { get; set; }
     public byte iSerialNumber { get; set; }
 
+    public override byte EndpointIn => ep_in;
+    public override byte EndpointOut => ep_out;
+
     public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     public override int CreateHandle()
@@ -269,7 +272,8 @@ internal class LinuxUsbDevice : UsbDevice
         {
             ep = ep_in,
             len = (uint)length,
-            timeout = (uint)timeoutMs,
+            // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
+            timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
             data = buffer
         };
 
@@ -301,7 +305,8 @@ internal class LinuxUsbDevice : UsbDevice
         {
             ep = ep_out,
             len = (uint)length,
-            timeout = (uint)timeoutMs,
+            // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
+            timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
             data = buffer
         };
 
@@ -330,6 +335,40 @@ internal class LinuxUsbDevice : UsbDevice
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
+    }
+
+    public override UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+    {
+        if (_fd.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
+        ValidateBufferRange(buffer, offset, length);
+
+        // Interrupt endpoints cannot use the USBDEVFS_BULK ioctl; they require an URB of
+        // type USBDEVFS_URB_TYPE_INTERRUPT, so reuse the async URB machinery synchronously.
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        uint transferred = SubmitUrbAsync(endpointAddress, buffer, offset, length, effectiveTimeoutMs, CancellationToken.None, USBDEVFS_URB_TYPE_INTERRUPT).GetAwaiter().GetResult();
+        if (transferred == 0)
+        {
+            return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
+        }
+        return new UsbReadResult((int)transferred, isTimeout: false, isShortPacket: transferred < length);
+    }
+
+    public override long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+    {
+        if (_fd.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        ValidateWriteData(data, offset, length);
+        if (length == 0) return 0;
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        uint transferred = SubmitUrbAsync(endpointAddress, data, offset, length, effectiveTimeoutMs, CancellationToken.None, USBDEVFS_URB_TYPE_INTERRUPT).GetAwaiter().GetResult();
+        return transferred;
     }
 
     public override Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
@@ -395,10 +434,15 @@ internal class LinuxUsbDevice : UsbDevice
     /// </summary>
     private async Task<uint> SubmitUrbAsync(byte endpoint, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
     {
+        return await SubmitUrbAsync(endpoint, buffer, offset, length, timeoutMs, cancellationToken, USBDEVFS_URB_TYPE_BULK).ConfigureAwait(false);
+    }
+
+    private async Task<uint> SubmitUrbAsync(byte endpoint, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken, byte urbType)
+    {
         GCHandle bufferHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
         var urb = new usbdevfs_urb
         {
-            type = USBDEVFS_URB_TYPE_BULK,
+            type = urbType,
             endpoint = endpoint,
             flags = 0, // keep short reads completing normally (do not set SHORT_NOT_OK)
             buffer = new IntPtr(bufferHandle.AddrOfPinnedObject().ToInt64() + offset),

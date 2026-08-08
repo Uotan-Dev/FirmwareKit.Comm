@@ -65,6 +65,11 @@ jobs:
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- SELFTEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- selftest --api libusb --vid 0x0403 --pid 0x6001
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api libusb --vid 0x0403 --pid 0x6001
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE EP ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --ep-in 0x81 --ep-out 0x01
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE CONCURRENT ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --concurrent
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE OFFSET ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --offset-write
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- INTERRUPT NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- interrupt-test --api native --vid 0x0627 --pid 0x0001 --ep 0x81
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- INTERRUPT LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- interrupt-test --api libusb --vid 0x0627 --pid 0x0001 --ep 0x81
             - poweroff
           EOF
           cloud-localds seed.img user-data
@@ -84,6 +89,9 @@ jobs:
           # always-plugged=on is required: usb-serial only attaches to the USB
           # bus when its chardev backend is open, and a file chardev opened at
           # startup triggers CHR_EVENT_OPENED so the device appears immediately.
+          # usb-tablet provides a HID interrupt-IN endpoint (0x81, no bulk pipes)
+          # for the interrupt-test; usb-net (RNDIS) adds a multi-interface device
+          # for the enumeration path.
           # sudo is required for /dev/kvm access on hosted runners (falls back to TCG).
           sudo timeout 900 qemu-system-x86_64 \
             -machine accel=kvm:tcg \
@@ -95,6 +103,9 @@ jobs:
             -device piix3-usb-uhci \
             -chardev file,id=usb0,path=usb-write.bin \
             -device usb-serial,chardev=usb0,always-plugged=on \
+            -device usb-tablet \
+            -netdev user,id=usbnet0 \
+            -device usb-net,netdev=usbnet0 \
             -nographic 2>&1 | tee guest.log || true
 
       - name: Assert observations
@@ -105,10 +116,16 @@ jobs:
           skips=$(grep -c "SKIP" guest.log || true)
           writes=$(grep -c "PASS write: 64 bytes pattern transferred" guest.log || true)
           resets=$(grep -c "PASS reset" guest.log || true)
+          endpoint_open=$(grep -c "PASS endpoint-open 0x81/0x01" guest.log || true)
+          concurrent=$(grep -c "PASS concurrent-io" guest.log || true)
+          offset_writes=$(grep -c "via offset overload" guest.log || true)
+          interrupts=$(grep -c "PASS interrupt-read timeout count=0" guest.log || true)
           written_bytes=$(wc -c < usb-write.bin 2>/dev/null || echo 0)
           if [ "${count:-0}" -ne 0 ] || [ "${pass:-0}" -lt 2 ] || [ "${skips:-0}" -ne 0 ] || \
-             [ "${writes:-0}" -lt 2 ] || [ "${resets:-0}" -lt 2 ] || [ "${written_bytes:-0}" -eq 0 ]; then
-            echo "::error::enumeration failures=$count, selftest passes=$pass, SKIPs=$skips, io-test writes=$writes, resets=$resets, host-observed write bytes=$written_bytes"
+             [ "${writes:-0}" -lt 2 ] || [ "${resets:-0}" -lt 2 ] || [ "${endpoint_open:-0}" -lt 1 ] || \
+             [ "${concurrent:-0}" -lt 1 ] || [ "${offset_writes:-0}" -lt 1 ] || [ "${interrupts:-0}" -lt 2 ] || \
+             [ "${written_bytes:-0}" -eq 0 ]; then
+            echo "::error::enumeration failures=$count, selftest passes=$pass, SKIPs=$skips, io-test writes=$writes, resets=$resets, endpoint-open=$endpoint_open, concurrent-io=$concurrent, offset-writes=$offset_writes, interrupt reads=$interrupts, host-observed write bytes=$written_bytes"
             exit 1
           fi
-          echo "::notice::Emulated USB device enumerated; selftest PASSED (GET_DESCRIPTOR) and io-test PASSED (write + reset) on native (usbfs) and libusb backends inside the QEMU Linux guest; $written_bytes write bytes observed on the host side."
+          echo "::notice::Emulated USB devices enumerated; selftest PASSED (GET_DESCRIPTOR) and io-test PASSED (write + reset + endpoint-open + concurrent-io + offset-write) on native (usbfs) and libusb backends; interrupt-test PASSED (timeout on idle HID) inside the QEMU Linux guest; $written_bytes write bytes observed on the host side."

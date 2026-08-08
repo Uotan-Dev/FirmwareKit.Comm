@@ -155,7 +155,21 @@ extract_deb_so() { # deb dest_dir libdir_sub  -> copies libusb-1.0.so.0
   data=$(find "$work" -name 'data.tar.*' | head -1)
   [ -n "$data" ] || { rm -rf "$work"; return 1; }
   mkdir -p "$dest"
-  tar -xf "$data" -C "$dest" 2>/dev/null
+  # Modern Ubuntu/Debian .deb use data.tar.zst; older ones use .xz/.gz.
+  # Pick a zstd-capable path (.zst) or let bsdtar/GNU tar autodetect (.xz/.gz).
+  case "$data" in
+    *.zst)
+      if tar --zstd -xf "$data" -C "$dest" 2>/dev/null; then :;
+      elif command -v bsdtar >/dev/null 2>&1 && bsdtar -xf "$data" -C "$dest" 2>/dev/null; then :;
+      elif command -v unzstd >/dev/null 2>&1; then unzstd -q -c "$data" | tar -xf - -C "$dest";
+      else rm -rf "$work"; return 1; fi
+      ;;
+    *)
+      if tar -xf "$data" -C "$dest" 2>/dev/null; then :;
+      elif command -v bsdtar >/dev/null 2>&1 && bsdtar -xf "$data" -C "$dest" 2>/dev/null; then :;
+      else rm -rf "$work"; return 1; fi
+      ;;
+  esac
   rm -rf "$work"
   # the real .so.0.<ver> plus the .so.0 symlink
   local so
@@ -242,11 +256,16 @@ target_macos() { # arch (x64|arm64)
   if ! curl -fsSL $SSL_NO_REVOKE --max-time 300 -H "Authorization: Bearer $token" -o "$archive" "$url"; then rm -rf "$work"; return 1; fi
   mkdir -p "$work/x"
   tar -xzf "$archive" -C "$work/x" 2>/dev/null || { rm -rf "$work"; return 1; }
-  local dylib
-  dylib=$(find "$work/x" -name 'libusb-1.0.dylib' -type f 2>/dev/null | head -1)
-  if [ -n "$dylib" ]; then
+  # Homebrew bottles ship libusb-1.0.dylib as a symlink to libusb-1.0.0.dylib;
+  # resolve to the real file so the artifact is a usable dylib, not a link.
+  local dylib real
+  dylib=$(find "$work/x" -name 'libusb-1.0.dylib' 2>/dev/null | head -1)
+  [ -n "$dylib" ] || dylib=$(find "$work/x" -name 'libusb-1.0.*.dylib' -type f 2>/dev/null | head -1)
+  real=$(readlink -f "$dylib" 2>/dev/null)
+  [ -n "$real" ] && [ -f "$real" ] || real="$dylib"
+  if [ -n "$real" ] && [ -f "$real" ]; then
     mkdir -p "$out"
-    cp -f "$dylib" "$out/libusb-1.0.dylib"
+    cp -fL "$real" "$out/libusb-1.0.dylib"
     rm -rf "$work"
     info "macos-$arch: Homebrew bottle ($bottle)"
     return 0
@@ -260,12 +279,14 @@ target_linux_deb() { # arch libdir_sub
   local arch="$1"
   local libdir="$2"
   local out="$OUTPUT_DIR/linux-$arch"
-  local pool="pool/main/l/libusb-1.0" base url file work
+  local deb_arch="$arch"
+  [ "$deb_arch" = "x64" ] && deb_arch="amd64"
+  local pool="pool/main/libu/libusb-1.0" base url file work
 
   # 1) discover the version from the pool listing (mirror-aware)
   for base in "$(ubuntu_base)" "$(debian_base)"; do
     file=$(curl -fsSL $SSL_NO_REVOKE --max-time 30 "$base/$pool/" 2>/dev/null \
-      | grep -oE "libusb-1\.0-0_[^\"<]*_${arch}\.deb" | sort -u | tail -1)
+      | grep -oE "libusb-1\.0-0_[^\"<]*_${deb_arch}\.deb" | sort -u | tail -1)
     [ -n "$file" ] && break
   done
 
@@ -273,7 +294,7 @@ target_linux_deb() { # arch libdir_sub
   if [ -z "$file" ]; then
     for ver in "${DEB_CANDIDATE_VERSIONS[@]}"; do
       for base in "$(ubuntu_base)" "$(debian_base)"; do
-        f="libusb-1.0-0_${ver}_${arch}.deb"
+        f="libusb-1.0-0_${ver}_${deb_arch}.deb"
         if curl -fsSI $SSL_NO_REVOKE --max-time 20 "$base/$pool/$f" >/dev/null 2>&1; then file="$f"; break 2; fi
       done
     done

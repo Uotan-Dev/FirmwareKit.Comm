@@ -63,6 +63,18 @@ public sealed class ReadExactExtensionsTests
     }
 
     [Fact]
+    public void ReadExact_InfiniteTimeout_PassesSentinelThrough()
+    {
+        // -1 (InfiniteTimeoutMs) must reach the session verbatim so the backend can
+        // request an unbounded wait instead of substituting the default timeout.
+        var session = new FakeSession { DefaultTimeoutMs = 4321, Pending = new byte[] { 9 } };
+
+        session.ReadExact(1, -1);
+
+        Assert.Equal(-1, session.LastTimeoutMs);
+    }
+
+    [Fact]
     public async Task ReadExactAsync_AccumulatesShortReads()
     {
         var session = new FakeAsyncSession { Pending = new byte[] { 1, 2, 3, 4, 5 }, MaxReadChunk = 2 };
@@ -114,6 +126,8 @@ public sealed class ReadExactExtensionsTests
     {
         public int DefaultTimeoutMs { get; set; } = 1234;
         public UsbDeviceInfo DeviceInfo { get; } = new();
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
 
         public byte[] Pending { get; set; } = Array.Empty<byte>();
         public int MaxReadChunk { get; set; } = int.MaxValue;
@@ -143,12 +157,30 @@ public sealed class ReadExactExtensionsTests
             return n;
         }
 
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+        {
+            int n = ReadInto(buffer, offset, length, timeoutMs);
+            return new UsbReadResult(n, isTimeout: n == 0 && ReadPosition >= Pending.Length && Pending.Length > 0, isShortPacket: n > 0 && n < length);
+        }
+
         public long Write(byte[] data, int length) => length;
 
         public long Write(byte[] data, int length, int timeoutMs) => length;
 
+        public long Write(byte[] data, int offset, int length, int timeoutMs) => length;
+
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset() { }
 
@@ -163,6 +195,8 @@ public sealed class ReadExactExtensionsTests
     {
         public int DefaultTimeoutMs { get; set; } = 1234;
         public UsbDeviceInfo DeviceInfo { get; } = new();
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
 
         public byte[] Pending { get; set; } = Array.Empty<byte>();
         public int MaxReadChunk { get; set; } = int.MaxValue;
@@ -176,12 +210,26 @@ public sealed class ReadExactExtensionsTests
 
         public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => throw new NotSupportedException();
 
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs) => throw new NotSupportedException();
+
         public long Write(byte[] data, int length) => throw new NotSupportedException();
 
         public long Write(byte[] data, int length, int timeoutMs) => throw new NotSupportedException();
 
+        public long Write(byte[] data, int offset, int length, int timeoutMs) => throw new NotSupportedException();
+
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset() { }
 
@@ -200,11 +248,32 @@ public sealed class ReadExactExtensionsTests
             return Task.FromResult(n);
         }
 
+        public Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            int n = ReadIntoAsync(buffer, offset, length, timeoutMs, cancellationToken).GetAwaiter().GetResult();
+            return Task.FromResult(new UsbReadResult(n, isTimeout: false, isShortPacket: n > 0 && n < length));
+        }
+
         public Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => Task.FromResult((long)length);
 
+        public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+            => Task.FromResult((long)length);
+
+        public Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
+
+        public Task SetInterfaceAltSettingAsync(byte interfaceNumber, byte altSetting, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SetConfigurationAsync(byte configuration, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public Task ResetAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

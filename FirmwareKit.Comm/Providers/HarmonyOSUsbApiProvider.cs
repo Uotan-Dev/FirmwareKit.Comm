@@ -64,6 +64,7 @@ internal sealed class HarmonyOSUsbApiProvider : UsbApiProviderBase
             SupportsNativeDiscovery = true,
             SupportsDeviceSessions = true,
             SupportsControlTransfers = true,
+            SupportsInterfaceConfigSwitching = true,
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = false,

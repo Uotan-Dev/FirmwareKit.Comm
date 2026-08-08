@@ -35,6 +35,20 @@ public interface IAsyncUsbDeviceSession
     Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads into a caller-provided buffer asynchronously and reports the transfer outcome.
+    /// <para>异步读取到调用方提供的缓冲区并报告传输结果。</para>
+    /// See <see cref="IUsbDeviceSession.ReadPacket"/> for the short-packet/timeout distinction.
+    /// <para>短包/超时区分参见 <see cref="IUsbDeviceSession.ReadPacket"/>。</para>
+    /// </summary>
+    /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>读取字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
+    Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Writes bytes to the device asynchronously.
     /// <para>异步向设备写入字节数据。</para>
     /// </summary>
@@ -44,6 +58,18 @@ public interface IAsyncUsbDeviceSession
     /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
     /// <returns>A task that resolves to the number of bytes written. <para>返回实际写入字节数的任务。</para></returns>
     Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes bytes to the device asynchronously, starting at the specified offset.
+    /// <para>异步从指定偏移量开始向设备写入字节数据。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>待写入数据。</para></param>
+    /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
+    /// <param name="length">The number of bytes to write. <para>写入字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the number of bytes written. <para>返回实际写入字节数的任务。</para></returns>
+    Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sends or receives a USB control transfer asynchronously.
@@ -57,6 +83,51 @@ public interface IAsyncUsbDeviceSession
     /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
     /// <returns>A task that resolves to the number of bytes transferred. <para>返回实际传输字节数的任务。</para></returns>
     Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets the active alternate setting of an interface asynchronously (SET_INTERFACE).
+    /// <para>异步设置接口的活动备用设置（SET_INTERFACE）。</para>
+    /// </summary>
+    /// <param name="interfaceNumber">The interface number. <para>接口编号。</para></param>
+    /// <param name="altSetting">The alternate setting to activate. <para>要激活的备用设置。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that completes when the setting is applied. <para>设置应用完成的任务。</para></returns>
+    Task SetInterfaceAltSettingAsync(byte interfaceNumber, byte altSetting, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sets the active device configuration asynchronously (SET_CONFIGURATION).
+    /// <para>异步设置设备的活动配置（SET_CONFIGURATION）。</para>
+    /// </summary>
+    /// <param name="configuration">The configuration value to activate. <para>要激活的配置值。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that completes when the configuration is applied. <para>配置应用完成的任务。</para></returns>
+    Task SetConfigurationAsync(byte configuration, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Reads bytes from an interrupt endpoint into a caller-provided buffer asynchronously.
+    /// <para>异步从中断端点将数据读取到调用方提供的缓冲区。</para>
+    /// </summary>
+    /// <param name="endpointAddress">The interrupt IN endpoint address (bit 7 set). <para>中断 IN 端点地址（bit 7 置位）。</para></param>
+    /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
+    /// <param name="length">Maximum number of bytes to read. <para>最多读取的字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
+    Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes bytes to an interrupt endpoint asynchronously.
+    /// <para>异步向中断端点写入字节数据。</para>
+    /// </summary>
+    /// <param name="endpointAddress">The interrupt OUT endpoint address (bit 7 clear). <para>中断 OUT 端点地址（bit 7 清零）。</para></param>
+    /// <param name="data">The data to write. <para>待写入数据。</para></param>
+    /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
+    /// <param name="length">The number of bytes to write. <para>写入字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the number of bytes written. <para>返回实际写入字节数的任务。</para></returns>
+    Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Resets the device transport asynchronously.

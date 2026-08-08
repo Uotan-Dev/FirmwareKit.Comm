@@ -100,6 +100,7 @@ internal static class LinuxUsbAPI
     public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x802C550D;
 
     public const byte USBDEVFS_URB_TYPE_BULK = 2;
+    public const byte USBDEVFS_URB_TYPE_INTERRUPT = 3;
     public const uint USBDEVFS_URB_SHORT_NOT_OK = 0x0002;
 
     public const short POLLIN = 0x001;

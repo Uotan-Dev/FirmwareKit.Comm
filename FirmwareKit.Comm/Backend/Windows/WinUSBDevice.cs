@@ -22,6 +22,9 @@ internal class WinUSBDevice : UsbDevice
     private byte InterfaceNum;
     private byte ReadBulkID, WriteBulkID;
     private byte ReadBulkIndex, WriteBulkIndex;
+
+    public override byte EndpointIn => ReadBulkID;
+    public override byte EndpointOut => WriteBulkID;
     private SafeWinUsbHandle WinUSBHandle = new SafeWinUsbHandle(IntPtr.Zero);
     private SafeFileHandle FileHandle = new SafeFileHandle(new IntPtr(-1), ownsHandle: true);
     private Win32API.USBDeviceDescriptor USBDeviceDescriptor;
@@ -60,6 +63,10 @@ internal class WinUSBDevice : UsbDevice
         VendorId = USBDeviceDescriptor.idVendor;
         ProductId = USBDeviceDescriptor.idProduct;
         Marshal.FreeHGlobal(ptr);
+
+        // Configuration descriptor: a fixed-size struct only captures the 9-byte header,
+        // truncating multi-interface devices. Read the header first to learn wTotalLength,
+        // then read the full descriptor and parse every interface/endpoint from it.
         ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceConfigDescriptor>());
         if (!WinUsb_GetDescriptor(WinUSBHandle.DangerousGetHandle(), USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransferred))
         {
@@ -67,7 +74,26 @@ internal class WinUSBDevice : UsbDevice
             return Fail(Marshal.GetLastWin32Error());
         }
         USBDeviceConfigDescriptor = Marshal.PtrToStructure<USBDeviceConfigDescriptor>(ptr);
+        uint totalConfigLength = USBDeviceConfigDescriptor.wTotalLength;
         Marshal.FreeHGlobal(ptr);
+
+        var parsedInterfaces = new List<UsbInterfaceInfo>();
+        if (totalConfigLength >= Marshal.SizeOf<USBDeviceConfigDescriptor>())
+        {
+            ptr = Marshal.AllocHGlobal((int)totalConfigLength);
+            try
+            {
+                if (WinUsb_GetDescriptor(WinUSBHandle.DangerousGetHandle(), USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, totalConfigLength, out bytesTransferred) && bytesTransferred >= 9)
+                {
+                    parsedInterfaces.AddRange(ParseConfigurationDescriptor(ptr, (int)bytesTransferred));
+                }
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(ptr);
+            }
+        }
+
         if (!WinUsb_QueryInterfaceSettings(WinUSBHandle.DangerousGetHandle(), InterfaceNum, out USBDeviceInterfaceDescriptor))
             return Fail(Marshal.GetLastWin32Error());
 
@@ -169,22 +195,30 @@ internal class WinUSBDevice : UsbDevice
 
     private void SetPipeTimeout(int timeoutMs)
     {
-        if (WinUSBHandle.IsInvalid || timeoutMs <= 0)
+        if (WinUSBHandle.IsInvalid)
+        {
+            return;
+        }
+
+        // WinUSB's PIPE_TRANSFER_TIMEOUT treats 0 as "no timeout"; map the -1 sentinel
+        // accordingly so an unbounded wait is actually requested from the driver.
+        int effective = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : timeoutMs;
+        if (effective < 0)
         {
             return;
         }
 
         // Cache the configured value so per-chunk calls do not hit WinUsb_SetPipePolicy
         // (a kernel transition) when the timeout has not changed.
-        if (_configuredPipeTimeoutMs == timeoutMs)
+        if (_configuredPipeTimeoutMs == effective)
         {
             return;
         }
 
-        uint timeout = (uint)timeoutMs;
+        uint timeout = (uint)effective;
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
-        _configuredPipeTimeoutMs = timeoutMs;
+        _configuredPipeTimeoutMs = effective;
     }
 
     public override void Reset()
@@ -352,6 +386,62 @@ internal class WinUSBDevice : UsbDevice
         return Write(data, length, DefaultTimeoutMs);
     }
 
+    public override UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+    {
+        if (WinUSBHandle.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
+        ValidateBufferRange(buffer, offset, length);
+
+        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            uint bytesRead;
+            if (WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), endpointAddress,
+                new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset), (uint)length, out bytesRead, IntPtr.Zero))
+            {
+                return new UsbReadResult((int)bytesRead, isTimeout: false, isShortPacket: bytesRead < length);
+            }
+
+            int err = Marshal.GetLastWin32Error();
+            return err == ERROR_SEM_TIMEOUT || err == ERROR_TIMEOUT
+                ? new UsbReadResult(0, isTimeout: true, isShortPacket: false)
+                : new UsbReadResult(0, isTimeout: false, isShortPacket: false);
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
+    public override long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+    {
+        if (WinUSBHandle.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        ValidateWriteData(data, offset, length);
+        if (length == 0) return 0;
+
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            uint bytesWritten;
+            if (WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), endpointAddress,
+                new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset), (uint)length, out bytesWritten, IntPtr.Zero))
+            {
+                return bytesWritten;
+            }
+            return 0;
+        }
+        finally
+        {
+            handle.Free();
+        }
+    }
+
     public override Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         if (WinUSBHandle.IsInvalid)
@@ -511,6 +601,65 @@ internal class WinUSBDevice : UsbDevice
     {
         WinUSBHandle.Dispose();
         FileHandle.Dispose();
+    }
+
+    /// <summary>
+    /// Parses a raw USB configuration descriptor buffer into interface/endpoint metadata.
+    /// <para>将原始 USB 配置描述符缓冲区解析为接口/端点元数据。</para>
+    /// Walks the descriptor chain (configuration → interface → endpoint) so multi-interface
+    /// devices report every interface instead of only the WinUSB-bound one.
+    /// <para>遍历描述符链（配置 → 接口 → 端点），使多接口设备报告全部接口，
+    /// 而非仅 WinUSB 绑定的接口。</para>
+    /// </summary>
+    /// <param name="buffer">Pointer to the raw configuration descriptor. <para>原始配置描述符指针。</para></param>
+    /// <param name="length">Total bytes available. <para>可用总字节数。</para></param>
+    /// <returns>The parsed interfaces with their endpoints. <para>解析出的接口及其端点。</para></returns>
+    private static List<UsbInterfaceInfo> ParseConfigurationDescriptor(IntPtr buffer, int length)
+    {
+        var result = new List<UsbInterfaceInfo>();
+        if (buffer == IntPtr.Zero || length < 9) return result;
+
+        int pos = 0;
+        UsbInterfaceInfo? currentInterface = null;
+        while (pos + 2 <= length)
+        {
+            int bLength = Marshal.ReadByte(buffer, pos);
+            int bDescriptorType = Marshal.ReadByte(buffer, pos + 1);
+            if (bLength < 2 || pos + bLength > length) break;
+
+            switch (bDescriptorType)
+            {
+                case 4: // USB_INTERFACE_DESCRIPTOR_TYPE
+                    if (currentInterface != null) result.Add(currentInterface);
+                    currentInterface = new UsbInterfaceInfo
+                    {
+                        InterfaceNumber = Marshal.ReadByte(buffer, pos + 2),
+                        Class = Marshal.ReadByte(buffer, pos + 5),
+                        SubClass = Marshal.ReadByte(buffer, pos + 6),
+                        Protocol = Marshal.ReadByte(buffer, pos + 7),
+                        Endpoints = new List<UsbEndpointInfo>()
+                    };
+                    break;
+
+                case 5: // USB_ENDPOINT_DESCRIPTOR_TYPE
+                    if (currentInterface != null)
+                    {
+                        ((List<UsbEndpointInfo>)currentInterface.Endpoints).Add(new UsbEndpointInfo
+                        {
+                            EndpointAddress = Marshal.ReadByte(buffer, pos + 2),
+                            Attributes = Marshal.ReadByte(buffer, pos + 3),
+                            MaxPacketSize = (ushort)(Marshal.ReadByte(buffer, pos + 4) | (Marshal.ReadByte(buffer, pos + 5) << 8)),
+                            Interval = Marshal.ReadByte(buffer, pos + 6)
+                        });
+                    }
+                    break;
+            }
+
+            pos += bLength;
+        }
+
+        if (currentInterface != null) result.Add(currentInterface);
+        return result;
     }
 
 

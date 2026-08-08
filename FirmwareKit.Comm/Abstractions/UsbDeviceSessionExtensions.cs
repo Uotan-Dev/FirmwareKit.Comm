@@ -51,13 +51,23 @@ public static class UsbDeviceSessionExtensions
         int count = 0;
         while (count < length)
         {
-            long elapsed = stopwatch.ElapsedMilliseconds;
-            if (elapsed >= effectiveTimeout)
+            int remaining;
+            if (effectiveTimeout == UsbTransferPolicies.InfiniteTimeoutMs)
             {
-                break;
+                // Unbounded wait: no deadline check, pass the sentinel straight through.
+                remaining = UsbTransferPolicies.InfiniteTimeoutMs;
+            }
+            else
+            {
+                long elapsed = stopwatch.ElapsedMilliseconds;
+                if (elapsed >= effectiveTimeout)
+                {
+                    break;
+                }
+
+                remaining = effectiveTimeout - (int)elapsed;
             }
 
-            int remaining = effectiveTimeout - (int)elapsed;
             int read = session.ReadInto(buffer, count, length - count, remaining);
             if (read <= 0)
             {
@@ -117,13 +127,23 @@ public static class UsbDeviceSessionExtensions
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            long elapsed = stopwatch.ElapsedMilliseconds;
-            if (elapsed >= effectiveTimeout)
+            int remaining;
+            if (effectiveTimeout == UsbTransferPolicies.InfiniteTimeoutMs)
             {
-                break;
+                // Unbounded wait: no deadline check, pass the sentinel straight through.
+                remaining = UsbTransferPolicies.InfiniteTimeoutMs;
+            }
+            else
+            {
+                long elapsed = stopwatch.ElapsedMilliseconds;
+                if (elapsed >= effectiveTimeout)
+                {
+                    break;
+                }
+
+                remaining = effectiveTimeout - (int)elapsed;
             }
 
-            int remaining = effectiveTimeout - (int)elapsed;
             int read = await session.ReadIntoAsync(buffer, count, length - count, remaining, cancellationToken).ConfigureAwait(false);
             if (read <= 0)
             {

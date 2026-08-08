@@ -66,6 +66,24 @@ public sealed class UsbDeviceFilter
     public byte? InterfaceNumber { get; set; }
 
     /// <summary>
+    /// Gets or sets the required bulk IN endpoint address (bit 7 set), when a protocol
+    /// layer must target a specific endpoint pair instead of the first bulk pair found
+    /// (e.g. Rockchip loader on 0x82/0x02).
+    /// <para>获取或设置要求的批量 IN 端点地址（bit 7 置位），用于协议层必须针对特定端点对
+    /// 而非第一对 bulk 端点（例如 Rockchip loader 使用 0x82/0x02）的场景。</para>
+    /// Backends that can select endpoints prefer an interface containing this endpoint;
+    /// devices without it are filtered out during projection.
+    /// <para>可选择端点的后端优先选择包含该端点的接口；不含该端点的设备会在投影阶段被过滤。</para>
+    /// </summary>
+    public byte? EndpointAddressIn { get; set; }
+
+    /// <summary>
+    /// Gets or sets the required bulk OUT endpoint address (bit 7 clear).
+    /// <para>获取或设置要求的批量 OUT 端点地址（bit 7 清零）。</para>
+    /// </summary>
+    public byte? EndpointAddressOut { get; set; }
+
+    /// <summary>
     /// Determines whether the supplied metadata matches this filter.
     /// <para>判断给定元数据是否匹配当前过滤器。</para>
     /// </summary>
@@ -86,6 +104,16 @@ public sealed class UsbDeviceFilter
         if (InterfaceProtocol.HasValue && info.InterfaceProtocol != InterfaceProtocol.Value) return false;
         if (InterfaceNumber.HasValue &&
             !info.Interfaces.Any(i => i.InterfaceNumber == InterfaceNumber.Value)) return false;
+
+        if (EndpointAddressIn.HasValue || EndpointAddressOut.HasValue)
+        {
+            bool hasIn = EndpointAddressIn is byte eIn &&
+                info.Interfaces.Any(i => i.Endpoints.Any(e => e.EndpointAddress == eIn));
+            bool hasOut = EndpointAddressOut is byte eOut &&
+                info.Interfaces.Any(i => i.Endpoints.Any(e => e.EndpointAddress == eOut));
+            if (EndpointAddressIn.HasValue && !hasIn) return false;
+            if (EndpointAddressOut.HasValue && !hasOut) return false;
+        }
 
         return true;
     }

@@ -492,6 +492,8 @@ public sealed class UsbCommunicationLayerIntegrationTests
     private sealed class TimeoutSession : IUsbDeviceSession, IAsyncUsbDeviceSession
     {
         public int DefaultTimeoutMs => 1234;
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
 
         public int LastReadTimeoutMs { get; private set; }
 
@@ -582,6 +584,36 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return length;
         }
 
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+        {
+            if (offset < 0 || length < 0 || length > buffer.Length - offset)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+
+            LastReadIntoTimeoutMs = timeoutMs;
+            Array.Fill(buffer, (byte)0x5A, offset, length);
+            return new UsbReadResult(length, isTimeout: false, isShortPacket: false);
+        }
+
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            LastAsyncReadIntoTimeoutMs = timeoutMs;
+            return Task.FromResult(new UsbReadResult(length, isTimeout: false, isShortPacket: false));
+        }
+
+        public Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
+        public Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+            => throw new NotSupportedException();
+
         public long Write(byte[] data, int length)
         {
             if (length < 0 || length > data.Length)
@@ -603,11 +635,26 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return length;
         }
 
+        public long Write(byte[] data, int offset, int length, int timeoutMs)
+        {
+            if (offset < 0 || length < 0 || length > data.Length - offset)
+            {
+                throw new ArgumentOutOfRangeException(nameof(length));
+            }
+
+            LastWriteTimeoutMs = timeoutMs;
+            return length;
+        }
+
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
         {
             LastControlTimeoutMs = timeoutMs;
             return length;
         }
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset()
         {
@@ -631,11 +678,23 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return Task.FromResult((long)length);
         }
 
+        public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            LastAsyncWriteTimeoutMs = timeoutMs;
+            return Task.FromResult((long)length);
+        }
+
         public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
             LastControlTimeoutMs = timeoutMs;
             return Task.FromResult(length);
         }
+
+        public Task SetInterfaceAltSettingAsync(byte interfaceNumber, byte altSetting, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
+
+        public Task SetConfigurationAsync(byte configuration, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public Task ResetAsync(CancellationToken cancellationToken = default)
         {

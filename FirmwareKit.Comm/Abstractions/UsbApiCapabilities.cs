@@ -45,6 +45,18 @@ public sealed class UsbApiCapabilities
     public bool SupportsControlTransfers { get; set; }
 
     /// <summary>
+    /// Gets or sets whether the backend can switch USB configurations and interface
+    /// alternate settings (SET_CONFIGURATION / SET_INTERFACE).
+    /// <para>获取或设置后端是否可切换 USB 配置与接口备用设置（SET_CONFIGURATION / SET_INTERFACE）。</para>
+    /// Protocol layers that must select an interface alternate setting (e.g. CDC-ACM
+    /// data interface, RNDIS) or a non-default configuration can check this capability
+    /// before calling <see cref="IUsbDeviceSession.SetInterfaceAltSetting"/>.
+    /// <para>必须选择接口备用设置（如 CDC-ACM 数据接口、RNDIS）或非默认配置的协议层，
+    /// 可在调用 <see cref="IUsbDeviceSession.SetInterfaceAltSetting"/> 前检查该能力。</para>
+    /// </summary>
+    public bool SupportsInterfaceConfigSwitching { get; set; }
+
+    /// <summary>
     /// Gets or sets whether asynchronous I/O is implemented natively by the backend.
     /// <para>获取或设置后端是否原生实现异步 I/O。</para>
     /// </summary>

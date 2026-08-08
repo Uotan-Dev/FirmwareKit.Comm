@@ -105,10 +105,9 @@ public sealed class UsbStream : Stream
         if (count < 0 || count > buffer.Length - offset) throw new ArgumentOutOfRangeException(nameof(count));
         if (count == 0) return;
 
-        // The session Write API has no offset parameter, so slice the caller's buffer.
-        byte[] slice = new byte[count];
-        Buffer.BlockCopy(buffer, offset, slice, 0, count);
-        _ = _session.Write(slice, count, WriteTimeout);
+        // The session's offset-aware Write overload writes straight from the caller's
+        // buffer, avoiding a sub-range copy for chunked transfers (e.g. firmware images).
+        _ = _session.Write(buffer, offset, count, WriteTimeout);
     }
 
     /// <inheritdoc />

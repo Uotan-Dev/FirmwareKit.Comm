@@ -222,6 +222,9 @@ public sealed class FirmwareKitCommFacadeTests
 
     private sealed class FacadeSession : IUsbDeviceSession
     {
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
+
         public FacadeSession(string devicePath, string deviceKey, ushort vendorId = 0x1F3A, ushort productId = 0xEFE8)
         {
             DeviceInfo = new UsbDeviceInfo
@@ -251,11 +254,26 @@ public sealed class FirmwareKitCommFacadeTests
 
         public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => length;
 
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+            => new(length, isTimeout: false, isShortPacket: false);
+
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
         public long Write(byte[] data, int length) => length;
 
         public long Write(byte[] data, int length, int timeoutMs) => length;
 
+        public long Write(byte[] data, int offset, int length, int timeoutMs) => length;
+
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs) => length;
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset()
         {

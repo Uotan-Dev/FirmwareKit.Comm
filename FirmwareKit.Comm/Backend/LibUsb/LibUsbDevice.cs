@@ -29,6 +29,9 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     public byte ReadEndpointId { get; set; }
     public byte WriteEndpointId { get; set; }
 
+    public override byte EndpointIn => ReadEndpointId;
+    public override byte EndpointOut => WriteEndpointId;
+
     public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     private static string BuildDevicePath(LibUsbDotNet.LibUsb.UsbDevice device)
@@ -337,10 +340,19 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     protected override bool IsDisconnectionError(int nativeError)
         => nativeError == (int)Error.NoDevice;
 
+    /// <summary>
+    /// Maps the library timeout sentinel to libusb's convention: libusb treats 0 as
+    /// "never time out", so <see cref="UsbTransferPolicies.InfiniteTimeoutMs"/> (-1) becomes 0.
+    /// <para>将库的超时哨兵映射为 libusb 约定：libusb 将 0 视为"永不超时"，
+    /// 因此 <see cref="UsbTransferPolicies.InfiniteTimeoutMs"/>（-1）转换为 0。</para>
+    /// </summary>
+    private static int ToLibusbTimeout(int timeoutMs)
+        => timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : timeoutMs;
+
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         byte[] chunkBuffer = new byte[length];
-        Error error = reader!.Read(chunkBuffer, 0, length, timeoutMs, out int readLen);
+        Error error = reader!.Read(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs), out int readLen);
         if (error == Error.NoDevice)
         {
             return UsbChunkResult.Fatal((int)error);
@@ -358,7 +370,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         Marshal.Copy(buffer, chunkBuffer, 0, length);
 
         int transferred;
-        Error errorCode = writer!.Write(chunkBuffer, 0, length, timeoutMs, out transferred);
+        Error errorCode = writer!.Write(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs), out transferred);
         if (errorCode == Error.NoDevice)
         {
             return UsbChunkResult.Fatal((int)errorCode);
@@ -377,6 +389,58 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
+    }
+
+    public override UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+    {
+        if (usbDevice == null)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
+        ValidateBufferRange(buffer, offset, length);
+
+        // libusb's bulk transfer API is also valid for interrupt endpoints; open a
+        // temporary reader on the requested endpoint for the single transfer.
+        // (LibUsbDotNet 3.x endpoint objects do not implement IDisposable; they are
+        // reclaimed with the owning UsbDevice, matching the session reader/writer fields.)
+        var interruptReader = usbDevice.OpenEndpointReader((ReadEndpointID)endpointAddress);
+        if (interruptReader == null)
+        {
+            return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
+        }
+        Error error = interruptReader.Read(buffer, offset, length, ToLibusbTimeout(timeoutMs), out int readLen);
+        if (error == Error.NoDevice)
+        {
+            throw new UsbDeviceDisconnectedException("USB interrupt read failed: device disconnected (Error.NoDevice).", (int)error);
+        }
+        if (readLen <= 0)
+        {
+            return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
+        }
+        return new UsbReadResult(readLen, isTimeout: false, isShortPacket: readLen < length);
+    }
+
+    public override long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+    {
+        if (usbDevice == null)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        ValidateWriteData(data, offset, length);
+        if (length == 0) return 0;
+
+        var interruptWriter = usbDevice.OpenEndpointWriter((WriteEndpointID)endpointAddress);
+        if (interruptWriter == null)
+        {
+            return 0;
+        }
+        Error error = interruptWriter.Write(data, offset, length, ToLibusbTimeout(timeoutMs), out int transferred);
+        if (error == Error.NoDevice)
+        {
+            throw new UsbDeviceDisconnectedException("USB interrupt write failed: device disconnected (Error.NoDevice).", (int)error);
+        }
+        return transferred <= 0 ? 0 : transferred;
     }
 
     public override async Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
@@ -435,7 +499,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             cancellationToken.ThrowIfCancellationRequested();
 
             int lenToRead = Math.Min(lenRemaining, maxLenToRead);
-            var (errorCode, read_len) = await reader.ReadAsync(buffer, offset + count, lenToRead, effectiveTimeoutMs).ConfigureAwait(false);
+            var (errorCode, read_len) = await reader.ReadAsync(buffer, offset + count, lenToRead, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
 
             if (errorCode == Error.NoDevice)
             {
@@ -531,7 +595,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
         if (length == 0)
         {
-            var (errorCode, transferred) = await writer.WriteAsync(data, 0, 0, effectiveTimeoutMs).ConfigureAwait(false);
+            var (errorCode, transferred) = await writer.WriteAsync(data, 0, 0, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
             UsbTrace.Log($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
             UsbTrace.EmitTransfer(new UsbTransferEvent
             {
@@ -554,7 +618,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             cancellationToken.ThrowIfCancellationRequested();
 
             int lenToSend = Math.Min(lenRemaining, maxLenToSend);
-            var (errorCode, transferred) = await writer.WriteAsync(data, count, lenToSend, effectiveTimeoutMs).ConfigureAwait(false);
+            var (errorCode, transferred) = await writer.WriteAsync(data, count, lenToSend, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
 
             if (errorCode == Error.NoDevice)
             {

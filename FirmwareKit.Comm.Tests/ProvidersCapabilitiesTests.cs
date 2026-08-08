@@ -29,6 +29,7 @@ public sealed class ProvidersCapabilitiesTests
         Assert.True(caps.SupportsNativeDiscovery);
         Assert.True(caps.SupportsDeviceSessions);
         Assert.True(caps.SupportsControlTransfers);
+        Assert.True(caps.SupportsInterfaceConfigSwitching);
         Assert.False(caps.SupportsNativeAsyncIo);
         Assert.False(caps.SupportsNativeHotPlugMonitoring);
         Assert.False(caps.RequiresExternalRuntime);
@@ -77,6 +78,7 @@ public sealed class ProvidersCapabilitiesTests
         Assert.Equal("libusb", caps.ApiName);
         Assert.True(caps.SupportsNativeDiscovery);
         Assert.True(caps.SupportsNativeAsyncIo);
+        Assert.True(caps.SupportsInterfaceConfigSwitching);
         Assert.False(caps.SupportsNativeHotPlugMonitoring);
         Assert.True(caps.RequiresExternalRuntime);
     }

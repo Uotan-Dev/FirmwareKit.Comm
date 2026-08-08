@@ -48,14 +48,44 @@ public static class UsbDeviceSessionAsyncExtensions
             return UsbAsyncExecution.Run(() => _session.ReadInto(buffer, offset, length, timeoutMs), cancellationToken);
         }
 
+        public Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.ReadPacket(buffer, offset, length, timeoutMs), cancellationToken);
+        }
+
         public Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
             return UsbAsyncExecution.Run(() => _session.Write(data, length, timeoutMs), cancellationToken);
         }
 
+        public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.Write(data, offset, length, timeoutMs), cancellationToken);
+        }
+
         public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {
             return UsbAsyncExecution.Run(() => _session.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs), cancellationToken);
+        }
+
+        public Task SetInterfaceAltSettingAsync(byte interfaceNumber, byte altSetting, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.SetInterfaceAltSetting(interfaceNumber, altSetting), cancellationToken);
+        }
+
+        public Task SetConfigurationAsync(byte configuration, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.SetConfiguration(configuration), cancellationToken);
+        }
+
+        public Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.ReadInterrupt(endpointAddress, buffer, offset, length, timeoutMs), cancellationToken);
+        }
+
+        public Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+        {
+            return UsbAsyncExecution.Run(() => _session.WriteInterrupt(endpointAddress, data, offset, length, timeoutMs), cancellationToken);
         }
 
         public Task ResetAsync(CancellationToken cancellationToken = default)

@@ -62,6 +62,8 @@ public sealed class UsbSessionCollectionTests
     {
         public int DefaultTimeoutMs => 1000;
         public UsbDeviceInfo DeviceInfo { get; } = new();
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
         public bool Disposed { get; private set; }
 
         public byte[] Read(int length) => Array.Empty<byte>();
@@ -72,11 +74,26 @@ public sealed class UsbSessionCollectionTests
 
         public int ReadInto(byte[] buffer, int offset, int length, int timeoutMs) => 0;
 
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+            => new(0, isTimeout: true, isShortPacket: false);
+
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
         public long Write(byte[] data, int length) => 0;
 
         public long Write(byte[] data, int length, int timeoutMs) => 0;
 
+        public long Write(byte[] data, int offset, int length, int timeoutMs) => 0;
+
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs) => 0;
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset() { }
 

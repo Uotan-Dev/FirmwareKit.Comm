@@ -16,8 +16,16 @@ public sealed class TransferSemanticsTests
     public void NormalizeTimeout_ZeroOrNegative_UsesDefault()
     {
         Assert.Equal(5000, UsbTransferPolicies.NormalizeTimeout(0, 5000));
-        Assert.Equal(5000, UsbTransferPolicies.NormalizeTimeout(-1, 5000));
+        Assert.Equal(5000, UsbTransferPolicies.NormalizeTimeout(-2, 5000));
         Assert.Equal(5000, UsbTransferPolicies.NormalizeTimeout(int.MinValue, 5000));
+    }
+
+    [Fact]
+    public void NormalizeTimeout_InfiniteSentinel_Preserved()
+    {
+        // -1 must survive normalization so callers can request an unbounded wait.
+        Assert.Equal(UsbTransferPolicies.InfiniteTimeoutMs, UsbTransferPolicies.NormalizeTimeout(UsbTransferPolicies.InfiniteTimeoutMs, 5000));
+        Assert.Equal(-1, UsbTransferPolicies.NormalizeTimeout(-1, 5000));
     }
 
     [Fact]
@@ -99,6 +107,21 @@ public sealed class TransferSemanticsTests
     }
 
     [Fact]
+    public void UsbStream_Write_DelegatesWithOffsetWithoutSlice()
+    {
+        // The stream must pass the caller's offset through to the session's offset-aware
+        // Write overload instead of slicing the buffer (no per-call copy for chunked writes).
+        var session = new FakeSession();
+        using var stream = session.AsStream();
+
+        stream.Write(new byte[] { 9, 8, 1, 2, 3, 7, 6 }, 2, 3);
+
+        Assert.Equal(2, session.LastWriteOffset);
+        Assert.Equal(new byte[] { 1, 2, 3 }, session.LastWrite);
+        Assert.Equal(session.DefaultTimeoutMs, session.LastWriteTimeoutMs);
+    }
+
+    [Fact]
     public void UsbStream_IsNotSeekable()
     {
         var session = new FakeSession();
@@ -147,13 +170,78 @@ public sealed class TransferSemanticsTests
         Assert.Equal(0, stream.Read(Array.Empty<byte>(), 0, 0));
     }
 
+    // ---- UsbReadResult / ReadPacket ----
+
+    [Fact]
+    public void ReadPacket_FullRead_IsNotTimeoutOrShort()
+    {
+        var session = new FakeSession { ReadBuffer = new byte[] { 1, 2, 3, 4 } };
+        var buffer = new byte[4];
+
+        var result = session.ReadPacket(buffer, 0, 4, 1000);
+
+        Assert.Equal(4, result.Count);
+        Assert.False(result.IsTimeout);
+        Assert.False(result.IsShortPacket);
+    }
+
+    [Fact]
+    public void ReadPacket_ShortRead_SetsShortPacketFlag()
+    {
+        // Device supplies only 3 of the 4 requested bytes -> short packet boundary.
+        var session = new FakeSession { ReadBuffer = new byte[] { 1, 2, 3 } };
+        var buffer = new byte[4];
+
+        var result = session.ReadPacket(buffer, 0, 4, 1000);
+
+        Assert.Equal(3, result.Count);
+        Assert.False(result.IsTimeout);
+        Assert.True(result.IsShortPacket);
+    }
+
+    [Fact]
+    public void ReadPacket_NoData_SetsTimeoutFlag()
+    {
+        var session = new FakeSession { ReadBuffer = null };
+        var buffer = new byte[4];
+
+        var result = session.ReadPacket(buffer, 0, 4, 1000);
+
+        Assert.Equal(0, result.Count);
+        Assert.True(result.IsTimeout);
+        Assert.False(result.IsShortPacket);
+    }
+
+    [Fact]
+    public void ReadPacket_RespectsOffset()
+    {
+        var session = new FakeSession { ReadBuffer = new byte[] { 1, 2, 3, 4 } };
+        var buffer = new byte[8];
+
+        var result = session.ReadPacket(buffer, 3, 2, 1000);
+
+        Assert.Equal(2, result.Count);
+        Assert.Equal(new byte[] { 1, 2 }, buffer.Skip(3).Take(2).ToArray());
+    }
+
+    [Fact]
+    public void UsbReadResult_ToString_ReflectsOutcome()
+    {
+        Assert.Contains("Timeout", new UsbReadResult(0, isTimeout: true, isShortPacket: false).ToString());
+        Assert.Contains("ShortPacket", new UsbReadResult(2, isTimeout: false, isShortPacket: true).ToString());
+        Assert.Contains("Count=4", new UsbReadResult(4, isTimeout: false, isShortPacket: false).ToString());
+    }
+
     private sealed class FakeSession : IUsbDeviceSession
     {
         public int DefaultTimeoutMs { get; set; } = 1234;
         public UsbDeviceInfo DeviceInfo { get; } = new UsbDeviceInfo();
+        public byte EndpointIn => 0x81;
+        public byte EndpointOut => 0x01;
 
         public byte[]? ReadBuffer { get; set; }
         public byte[]? LastWrite { get; private set; }
+        public int LastWriteOffset { get; private set; } = -1;
         public int LastReadTimeoutMs { get; private set; } = -1;
         public int LastWriteTimeoutMs { get; private set; } = -1;
         public bool Disposed { get; private set; }
@@ -180,18 +268,37 @@ public sealed class TransferSemanticsTests
             return n;
         }
 
-        public long Write(byte[] data, int length) => Write(data, length, DefaultTimeoutMs);
+        public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+        {
+            int n = ReadInto(buffer, offset, length, timeoutMs);
+            return new UsbReadResult(n, isTimeout: n == 0, isShortPacket: n > 0 && n < length);
+        }
 
-        public long Write(byte[] data, int length, int timeoutMs)
+        public UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long WriteInterrupt(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs)
+            => throw new NotSupportedException();
+
+        public long Write(byte[] data, int length) => Write(data, 0, length, DefaultTimeoutMs);
+
+        public long Write(byte[] data, int length, int timeoutMs) => Write(data, 0, length, timeoutMs);
+
+        public long Write(byte[] data, int offset, int length, int timeoutMs)
         {
             LastWriteTimeoutMs = timeoutMs;
+            LastWriteOffset = offset;
             LastWrite = new byte[length];
-            Array.Copy(data, LastWrite, length);
+            Array.Copy(data, offset, LastWrite, 0, length);
             return length;
         }
 
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
+
+        public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
+
+        public void SetConfiguration(byte configuration) { }
 
         public void Reset() { }
 

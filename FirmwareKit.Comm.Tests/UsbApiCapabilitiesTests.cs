@@ -17,6 +17,7 @@ public sealed class UsbApiCapabilitiesTests
         Assert.False(caps.SupportsNativeDiscovery);
         Assert.False(caps.SupportsDeviceSessions);
         Assert.False(caps.SupportsControlTransfers);
+        Assert.False(caps.SupportsInterfaceConfigSwitching);
         Assert.False(caps.SupportsNativeAsyncIo);
         Assert.False(caps.SupportsNativeHotPlugMonitoring);
         Assert.False(caps.RequiresExternalRuntime);
@@ -35,6 +36,7 @@ public sealed class UsbApiCapabilitiesTests
             SupportsNativeDiscovery = true,
             SupportsDeviceSessions = true,
             SupportsControlTransfers = true,
+            SupportsInterfaceConfigSwitching = true,
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = true,
             RequiresExternalRuntime = false,
@@ -47,6 +49,7 @@ public sealed class UsbApiCapabilitiesTests
         Assert.True(caps.SupportsNativeDiscovery);
         Assert.True(caps.SupportsDeviceSessions);
         Assert.True(caps.SupportsControlTransfers);
+        Assert.True(caps.SupportsInterfaceConfigSwitching);
         Assert.False(caps.SupportsNativeAsyncIo);
         Assert.True(caps.SupportsNativeHotPlugMonitoring);
         Assert.False(caps.RequiresExternalRuntime);

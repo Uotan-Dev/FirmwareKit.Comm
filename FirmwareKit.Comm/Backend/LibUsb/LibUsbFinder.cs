@@ -98,7 +98,12 @@ internal static class LibUsbFinder
                     byte candidateOut = 0;
                     foreach (var endpoint in ifc.Endpoints)
                     {
-                        if ((endpoint.Attributes & 0x03) != 0x02) continue;
+                        // Collect bulk endpoints first (the session I/O path), then interrupt
+                        // endpoints as fallback candidates so devices with only interrupt pipes
+                        // (e.g. HID) can still be opened when the filter requests explicit
+                        // endpoint addresses (interrupt-test).
+                        int epType = endpoint.Attributes & 0x03;
+                        if (epType != 0x02 && epType != 0x03) continue;
 
                         if ((endpoint.EndpointAddress & 0x80) != 0)
                         {
@@ -114,9 +119,31 @@ internal static class LibUsbFinder
 
                     if (hasIn && hasOut)
                     {
+                        // Honor an explicit endpoint requirement: the interface must contain
+                        // the requested addresses (e.g. Rockchip loader on 0x82/0x02), and the
+                        // requested endpoints win over the first bulk pair when both exist.
+                        bool inOk = filter?.EndpointAddressIn is not byte reqIn ||
+                            ifc.Endpoints.Any(e => (e.EndpointAddress & 0x80) != 0 && e.EndpointAddress == reqIn);
+                        bool outOk = filter?.EndpointAddressOut is not byte reqOut ||
+                            ifc.Endpoints.Any(e => (e.EndpointAddress & 0x80) == 0 && e.EndpointAddress == reqOut);
+                        if (inOk && outOk)
+                        {
+                            interfaceId = (byte)ifc.Number;
+                            inEndpoint = filter?.EndpointAddressIn ?? candidateIn;
+                            outEndpoint = filter?.EndpointAddressOut ?? candidateOut;
+                            interfaceClass = (byte)ifc.Class;
+                            interfaceSubClass = (byte)ifc.SubClass;
+                            interfaceProtocol = (byte)ifc.Protocol;
+                            interfaces = collected;
+                            return true;
+                        }
+                    }
+                    else if (hasIn && filter?.EndpointAddressIn is byte && filter?.EndpointAddressOut == null)
+                    {
+                        // IN-only match: interrupt-test on HID devices that expose no OUT pipe.
                         interfaceId = (byte)ifc.Number;
-                        inEndpoint = candidateIn;
-                        outEndpoint = candidateOut;
+                        inEndpoint = filter.EndpointAddressIn.Value;
+                        outEndpoint = 0;
                         interfaceClass = (byte)ifc.Class;
                         interfaceSubClass = (byte)ifc.SubClass;
                         interfaceProtocol = (byte)ifc.Protocol;

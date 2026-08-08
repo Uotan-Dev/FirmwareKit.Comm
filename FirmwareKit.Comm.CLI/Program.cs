@@ -42,6 +42,10 @@ switch (command)
         ExecuteIoTest(layer, argsList.Skip(1).ToArray());
         break;
 
+    case "interrupt-test":
+        ExecuteInterruptTest(layer, argsList.Skip(1).ToArray());
+        break;
+
     default:
         ShowHelp();
         break;
@@ -500,7 +504,11 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
     UsbApiKind apiKind = UsbApiKind.Auto;
     ushort? vid = null;
     ushort? pid = null;
+    byte? epIn = null;
+    byte? epOut = null;
     int patternSize = 64;
+    bool concurrent = false;
+    bool offsetWrite = false;
 
     for (var i = 0; i < args.Length; i++)
     {
@@ -516,8 +524,20 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
             case "--pid" when i + 1 < args.Length:
                 pid = ParseUShort(args[++i]);
                 continue;
+            case "--ep-in" when i + 1 < args.Length:
+                epIn = ParseByte(args[++i]);
+                continue;
+            case "--ep-out" when i + 1 < args.Length:
+                epOut = ParseByte(args[++i]);
+                continue;
             case "--pattern-size" when i + 1 < args.Length:
                 patternSize = int.Parse(args[++i], CultureInfo.InvariantCulture);
+                continue;
+            case "--concurrent":
+                concurrent = true;
+                continue;
+            case "--offset-write":
+                offsetWrite = true;
                 continue;
             case "-h" or "--help":
                 ShowHelp();
@@ -532,7 +552,7 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
         throw new ArgumentOutOfRangeException(nameof(patternSize), "Pattern size must be positive.");
     }
 
-    var filter = new UsbDeviceFilter { VendorId = vid, ProductId = pid };
+    var filter = new UsbDeviceFilter { VendorId = vid, ProductId = pid, EndpointAddressIn = epIn, EndpointAddressOut = epOut };
     int failures = 0;
 
     // 1) Enumeration - same SKIP contract as selftest.
@@ -557,6 +577,41 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
 
     Console.WriteLine("PASS open session");
 
+    // 2b) Report the endpoints actually bound. When an explicit pair was requested,
+    //     verify the session honored it (QEMU usb-serial exposes 0x81/0x01).
+    Console.WriteLine($"PASS endpoint-open 0x{session.EndpointIn:X2}/0x{session.EndpointOut:X2}");
+    if ((epIn.HasValue && session.EndpointIn != epIn.Value) ||
+        (epOut.HasValue && session.EndpointOut != epOut.Value))
+    {
+        Console.WriteLine($"FAIL endpoint-open: requested 0x{epIn ?? 0:X2}/0x{epOut ?? 0:X2} but session bound 0x{session.EndpointIn:X2}/0x{session.EndpointOut:X2}.");
+        failures++;
+    }
+
+    // 2c) Full-duplex observation (T4): a reader thread must not stall the writer thread.
+    if (concurrent)
+    {
+        try
+        {
+            using var readerCts = new CancellationTokenSource(2000);
+            var readerTask = Task.Run(() =>
+            {
+                var buf = new byte[16];
+                _ = session.ReadPacket(buf, 0, buf.Length, 500);
+            }, readerCts.Token);
+            Thread.Sleep(100);
+            long written = session.Write(new byte[] { 0x01, 0x02, 0x03, 0x04 }, 4, 2000);
+            Console.WriteLine(written == 4 ? "PASS concurrent-io: write completed while read in flight" : $"FAIL concurrent-io: write got {written}.");
+            if (written != 4) failures++;
+            readerCts.Cancel();
+            _ = readerTask.Wait(TimeSpan.FromSeconds(3));
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FAIL concurrent-io: {ex.GetType().Name}: {ex.Message}");
+            failures++;
+        }
+    }
+
     // 3) Write a deterministic pattern. On QEMU's file chardev the bytes land on the
     //    host side, so the workflow can verify the write really reached the device.
     try
@@ -567,14 +622,16 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
             pattern[i] = (byte)(i & 0x3F);
         }
 
-        long written = session.Write(pattern, pattern.Length, 3000);
-        if (written == pattern.Length)
+        long written = offsetWrite
+            ? session.Write(pattern, 8, pattern.Length - 8, 3000) // offset write (T5): start at byte 8
+            : session.Write(pattern, pattern.Length, 3000);
+        if (written == pattern.Length - (offsetWrite ? 8 : 0))
         {
-            Console.WriteLine($"PASS write: {written} bytes pattern transferred");
+            Console.WriteLine($"PASS write: {written} bytes pattern transferred" + (offsetWrite ? " via offset overload" : ""));
         }
         else
         {
-            Console.WriteLine($"FAIL write: expected {pattern.Length} bytes, got {written}.");
+            Console.WriteLine($"FAIL write: expected {pattern.Length - (offsetWrite ? 8 : 0)} bytes, got {written}.");
             failures++;
         }
     }
@@ -613,6 +670,107 @@ static void ExecuteIoTest(UsbCommunicationLayer layer, string[] args)
     Environment.ExitCode = failures == 0 ? 0 : 1;
 }
 
+/// <summary>
+/// Runs a read-only interrupt endpoint smoke test against a device (T7): enumerates,
+/// opens a session and performs one short-timeout interrupt IN read on the requested
+/// endpoint. On emulated HID devices (QEMU usb-tablet) the interrupt endpoint never
+/// delivers data, so a zero-byte timeout result is the expected PASS outcome.
+/// <para>对设备执行只读中断端点冒烟测试（T7）：枚举、打开会话并在请求的端点上执行一次
+/// 短超时中断 IN 读取。对模拟 HID 设备（QEMU usb-tablet），中断端点不会投递数据，
+/// 因此零字节超时结果是预期的 PASS 结果。</para>
+/// Exit code 0 with "SKIP" means no matching device.
+/// <para>输出 "SKIP" 且退出码 0 表示没有匹配设备。</para>
+/// </summary>
+static void ExecuteInterruptTest(UsbCommunicationLayer layer, string[] args)
+{
+    UsbApiKind apiKind = UsbApiKind.Auto;
+    ushort? vid = null;
+    ushort? pid = null;
+    byte endpoint = 0x81;
+    int timeoutMs = 500;
+
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        switch (arg)
+        {
+            case "--api" when i + 1 < args.Length:
+                apiKind = ParseApi(args[++i]);
+                continue;
+            case "--vid" when i + 1 < args.Length:
+                vid = ParseUShort(args[++i]);
+                continue;
+            case "--pid" when i + 1 < args.Length:
+                pid = ParseUShort(args[++i]);
+                continue;
+            case "--ep" when i + 1 < args.Length:
+                endpoint = ParseByte(args[++i]);
+                continue;
+            case "--timeout" when i + 1 < args.Length:
+                timeoutMs = int.Parse(args[++i], CultureInfo.InvariantCulture);
+                continue;
+            case "-h" or "--help":
+                ShowHelp();
+                return;
+            default:
+                throw new ArgumentException($"Unknown argument: {arg}");
+        }
+    }
+
+    // The endpoint address must flow into the filter so IN-only devices (HID with no
+    // OUT pipe) match via the finder's explicit-endpoint path.
+    var filter = new UsbDeviceFilter { VendorId = vid, ProductId = pid, EndpointAddressIn = endpoint, EndpointAddressOut = null };
+    var devices = layer.EnumerateDevices(apiKind, filter);
+    if (devices.Count == 0)
+    {
+        Console.WriteLine("SKIP enumeration: no matching device present (attach hardware and retry).");
+        Environment.ExitCode = 0;
+        return;
+    }
+
+    Console.WriteLine($"PASS enumeration: {devices.Count} device(s)");
+
+    using var session = layer.OpenDeviceSession(apiKind, filter);
+    if (session == null)
+    {
+        Console.WriteLine("FAIL open session: no session could be opened (device busy? permissions?).");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    Console.WriteLine("PASS open session");
+
+    try
+    {
+        var buffer = new byte[8];
+        var result = session.ReadInterrupt(endpoint, buffer, 0, buffer.Length, timeoutMs);
+        if (result.IsTimeout && result.Count == 0)
+        {
+            // Emulated HID / idle device: no data within the deadline is the expected outcome.
+            Console.WriteLine($"PASS interrupt-read timeout count=0 (endpoint 0x{endpoint:X2})");
+        }
+        else if (result.Count > 0)
+        {
+            Console.WriteLine($"PASS interrupt-read {result.Count} bytes (endpoint 0x{endpoint:X2})");
+        }
+        else
+        {
+            Console.WriteLine($"FAIL interrupt-read: unexpected outcome count={result.Count} timeout={result.IsTimeout}.");
+            Environment.ExitCode = 1;
+            return;
+        }
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"FAIL interrupt-read: {ex.GetType().Name}: {ex.Message}");
+        Environment.ExitCode = 1;
+        return;
+    }
+
+    Console.WriteLine("=== interrupt-test result: PASS ===");
+    Environment.ExitCode = 0;
+}
+
 static UsbApiKind ParseApi(string value)
 {
     return value.ToLowerInvariant() switch
@@ -646,9 +804,18 @@ static void ShowHelp()
     Console.WriteLine("    GET_DESCRIPTOR control transfer and a short ReadExact (no writes/reset).");
     Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
     Console.WriteLine();
-    Console.WriteLine("  io-test [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--pattern-size <bytes>]");
+    Console.WriteLine("  io-test [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--ep-in <hex>] [--ep-out <hex>] [--pattern-size <bytes>] [--concurrent] [--offset-write]");
     Console.WriteLine("    Write/reset smoke test for emulated or accepted hardware: enumerate, open a");
     Console.WriteLine("    session, write a deterministic pattern, short read and reset the device.");
+    Console.WriteLine("    --ep-in/--ep-out verify the session bound the requested endpoints;");
+    Console.WriteLine("    --concurrent checks a blocked read does not stall a write (full-duplex);");
+    Console.WriteLine("    --offset-write exercises the offset-aware Write overload.");
+    Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
+    Console.WriteLine();
+    Console.WriteLine("  interrupt-test [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--ep <hex>] [--timeout <ms>]");
+    Console.WriteLine("    Read-only interrupt IN endpoint smoke test: open a session and perform one");
+    Console.WriteLine("    short-timeout interrupt read. On idle/emulated HID devices a zero-byte");
+    Console.WriteLine("    timeout result is the expected PASS outcome.");
     Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
     Console.WriteLine();
     Console.WriteLine("devices filters:");

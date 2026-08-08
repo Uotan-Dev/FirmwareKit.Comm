@@ -30,6 +30,7 @@ internal sealed class LibUsbApiProvider : UsbApiProviderBase
             SupportsNativeDiscovery = true,
             SupportsDeviceSessions = true,
             SupportsControlTransfers = true,
+            SupportsInterfaceConfigSwitching = true,
             SupportsNativeAsyncIo = true,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = true,

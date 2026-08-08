@@ -85,6 +85,28 @@ public sealed class UsbDeviceFilterTests
     }
 
     [Fact]
+    public void Matches_EndpointAddresses_Exact()
+    {
+        // Device exposes 0x81/0x01 on interface 0 (see Device()).
+        var filter = new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x01 };
+        Assert.True(filter.Matches(Device()));
+    }
+
+    [Fact]
+    public void Matches_EndpointAddress_Missing_ReturnsFalse()
+    {
+        Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x82 }.Matches(Device()));
+        Assert.False(new UsbDeviceFilter { EndpointAddressOut = 0x02 }.Matches(Device()));
+        Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x02 }.Matches(Device()));
+    }
+
+    [Fact]
+    public void Matches_EndpointAddresses_IgnoreWhenNotSet()
+    {
+        Assert.True(new UsbDeviceFilter { EndpointAddressIn = null, EndpointAddressOut = null }.Matches(Device()));
+    }
+
+    [Fact]
     public void Matches_AllCriteriaTogether()
     {
         var filter = new UsbDeviceFilter
@@ -94,7 +116,9 @@ public sealed class UsbDeviceFilterTests
             SerialNumber = "FT123",
             DevicePathContains = "/dev/bus",
             SourceApiKind = UsbApiKind.Native,
-            InterfaceNumber = 0
+            InterfaceNumber = 0,
+            EndpointAddressIn = 0x81,
+            EndpointAddressOut = 0x01
         };
         Assert.True(filter.Matches(Device()));
     }
@@ -110,6 +134,18 @@ public sealed class UsbDeviceFilterTests
         InterfaceClass = 0xFF,
         InterfaceSubClass = 0xFF,
         InterfaceProtocol = 0x00,
-        Interfaces = new[] { new UsbInterfaceInfo { InterfaceNumber = 0, Class = 0xFF } }
+        Interfaces = new[]
+        {
+            new UsbInterfaceInfo
+            {
+                InterfaceNumber = 0,
+                Class = 0xFF,
+                Endpoints = new[]
+                {
+                    new UsbEndpointInfo { EndpointAddress = 0x81, Attributes = 0x02 },
+                    new UsbEndpointInfo { EndpointAddress = 0x01, Attributes = 0x02 }
+                }
+            }
+        }
     };
 }
