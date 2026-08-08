@@ -11,8 +11,13 @@ public static class UsbComm
     private static readonly UsbCommunicationLayer DefaultLayer = new();
 
     /// <summary>
-    /// Gets the available API names.
-    /// <para>获取可用 API 名称列表。</para>
+    /// Gets the names of the APIs that are supported on the current platform.
+    /// <para>获取当前平台上受支持的 API 名称列表。</para>
+    /// Only providers whose <see cref="IUsbApiProvider.IsSupportedOnCurrentPlatform"/>
+    /// is <c>true</c> are listed; unavailable providers (e.g. the opt-in HarmonyOS
+    /// DDK backend) stay hidden.
+    /// <para>仅列出 <see cref="IUsbApiProvider.IsSupportedOnCurrentPlatform"/> 为 <c>true</c>
+    /// 的提供器；不可用的提供器（例如需显式开启的 HarmonyOS DDK 后端）不会出现。</para>
     /// </summary>
     /// <returns>A read-only list of names. <para>名称只读列表。</para></returns>
     public static IReadOnlyList<string> GetAvailableApis() => DefaultLayer.GetAvailableApis();

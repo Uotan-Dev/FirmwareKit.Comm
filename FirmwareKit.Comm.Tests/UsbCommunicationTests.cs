@@ -7,14 +7,22 @@ namespace FirmwareKit.Comm.IntegrationTests;
 public sealed class UsbCommunicationLayerIntegrationTests
 {
     [Fact]
-    public void DefaultLayer_ContainsNativeAndLibUsbApis()
+    public void DefaultLayer_GetAvailableApis_FiltersByPlatformSupport()
     {
+        // GetAvailableApis() reports only backends supported on the current platform.
+        // GetAvailableApis() 只报告当前平台受支持的后端。
         var layer = new UsbCommunicationLayer();
         var apis = layer.GetAvailableApis();
 
+        // native is available on every desktop platform (Windows/Linux/macOS).
+        // native 在所有桌面平台（Windows/Linux/macOS）均可用。
         Assert.Contains("native", apis, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains("libusb", apis, StringComparer.OrdinalIgnoreCase);
-        Assert.Contains("harmony", apis, StringComparer.OrdinalIgnoreCase);
+
+        // harmony is opt-in and hidden by default (FIRMWAREKIT_USB_ENABLE_HARMONY=1
+        // required), and no hosted CI runner is a HarmonyOS device.
+        // harmony 为显式开启项，默认隐藏（需 FIRMWAREKIT_USB_ENABLE_HARMONY=1），
+        // 且托管 CI runner 均非 HarmonyOS 设备。
+        Assert.DoesNotContain("harmony", apis, StringComparer.OrdinalIgnoreCase);
     }
 
     [Fact]

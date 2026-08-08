@@ -53,6 +53,10 @@ jobs:
           package_update: true
           packages:
             - libusb-1.0-0
+            # The libusb runtime package ships only the versioned soname
+            # (libusb-1.0.so.0); the library's DllImport("libusb-1.0") probe needs
+            # the unversioned symlink that only the -dev package provides.
+            - libusb-1.0-0-dev
             - git
             - curl
           runcmd:
