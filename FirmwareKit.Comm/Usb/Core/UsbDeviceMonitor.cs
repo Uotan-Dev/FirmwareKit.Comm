@@ -104,36 +104,7 @@ internal sealed class UsbDeviceMonitor : IDisposable
                     return;
                 }
 
-                foreach (var pair in currentSnapshot)
-                {
-                    if (_lastSnapshot.ContainsKey(pair.Key))
-                    {
-                        continue;
-                    }
-
-                    changes ??= new List<UsbDeviceChange>();
-                    changes.Add(new UsbDeviceChange
-                    {
-                        Kind = UsbDeviceChangeKind.Added,
-                        Device = pair.Value
-                    });
-                }
-
-                foreach (var pair in _lastSnapshot)
-                {
-                    if (currentSnapshot.ContainsKey(pair.Key))
-                    {
-                        continue;
-                    }
-
-                    changes ??= new List<UsbDeviceChange>();
-                    changes.Add(new UsbDeviceChange
-                    {
-                        Kind = UsbDeviceChangeKind.Removed,
-                        Device = pair.Value
-                    });
-                }
-
+                changes = ComputeChanges(currentSnapshot, _lastSnapshot);
                 _lastSnapshot = currentSnapshot;
             }
 
@@ -164,7 +135,55 @@ internal sealed class UsbDeviceMonitor : IDisposable
         }
     }
 
-    private static Dictionary<string, UsbDeviceInfo> BuildMap(IReadOnlyList<UsbDeviceInfo> devices)
+    /// <summary>
+    /// Computes Added/Removed changes between two device snapshots.
+    /// <para>计算两个设备快照之间的新增/移除变化。</para>
+    /// Shared by the polling monitor and the libusb native hotplug monitor.
+    /// <para>由轮询监视器与 libusb 原生热插拔监视器共用。</para>
+    /// </summary>
+    /// <param name="current">The new snapshot. <para>新快照。</para></param>
+    /// <param name="last">The previous snapshot. <para>旧快照。</para></param>
+    /// <returns>The list of changes, or <c>null</c> when nothing changed. <para>变化列表；无变化时返回 <c>null</c>。</para></returns>
+    internal static List<UsbDeviceChange>? ComputeChanges(
+        IReadOnlyDictionary<string, UsbDeviceInfo> current,
+        IReadOnlyDictionary<string, UsbDeviceInfo> last)
+    {
+        List<UsbDeviceChange>? changes = null;
+
+        foreach (var pair in current)
+        {
+            if (last.ContainsKey(pair.Key))
+            {
+                continue;
+            }
+
+            changes ??= new List<UsbDeviceChange>();
+            changes.Add(new UsbDeviceChange
+            {
+                Kind = UsbDeviceChangeKind.Added,
+                Device = pair.Value
+            });
+        }
+
+        foreach (var pair in last)
+        {
+            if (current.ContainsKey(pair.Key))
+            {
+                continue;
+            }
+
+            changes ??= new List<UsbDeviceChange>();
+            changes.Add(new UsbDeviceChange
+            {
+                Kind = UsbDeviceChangeKind.Removed,
+                Device = pair.Value
+            });
+        }
+
+        return changes;
+    }
+
+    internal static Dictionary<string, UsbDeviceInfo> BuildMap(IReadOnlyList<UsbDeviceInfo> devices)
     {
         var map = new Dictionary<string, UsbDeviceInfo>(StringComparer.OrdinalIgnoreCase);
         foreach (var device in devices)
@@ -175,7 +194,7 @@ internal sealed class UsbDeviceMonitor : IDisposable
         return map;
     }
 
-    private static string BuildIdentityKey(UsbDeviceInfo device)
+    internal static string BuildIdentityKey(UsbDeviceInfo device)
     {
         if (!string.IsNullOrWhiteSpace(device.DeviceKey))
         {

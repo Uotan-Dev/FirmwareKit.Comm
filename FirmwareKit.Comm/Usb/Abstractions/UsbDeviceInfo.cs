@@ -77,4 +77,16 @@ public sealed class UsbDeviceInfo
     /// <para>获取或设置接口元数据是否由后端真实观测得到，而非由过滤条件推断得到。</para>
     /// </summary>
     public bool InterfaceMetadataObserved { get; set; }
+
+    /// <summary>
+    /// Gets or sets the USB transfer speed reported by the backend, when available.
+    /// <para>获取或设置后端报告的 USB 传输速度（若可用）。</para>
+    /// </summary>
+    public UsbDeviceSpeed Speed { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interfaces (and their endpoints) observed for this device.
+    /// <para>获取或设置观测到的设备接口（及其端点）列表。</para>
+    /// </summary>
+    public IReadOnlyList<UsbInterfaceInfo> Interfaces { get; set; } = Array.Empty<UsbInterfaceInfo>();
 }

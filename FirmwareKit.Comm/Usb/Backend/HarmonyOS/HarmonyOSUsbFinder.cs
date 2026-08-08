@@ -58,6 +58,7 @@ internal static class HarmonyOSUsbFinder
         {
             var configDescriptor = Marshal.PtrToStructure<UsbDdkConfigDescriptor>(configPtr);
             byte numInterfaces = configDescriptor.numIface;
+            var interfaces = new List<UsbInterfaceInfo>();
 
             for (byte ifcIndex = 0; ifcIndex < numInterfaces; ifcIndex++)
             {
@@ -78,11 +79,8 @@ internal static class HarmonyOSUsbFinder
                 byte ifcSubClass = ifaceDesc.bInterfaceSubClass;
                 byte ifcProtocol = ifaceDesc.bInterfaceProtocol;
 
-                if (filter?.InterfaceClass is byte c && ifcClass != c) continue;
-                if (filter?.InterfaceSubClass is byte s && ifcSubClass != s) continue;
-                if (filter?.InterfaceProtocol is byte p && ifcProtocol != p) continue;
-
                 byte numEndpoints = ifaceDesc.bNumEndpoints;
+                var endpoints = new List<UsbEndpointInfo>();
                 byte epIn = 0, epOut = 0;
 
                 IntPtr endpointArrayPtr = ifaceDescStruct.endpoint;
@@ -96,6 +94,13 @@ internal static class HarmonyOSUsbFinder
 
                         byte epAddr = epDesc.bEndpointAddress;
                         byte epAttr = epDesc.bmAttributes;
+                        endpoints.Add(new UsbEndpointInfo
+                        {
+                            EndpointAddress = epAddr,
+                            Attributes = epAttr,
+                            MaxPacketSize = epDesc.wMaxPacketSize,
+                            Interval = epDesc.bInterval
+                        });
 
                         if ((epAttr & 0x03) == 0x02)
                         {
@@ -104,6 +109,19 @@ internal static class HarmonyOSUsbFinder
                         }
                     }
                 }
+
+                interfaces.Add(new UsbInterfaceInfo
+                {
+                    InterfaceNumber = ifaceDesc.bInterfaceNumber,
+                    Class = ifcClass,
+                    SubClass = ifcSubClass,
+                    Protocol = ifcProtocol,
+                    Endpoints = endpoints
+                });
+
+                if (filter?.InterfaceClass is byte c && ifcClass != c) continue;
+                if (filter?.InterfaceSubClass is byte s && ifcSubClass != s) continue;
+                if (filter?.InterfaceProtocol is byte p && ifcProtocol != p) continue;
 
                 if (epIn != 0 && epOut != 0)
                 {
@@ -120,6 +138,7 @@ internal static class HarmonyOSUsbFinder
                         ifcProtocol,
                         devDesc.iSerialNumber == 0 ? null : "UNKNOWN"
                     );
+                    dev.Interfaces = interfaces;
 
                     if (dev.CreateHandle() == 0)
                     {

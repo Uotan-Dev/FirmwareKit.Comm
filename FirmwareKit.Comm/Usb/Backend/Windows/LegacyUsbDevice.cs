@@ -9,6 +9,9 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows;
 internal class LegacyUsbDevice : UsbDevice
 {
     private const int IoTimeoutMs = 30000;
+    private const int ERROR_DEVICE_NOT_CONNECTED = 1167;
+    private const int ERROR_NO_SUCH_DEVICE = 433;
+    private const int ERROR_DEVICE_REMOVED = 1617;
     public override int DefaultTimeoutMs => IoTimeoutMs;
     public static uint IoGetSerialCode => CTL_CODE(FILE_DEVICE_UNKNOWN, 0x801, METHOD_BUFFERED, FILE_READ_ACCESS);
     public static uint IoGetDescriptorCode => CTL_CODE(FILE_DEVICE_UNKNOWN, 0x802, METHOD_BUFFERED, FILE_READ_ACCESS);
@@ -125,33 +128,18 @@ internal class LegacyUsbDevice : UsbDevice
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
-        var readTask = Task.Run(() =>
-        {
-            byte[] buffer = new byte[length];
-            uint read;
-            GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
-            try
-            {
-                if (ReadFile(fileHandle.DangerousGetHandle(), handle.AddrOfPinnedObject(), (uint)length, out read, IntPtr.Zero))
-                {
-                    byte[] result = new byte[read];
-                    Array.Copy(buffer, result, (int)read);
-                    return result;
-                }
-                throw new Win32Exception(Marshal.GetLastWin32Error());
-            }
-            finally
-            {
-                handle.Free();
-            }
-        });
+        // Synchronous ReadFile (no Task.Run): the previous implementation parked a thread-pool
+        // thread on the blocking read and could not cancel it after the wait timed out, leaking
+        // the thread until the driver eventually returned. ReadFile blocks the caller instead;
+        // timeout behaviour is delegated to the legacy driver (ReadChunk ignores timeoutMs).
+        byte[] buffer = new byte[length];
+        int count = ReadInto(buffer, 0, length, IoTimeoutMs);
+        if (count == length) return buffer;
+        if (count == 0) return Array.Empty<byte>();
 
-        if (!readTask.Wait(IoTimeoutMs))
-        {
-            throw new TimeoutException($"Legacy USB read timed out after {IoTimeoutMs} ms.");
-        }
-
-        return readTask.GetAwaiter().GetResult();
+        byte[] result = new byte[count];
+        Buffer.BlockCopy(buffer, 0, result, 0, count);
+        return result;
     }
 
     public override int ReadInto(byte[] buffer, int offset, int length)
@@ -183,9 +171,14 @@ internal class LegacyUsbDevice : UsbDevice
         return UsbChunkResult.Success((int)written);
     }
 
-    protected override Exception CreateReadFatalException(int nativeError) => new Win32Exception(nativeError);
+    protected override bool IsDisconnectionError(int nativeError)
+        => nativeError == ERROR_DEVICE_NOT_CONNECTED || nativeError == ERROR_NO_SUCH_DEVICE || nativeError == ERROR_DEVICE_REMOVED;
 
-    protected override Exception CreateWriteFatalException(int nativeError) => new Win32Exception(nativeError);
+    protected override Exception CreateReadFatalException(int nativeError)
+        => IsDisconnectionError(nativeError) ? base.CreateReadFatalException(nativeError) : new Win32Exception(nativeError);
+
+    protected override Exception CreateWriteFatalException(int nativeError)
+        => IsDisconnectionError(nativeError) ? base.CreateWriteFatalException(nativeError) : new Win32Exception(nativeError);
 
     public override long Write(byte[] data, int length)
     {

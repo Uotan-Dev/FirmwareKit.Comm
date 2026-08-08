@@ -36,7 +36,7 @@ internal static class MacHostUsbFinder
                 if (filter?.VendorId is ushort filterVid && vid != filterVid) continue;
                 if (filter?.ProductId is ushort filterPid && pid != filterPid) continue;
 
-                if (!TryGetBulkEndpoints(device, out byte bulkIn, out byte bulkOut)) continue;
+                if (!TryGetBulkEndpoints(device, out byte bulkIn, out byte bulkOut, out byte ifcClass, out byte ifcSubClass, out byte ifcProtocol, out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
 
                 var dev = new MacHostUsbDevice
                 {
@@ -44,10 +44,11 @@ internal static class MacHostUsbFinder
                     DevicePath = $"IOUSBLib:{registryEntryId}",
                     VendorId = vid,
                     ProductId = pid,
-                    InterfaceClass = filter?.InterfaceClass,
-                    InterfaceSubClass = filter?.InterfaceSubClass,
-                    InterfaceProtocol = filter?.InterfaceProtocol,
-                    InterfaceMetadataObserved = false,
+                    InterfaceClass = ifcClass,
+                    InterfaceSubClass = ifcSubClass,
+                    InterfaceProtocol = ifcProtocol,
+                    InterfaceMetadataObserved = true,
+                    Interfaces = interfaces,
                     bulkIn = bulkIn,
                     bulkOut = bulkOut,
                     UsbDeviceType = UsbDeviceType.MacOS
@@ -72,14 +73,27 @@ internal static class MacHostUsbFinder
     }
 
     /// <summary>
-    /// Walks the device's configuration descriptor and finds the first interface that exposes
-    /// both a bulk-IN and a bulk-OUT endpoint (matching the legacy backend behavior).
-    /// Returns the endpoint numbers (pipe IDs) to use with IOUSBHostInterfaceCopyPipe.
+    /// Walks the device's configuration descriptor, collects every interface and endpoint,
+    /// and finds the first interface that exposes both a bulk-IN and a bulk-OUT endpoint
+    /// (matching the legacy backend behavior). Returns the endpoint numbers (pipe IDs) to use
+    /// with IOUSBHostInterfaceCopyPipe, the REAL class/subclass/protocol of the matched
+    /// interface, and the full interface list for <see cref="UsbDeviceInfo"/>.
     /// </summary>
-    private static bool TryGetBulkEndpoints(IntPtr device, out byte bulkIn, out byte bulkOut)
+    private static bool TryGetBulkEndpoints(
+        IntPtr device,
+        out byte bulkIn,
+        out byte bulkOut,
+        out byte interfaceClass,
+        out byte interfaceSubClass,
+        out byte interfaceProtocol,
+        out IReadOnlyList<UsbInterfaceInfo> interfaces)
     {
         bulkIn = 0;
         bulkOut = 0;
+        interfaceClass = 0;
+        interfaceSubClass = 0;
+        interfaceProtocol = 0;
+        interfaces = Array.Empty<UsbInterfaceInfo>();
 
         IntPtr configPtr = IntPtr.Zero;
         if (IOUSBHostDeviceCopyConfigurationDescriptor(device, out configPtr) != kIOReturnSuccess || configPtr == IntPtr.Zero)
@@ -95,6 +109,10 @@ internal static class MacHostUsbFinder
 
             int offset = config.bLength; // skip configuration descriptor header
             byte curIn = 0, curOut = 0;
+            byte curClass = 0, curSubClass = 0, curProtocol = 0;
+            var collected = new List<UsbInterfaceInfo>();
+            List<UsbEndpointInfo>? currentEndpoints = null;
+            bool found = false;
 
             while (offset + 2 <= totalLength)
             {
@@ -104,13 +122,34 @@ internal static class MacHostUsbFinder
 
                 if (type == USB_DESCRIPTOR_TYPE_INTERFACE && offset + 9 <= totalLength)
                 {
-                    // New interface: reset per-interface bulk endpoint candidates.
+                    // New interface: reset per-interface bulk endpoint candidates and
+                    // record the interface's real descriptor metadata (not the filter).
+                    var ifcDesc = Marshal.PtrToStructure<UsbInterfaceDescriptor>(new IntPtr(configPtr.ToInt64() + offset));
                     curIn = 0;
                     curOut = 0;
+                    curClass = ifcDesc.bInterfaceClass;
+                    curSubClass = ifcDesc.bInterfaceSubClass;
+                    curProtocol = ifcDesc.bInterfaceProtocol;
+                    currentEndpoints = new List<UsbEndpointInfo>();
+                    collected.Add(new UsbInterfaceInfo
+                    {
+                        InterfaceNumber = ifcDesc.bInterfaceNumber,
+                        Class = ifcDesc.bInterfaceClass,
+                        SubClass = ifcDesc.bInterfaceSubClass,
+                        Protocol = ifcDesc.bInterfaceProtocol,
+                        Endpoints = currentEndpoints
+                    });
                 }
                 else if (type == USB_DESCRIPTOR_TYPE_ENDPOINT && offset + 7 <= totalLength)
                 {
                     var ep = Marshal.PtrToStructure<UsbEndpointDescriptor>(new IntPtr(configPtr.ToInt64() + offset));
+                    currentEndpoints?.Add(new UsbEndpointInfo
+                    {
+                        EndpointAddress = ep.bEndpointAddress,
+                        Attributes = ep.bmAttributes,
+                        MaxPacketSize = ep.wMaxPacketSize,
+                        Interval = ep.bInterval
+                    });
                     if ((ep.bmAttributes & 0x03) == 0x02) // bulk transfer type
                     {
                         bool isIn = (ep.bEndpointAddress & 0x80) != 0;
@@ -122,20 +161,24 @@ internal static class MacHostUsbFinder
 
                 offset += len;
 
-                if (curIn != 0 && curOut != 0)
+                if (!found && curIn != 0 && curOut != 0)
                 {
                     bulkIn = curIn;
                     bulkOut = curOut;
-                    return true;
+                    interfaceClass = curClass;
+                    interfaceSubClass = curSubClass;
+                    interfaceProtocol = curProtocol;
+                    found = true;
                 }
             }
 
-            return false;
+            interfaces = collected;
+            return found;
         }
         finally
         {
             // IOUSBLib descriptor memory is owned by the caller; free() it.
-            Marshal.FreeHGlobal(configPtr);
+            MacHostUsbAPI.Free(configPtr);
         }
     }
 }

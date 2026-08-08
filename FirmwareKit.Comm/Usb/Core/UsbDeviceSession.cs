@@ -91,6 +91,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
             UsbDevice.ValidateBufferRange(buffer, offset, length);
         }
 
+        if (length > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), "USB control transfers are limited to 65535 bytes (16-bit wLength).");
+        }
+
         return _device.ControlTransfer(setupPacket, buffer, offset, length, timeoutMs);
     }
 
@@ -116,6 +121,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         else
         {
             UsbDevice.ValidateBufferRange(buffer, offset, length);
+        }
+
+        if (length > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), "USB control transfers are limited to 65535 bytes (16-bit wLength).");
         }
 
         return _device.ControlTransferAsync(setupPacket, buffer, offset, length, timeoutMs, cancellationToken);

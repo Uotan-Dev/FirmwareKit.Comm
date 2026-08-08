@@ -71,7 +71,13 @@ public enum UsbTransferOutcome
     /// Transfer was canceled.
     /// <para>传输被取消。</para>
     /// </summary>
-    Canceled = 5
+    Canceled = 5,
+
+    /// <summary>
+    /// Transfer stopped with a non-fatal native error (partial data may be available).
+    /// <para>传输因非致命原生错误停止（可能已传输部分数据）。</para>
+    /// </summary>
+    Error = 6
 }
 
 /// <summary>

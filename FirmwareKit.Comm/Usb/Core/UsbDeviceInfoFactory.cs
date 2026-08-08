@@ -31,7 +31,9 @@ internal static class UsbDeviceInfoFactory
             InterfaceClass = device.InterfaceClass,
             InterfaceSubClass = device.InterfaceSubClass,
             InterfaceProtocol = device.InterfaceProtocol,
-            InterfaceMetadataObserved = device.InterfaceMetadataObserved
+            InterfaceMetadataObserved = device.InterfaceMetadataObserved,
+            Speed = device.Speed,
+            Interfaces = device.Interfaces
         };
 
         info.DeviceKey = UsbDeviceIdentity.BuildKey(info);

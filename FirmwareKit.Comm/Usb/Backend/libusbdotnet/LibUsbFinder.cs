@@ -1,5 +1,6 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using LibUsbDotNet;
 using LibUsbDotNet.LibUsb;
 using System.Runtime.InteropServices;
 
@@ -45,7 +46,8 @@ internal static class LibUsbFinder
         out byte outEndpoint,
         out byte interfaceClass,
         out byte interfaceSubClass,
-        out byte interfaceProtocol)
+        out byte interfaceProtocol,
+        out IReadOnlyList<UsbInterfaceInfo> interfaces)
     {
         interfaceId = 0;
         inEndpoint = 0;
@@ -53,13 +55,35 @@ internal static class LibUsbFinder
         interfaceClass = 0;
         interfaceSubClass = 0;
         interfaceProtocol = 0;
+        interfaces = Array.Empty<UsbInterfaceInfo>();
 
         try
         {
+            var collected = new List<UsbInterfaceInfo>();
             foreach (var config in device.Configs)
             {
                 foreach (var ifc in config.Interfaces)
                 {
+                    var endpoints = new List<UsbEndpointInfo>();
+                    foreach (var endpoint in ifc.Endpoints)
+                    {
+                        endpoints.Add(new UsbEndpointInfo
+                        {
+                            EndpointAddress = (byte)endpoint.EndpointAddress,
+                            Attributes = (byte)endpoint.Attributes,
+                            MaxPacketSize = (ushort)endpoint.MaxPacketSize,
+                            Interval = (byte)endpoint.Interval
+                        });
+                    }
+                    collected.Add(new UsbInterfaceInfo
+                    {
+                        InterfaceNumber = (byte)ifc.Number,
+                        Class = (byte)ifc.Class,
+                        SubClass = (byte)ifc.SubClass,
+                        Protocol = (byte)ifc.Protocol,
+                        Endpoints = endpoints
+                    });
+
                     if (filter?.InterfaceClass is byte c && (byte)ifc.Class != c) continue;
                     if (filter?.InterfaceSubClass is byte s && (byte)ifc.SubClass != s) continue;
                     if (filter?.InterfaceProtocol is byte p && (byte)ifc.Protocol != p) continue;
@@ -92,6 +116,7 @@ internal static class LibUsbFinder
                         interfaceClass = (byte)ifc.Class;
                         interfaceSubClass = (byte)ifc.SubClass;
                         interfaceProtocol = (byte)ifc.Protocol;
+                        interfaces = collected;
                         return true;
                     }
                 }
@@ -134,7 +159,8 @@ internal static class LibUsbFinder
                     out byte writeEndpoint,
                     out byte interfaceClass,
                     out byte interfaceSubClass,
-                    out byte interfaceProtocol)) continue;
+                    out byte interfaceProtocol,
+                    out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
 
                 byte busNumber = libUsbDevice?.BusNumber ?? 0;
                 byte address = libUsbDevice?.Address ?? 0;
@@ -152,6 +178,8 @@ internal static class LibUsbFinder
                     InterfaceSubClass = interfaceSubClass,
                     InterfaceProtocol = interfaceProtocol,
                     InterfaceMetadataObserved = true,
+                    Interfaces = interfaces,
+                    Speed = MapSpeed(libUsbDevice?.Speed ?? Speed.Unknown),
                     DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
                     UsbDeviceType = global::FirmwareKit.Comm.Usb.Backend.UsbDeviceType.LibUSB
                 };
@@ -169,10 +197,27 @@ internal static class LibUsbFinder
         return devices;
     }
 
+    /// <summary>
+    /// Maps LibUsbDotNet's <see cref="Speed"/> to the library's <see cref="UsbDeviceSpeed"/>.
+    /// <para>将 LibUsbDotNet 的 <see cref="Speed"/> 映射到本库的 <see cref="UsbDeviceSpeed"/>。</para>
+    /// LibUsbDotNet does not distinguish Super vs SuperPlus, so both report as Super.
+    /// <para>LibUsbDotNet 不区分 Super 与 SuperPlus，两者都报告为 Super。</para>
+    /// </summary>
+    private static UsbDeviceSpeed MapSpeed(Speed speed)
+    {
+        return speed switch
+        {
+            Speed.Low => UsbDeviceSpeed.Low,
+            Speed.Full => UsbDeviceSpeed.Full,
+            Speed.High => UsbDeviceSpeed.High,
+            Speed.Super => UsbDeviceSpeed.Super,
+            _ => UsbDeviceSpeed.Unknown
+        };
+    }
+
     public static bool IsRuntimeAvailable(out string? reason)
     {
         reason = null;
-
         if (!IsNativeRuntimePresent())
         {
             reason = "native libusb runtime not found";

@@ -1,5 +1,6 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Usb.Backend.Linux.LinuxUsbAPI;
 
@@ -7,9 +8,40 @@ namespace FirmwareKit.Comm.Usb.Backend.Linux;
 
 internal static class LinuxUsbFinder
 {
+    private static int _permissionDeniedCount;
+
+    /// <summary>
+    /// Gets the number of /dev/bus/usb devices skipped because the process lacked
+    /// permission (EACCES) during the last enumeration. Lets upper layers distinguish
+    /// "no device present" from "no permission" (e.g. missing udev rules).
+    /// <para>获取上次枚举中因权限不足（EACCES）而跳过的设备数。让上层区分
+    /// "没有设备"与"没有权限"（例如缺少 udev 规则）。</para>
+    /// </summary>
+    public static int PermissionDeniedCount => Volatile.Read(ref _permissionDeniedCount);
+
+    /// <summary>
+    /// Gets whether any /dev/bus/usb device was skipped due to missing permissions.
+    /// <para>获取是否有设备因权限不足被跳过。</para>
+    /// </summary>
+    public static bool HasPermissionIssues => PermissionDeniedCount > 0;
+
+    /// <summary>
+    /// Records a permission-denied open attempt and logs a udev hint. Used by the finder
+    /// and by <see cref="LinuxUsbDevice.CreateHandle"/>.
+    /// <para>记录一次权限不足的打开尝试并记录 udev 提示。由查找器与
+    /// <see cref="LinuxUsbDevice.CreateHandle"/> 使用。</para>
+    /// </summary>
+    /// <param name="path">The device node path. <para>设备节点路径。</para></param>
+    internal static void ReportPermissionDenied(string path)
+    {
+        Interlocked.Increment(ref _permissionDeniedCount);
+        UsbTrace.Log($"LinuxUsbFinder: permission denied opening '{path}' (EACCES) - ensure udev rules grant access to the current user/group.");
+    }
+
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
+        Volatile.Write(ref _permissionDeniedCount, 0);
         const string base_path = "/dev/bus/usb";
         if (!Directory.Exists(base_path)) return devices;
 
@@ -20,8 +52,21 @@ internal static class LinuxUsbFinder
                 int fd = open(dev_path, O_RDWR | O_CLOEXEC);
                 if (fd < 0)
                 {
+                    int openErr = Marshal.GetLastWin32Error();
+                    if (openErr == EACCES)
+                    {
+                        ReportPermissionDenied(dev_path);
+                    }
                     fd = open(dev_path, 0 | O_CLOEXEC);
-                    if (fd < 0) continue;
+                    if (fd < 0)
+                    {
+                        int openErr2 = Marshal.GetLastWin32Error();
+                        if (openErr2 == EACCES)
+                        {
+                            ReportPermissionDenied(dev_path);
+                        }
+                        continue;
+                    }
                 }
 
                 byte[] desc = new byte[1024];
@@ -35,6 +80,7 @@ internal static class LinuxUsbFinder
                     ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
                     ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
                     byte iSerialNumber = desc[16];
+                    ushort bcdUsb = (ushort)(desc[2] | (desc[3] << 8));
 
                     if (filter?.VendorId is ushort filterVid && idVendor != filterVid)
                     {
@@ -46,85 +92,118 @@ internal static class LinuxUsbFinder
                         continue;
                     }
 
+                    // Walk the configuration descriptor once, collecting every interface and
+                    // its endpoints (bulk, interrupt, control, isochronous) for the device info.
+                    var interfaces = new List<UsbInterfaceInfo>();
+                    byte epIn = 0, epOut = 0;
+                    byte matchedIfcClass = 0, matchedIfcSubClass = 0, matchedIfcProtocol = 0, matchedIfcId = 0;
+                    bool matched = false;
+
                     int pos = desc[0];
-                    while (pos < n - 1)
+                    while (pos < n - 1 && !matched)
                     {
                         int len = desc[pos];
                         if (len < 2 || pos + len > n) break;
                         byte type = desc[pos + 1];
 
-                        if (type == 0x04)
+                        if (type == 0x04 && len >= 9)
                         {
-                            if (len < 9) { pos += len; continue; }
                             byte ifcClass = desc[pos + 5];
                             byte ifcSubClass = desc[pos + 6];
                             byte ifcProtocol = desc[pos + 7];
                             byte ifcId = desc[pos + 2];
+                            byte numEpts = desc[pos + 4];
+
+                            var iface = new UsbInterfaceInfo
+                            {
+                                InterfaceNumber = ifcId,
+                                Class = ifcClass,
+                                SubClass = ifcSubClass,
+                                Protocol = ifcProtocol
+                            };
+                            var endpoints = new List<UsbEndpointInfo>();
+
+                            int ept_pos = pos + len;
+                            int checked_epts = 0;
+                            while (ept_pos < n - 1 && checked_epts < numEpts)
+                            {
+                                int ept_len = desc[ept_pos];
+                                if (ept_len < 2 || ept_pos + ept_len > n) break;
+                                byte ept_type = desc[ept_pos + 1];
+
+                                if (ept_type == 0x05 && ept_len >= 7)
+                                {
+                                    byte addr = desc[ept_pos + 2];
+                                    byte attr = desc[ept_pos + 3];
+                                    ushort maxPacket = (ushort)(desc[ept_pos + 4] | (desc[ept_pos + 5] << 8));
+                                    endpoints.Add(new UsbEndpointInfo
+                                    {
+                                        EndpointAddress = addr,
+                                        Attributes = attr,
+                                        MaxPacketSize = maxPacket,
+                                        Interval = desc[ept_pos + 6]
+                                    });
+                                    checked_epts++;
+                                }
+                                ept_pos += ept_len;
+                            }
+                            iface.Endpoints = endpoints;
+                            interfaces.Add(iface);
 
                             if (InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter))
                             {
-                                byte numEpts = desc[pos + 4];
-                                byte epIn = 0, epOut = 0;
-                                int ept_pos = pos + len;
-                                int checked_epts = 0;
-
-                                while (ept_pos < n - 1 && checked_epts < numEpts)
+                                foreach (var ep in endpoints)
                                 {
-                                    int ept_len = desc[ept_pos];
-                                    if (ept_len < 2 || ept_pos + ept_len > n) break;
-                                    byte ept_type = desc[ept_pos + 1];
-
-                                    if (ept_type == 0x05)
+                                    if ((ep.Attributes & 0x03) == 0x02)
                                     {
-                                        if (ept_len >= 7)
-                                        {
-                                            byte addr = desc[ept_pos + 2];
-                                            byte attr = desc[ept_pos + 3];
-                                            if ((attr & 0x03) == 0x02)
-                                            {
-                                                if ((addr & 0x80) != 0) epIn = addr;
-                                                else epOut = addr;
-                                            }
-                                        }
-                                        checked_epts++;
+                                        if ((ep.EndpointAddress & 0x80) != 0) epIn = epIn == 0 ? ep.EndpointAddress : epIn;
+                                        else epOut = epOut == 0 ? ep.EndpointAddress : epOut;
                                     }
-                                    ept_pos += ept_len;
                                 }
 
                                 if (epIn != 0 && epOut != 0)
                                 {
-                                    var dev = new LinuxUsbDevice
-                                    {
-                                        DevicePath = dev_path,
-                                        VendorId = idVendor,
-                                        ProductId = idProduct,
-                                        InterfaceClass = ifcClass,
-                                        InterfaceSubClass = ifcSubClass,
-                                        InterfaceProtocol = ifcProtocol,
-                                        InterfaceMetadataObserved = true,
-                                        ep_in = epIn,
-                                        ep_out = epOut,
-                                        InterfaceId = ifcId,
-                                        iSerialNumber = iSerialNumber,
-                                        UsbDeviceType = UsbDeviceType.Linux,
-                                        SerialNumber = iSerialNumber == 0 ? null : "UNKNOWN"
-                                    };
-
-                                    // Keep platform backends consistent: only return devices that are ready for I/O.
-                                    if (dev.CreateHandle() == 0)
-                                    {
-                                        devices.Add(dev);
-                                    }
-                                    else
-                                    {
-                                        dev.Dispose();
-                                    }
-
-                                    break;
+                                    matchedIfcClass = ifcClass;
+                                    matchedIfcSubClass = ifcSubClass;
+                                    matchedIfcProtocol = ifcProtocol;
+                                    matchedIfcId = ifcId;
+                                    matched = true;
                                 }
                             }
                         }
                         pos += len;
+                    }
+
+                    if (matched)
+                    {
+                        var dev = new LinuxUsbDevice
+                        {
+                            DevicePath = dev_path,
+                            VendorId = idVendor,
+                            ProductId = idProduct,
+                            InterfaceClass = matchedIfcClass,
+                            InterfaceSubClass = matchedIfcSubClass,
+                            InterfaceProtocol = matchedIfcProtocol,
+                            InterfaceMetadataObserved = true,
+                            Speed = ResolveSpeed(dev_path, bcdUsb),
+                            Interfaces = interfaces,
+                            ep_in = epIn,
+                            ep_out = epOut,
+                            InterfaceId = matchedIfcId,
+                            iSerialNumber = iSerialNumber,
+                            UsbDeviceType = UsbDeviceType.Linux,
+                            SerialNumber = iSerialNumber == 0 ? null : "UNKNOWN"
+                        };
+
+                        // Keep platform backends consistent: only return devices that are ready for I/O.
+                        if (dev.CreateHandle() == 0)
+                        {
+                            devices.Add(dev);
+                        }
+                        else
+                        {
+                            dev.Dispose();
+                        }
                     }
                 }
                 catch (Exception ex)
@@ -148,6 +227,52 @@ internal static class LinuxUsbFinder
         if (filter?.InterfaceSubClass is byte s && interfaceSubClass != s) return false;
         if (filter?.InterfaceProtocol is byte p && interfaceProtocol != p) return false;
         return true;
+    }
+
+    /// <summary>
+    /// Approximates the USB speed from the device descriptor's bcdUSB version.
+    /// <para>根据设备描述符的 bcdUSB 版本近似推断 USB 速度。</para>
+    /// This reflects the device's declared USB spec version rather than the negotiated
+    /// link speed; good enough for discovery hints (e.g. EDL USB3 vs USB2 paths).
+    /// <para>反映设备声明的 USB 规范版本而非协商链路速度；作为发现提示足够
+    /// （例如 EDL 区分 USB3/USB2 路径）。</para>
+    /// </summary>
+    private static UsbDeviceSpeed InferSpeed(ushort bcdUsb)
+    {
+        if (bcdUsb >= 0x0301) return UsbDeviceSpeed.SuperPlus;
+        if (bcdUsb >= 0x0300) return UsbDeviceSpeed.Super;
+        if (bcdUsb >= 0x0200) return UsbDeviceSpeed.High;
+        return UsbDeviceSpeed.Full;
+    }
+
+    /// <summary>
+    /// Resolves the negotiated link speed: prefer the sysfs <c>speed</c> file
+    /// (<c>/sys/bus/usb/devices/usb{DDD}/speed</c>), falling back to bcdUSB inference.
+    /// <para>解析协商链路速度：优先读取 sysfs 的 <c>speed</c> 文件
+    /// （<c>/sys/bus/usb/devices/usb{DDD}/speed</c>），失败时回退到 bcdUSB 推断。</para>
+    /// </summary>
+    private static UsbDeviceSpeed ResolveSpeed(string devPath, ushort bcdUsb)
+    {
+        // /dev/bus/usb/BBB/DDD -> /sys/bus/usb/devices/usbDDD/speed
+        try
+        {
+            string sysfsSpeed = Path.Combine("/sys/bus/usb/devices", "usb" + Path.GetFileName(devPath), "speed");
+            if (File.Exists(sysfsSpeed) &&
+                double.TryParse(File.ReadAllText(sysfsSpeed).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out double mbps))
+            {
+                if (mbps <= 2) return UsbDeviceSpeed.Low;
+                if (mbps <= 12) return UsbDeviceSpeed.Full;
+                if (mbps <= 480) return UsbDeviceSpeed.High;
+                if (mbps <= 5000) return UsbDeviceSpeed.Super;
+                return UsbDeviceSpeed.SuperPlus;
+            }
+        }
+        catch
+        {
+            // sysfs unreadable (permissions, non-Linux); fall back to bcdUSB inference.
+        }
+
+        return InferSpeed(bcdUsb);
     }
 
 

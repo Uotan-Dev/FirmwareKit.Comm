@@ -68,6 +68,26 @@ internal class MacHostUsbDevice : UsbDevice
 
         if (devicePtr == IntPtr.Zero) return -1;
 
+        // Align with the libusb/SharpFastboot backends: ensure Configuration 1 is
+        // selected before opening interfaces. Some devices power up with another
+        // configuration, leaving the target interface unavailable. Failures are
+        // ignored because a device may legitimately have a single, differently
+        // numbered configuration (libusb backend ignores SetConfiguration too).
+        // Must happen before the interface iterator is created - switching the
+        // configuration resets every interface.
+        try
+        {
+            byte[] cfgBuf = new byte[1];
+            if (ControlTransferRaw(0x80, 0x08, 0x0000, 0x0000, cfgBuf, 1, 1000) > 0 && cfgBuf[0] != 1)
+            {
+                _ = ControlTransferRaw(0x00, 0x09, 0x0001, 0x0000, Array.Empty<byte>(), 0, 1000);
+            }
+        }
+        catch
+        {
+            // Configuration probing/selection is best-effort; continue regardless.
+        }
+
         IOUSBFindInterfaceRequest findRequest = new IOUSBFindInterfaceRequest
         {
             bInterfaceClass = kIOUSBFindInterfaceDontCare,
@@ -317,6 +337,9 @@ internal class MacHostUsbDevice : UsbDevice
     protected override string BackendName => "macos-iousbhost";
 
     protected override bool IsOpen => interfacePtr != IntPtr.Zero && pipeIn != IntPtr.Zero && pipeOut != IntPtr.Zero;
+
+    protected override bool IsDisconnectionError(int nativeError)
+        => nativeError == kIOReturnNoDevice || nativeError == kIOReturnNotResponding || nativeError == kIOReturnAborted;
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {

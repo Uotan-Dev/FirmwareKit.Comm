@@ -66,6 +66,18 @@ internal abstract class UsbDevice : IDisposable
     public bool InterfaceMetadataObserved { get; set; }
 
     /// <summary>
+    /// Gets or sets the USB transfer speed reported by the backend, when available.
+    /// <para>获取或设置后端报告的 USB 传输速度（若可用）。</para>
+    /// </summary>
+    public UsbDeviceSpeed Speed { get; set; }
+
+    /// <summary>
+    /// Gets or sets the interfaces (and their endpoints) observed for this device.
+    /// <para>获取或设置观测到的设备接口（及其端点）列表。</para>
+    /// </summary>
+    public IReadOnlyList<UsbInterfaceInfo> Interfaces { get; set; } = Array.Empty<UsbInterfaceInfo>();
+
+    /// <summary>
     /// Gets or sets the platform-specific USB device type.
     /// <para>获取或设置平台特定的 USB 设备类型。</para>
     /// </summary>
@@ -114,14 +126,40 @@ internal abstract class UsbDevice : IDisposable
     /// <para>创建在读取遇到致命原生错误时抛出的异常。</para>
     /// </summary>
     protected virtual Exception CreateReadFatalException(int nativeError)
-        => new IOException($"USB read failed with fatal error: 0x{nativeError:X}");
+    {
+        if (IsDisconnectionError(nativeError))
+        {
+            return new UsbDeviceDisconnectedException($"USB device disconnected during read (native error: 0x{nativeError:X}).", nativeError);
+        }
+        return new IOException($"USB read failed with fatal error: 0x{nativeError:X}");
+    }
 
     /// <summary>
     /// Creates the exception thrown when a write fails with a fatal native error.
     /// <para>创建在写入遇到致命原生错误时抛出的异常。</para>
     /// </summary>
     protected virtual Exception CreateWriteFatalException(int nativeError)
-        => new IOException($"USB write failed with fatal error: 0x{nativeError:X}");
+    {
+        if (IsDisconnectionError(nativeError))
+        {
+            return new UsbDeviceDisconnectedException($"USB device disconnected during write (native error: 0x{nativeError:X}).", nativeError);
+        }
+        return new IOException($"USB write failed with fatal error: 0x{nativeError:X}");
+    }
+
+    /// <summary>
+    /// Determines whether a native error code indicates the device was unplugged/disconnected.
+    /// <para>判断给定原生错误码是否表示设备已拔出/断开。</para>
+    /// Backends override this with their platform-specific disconnection codes so the shared
+    /// read/write loops throw <see cref="UsbDeviceDisconnectedException"/> instead of a generic
+    /// <see cref="IOException"/>, letting upper-layer protocols trigger re-enumeration.
+    /// <para>后端以各自平台的断开错误码覆盖此方法，使共享读写循环抛出
+    /// <see cref="UsbDeviceDisconnectedException"/> 而非通用 <see cref="IOException"/>，
+    /// 便于上层协议触发重新枚举。</para>
+    /// </summary>
+    /// <param name="nativeError">The native error code. <para>原生错误码。</para></param>
+    /// <returns><c>true</c> when the code indicates a disconnection. <para>该错误码表示断开时返回 <c>true</c>。</para></returns>
+    protected virtual bool IsDisconnectionError(int nativeError) => false;
 
     /// <summary>
     /// Describes the outcome of a single chunk transfer.
@@ -350,6 +388,7 @@ internal abstract class UsbDevice : IDisposable
                 if (chunk.Status == UsbChunkStatus.Error)
                 {
                     lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Error;
                     break;
                 }
 
@@ -471,6 +510,7 @@ internal abstract class UsbDevice : IDisposable
                 if (chunk.Status == UsbChunkStatus.Error)
                 {
                     lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Error;
                     break;
                 }
 

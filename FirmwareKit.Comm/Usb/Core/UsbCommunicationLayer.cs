@@ -173,24 +173,169 @@ public sealed class UsbCommunicationLayer
             throw new ArgumentOutOfRangeException(nameof(pollInterval));
         }
 
-        return new UsbDeviceMonitor(
+        Func<IReadOnlyList<UsbDeviceInfo>> enumerator = () =>
+        {
+            try
+            {
+                return EnumerateDevicesCore(apiKind, filter, cancellationToken: default);
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+                UsbTrace.Log($"MonitorDevices enumerate failed: {ex.GetType().Name}: {ex.Message}");
+                return Array.Empty<UsbDeviceInfo>();
+            }
+        };
+
+        // Prefer libusb's native hotplug callback (event-driven on Linux/macOS) when the
+        // caller explicitly selected the libusb backend. Falls back to polling when the
+        // platform does not support hotplug (Windows) or the native runtime is absent.
+        if (apiKind == UsbApiKind.LibUsbDotNet)
+        {
+            try
+            {
+                return new UsbLibUsbHotplugMonitor(enumerator, onChanged, onError, filter);
+            }
+            catch (PlatformNotSupportedException)
+            {
+                UsbTrace.Log("libusb hotplug unavailable on this platform - falling back to polling monitor.");
+            }
+            catch (DllNotFoundException)
+            {
+                UsbTrace.Log("libusb native runtime absent - falling back to polling monitor.");
+            }
+            catch (EntryPointNotFoundException)
+            {
+                UsbTrace.Log("libusb hotplug entry point absent - falling back to polling monitor.");
+            }
+            catch (Exception ex)
+            {
+                onError?.Invoke(ex);
+                UsbTrace.Log($"UsbLibUsbHotplugMonitor creation failed: {ex.GetType().Name}: {ex.Message} - falling back to polling monitor.");
+            }
+        }
+
+        return new UsbDeviceMonitor(enumerator, onChanged, onError, interval, fireInitialSnapshot);
+    }
+
+    /// <summary>
+    /// Waits until at least one device matching the filter appears, polling with a 250 ms interval.
+    /// <para>以 250 ms 间隔轮询，直到至少一个匹配过滤条件的设备出现。</para>
+    /// Useful for mode-switch workflows (e.g. adb reboot bootloader → wait for the fastboot device).
+    /// <para>适用于模式切换工作流（例如 adb reboot bootloader 后等待 fastboot 设备出现）。</para>
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when a matching device appeared before the timeout. <para>超时前出现匹配设备时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForDeviceAppearAsync(
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveTimeout = NormalizeWaitTimeout(timeout);
+        return WaitAsync(
+            () => EnumerateDevicesCore(apiKind, filter, cancellationToken).Count > 0,
+            effectiveTimeout,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Waits until no device matching the filter remains, polling with a 250 ms interval.
+    /// <para>以 250 ms 间隔轮询，直到不再存在匹配过滤条件的设备。</para>
+    /// Useful when waiting for a device to be unplugged or to leave a mode.
+    /// <para>适用于等待设备被拔出或退出某模式。</para>
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when no matching device remains before the timeout. <para>超时前不再存在匹配设备时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForDeviceDisappearAsync(
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        UsbDeviceFilter? filter = null,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveTimeout = NormalizeWaitTimeout(timeout);
+        return WaitAsync(
+            () => EnumerateDevicesCore(apiKind, filter, cancellationToken).Count == 0,
+            effectiveTimeout,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Waits until the <paramref name="removedFilter"/> devices are gone AND at least one
+    /// <paramref name="appearedFilter"/> device is present - the classic reboot-into-bootloader
+    /// / mode-switch pattern (e.g. adb → fastboot, fastboot → EDL).
+    /// <para>等待 <paramref name="removedFilter"/> 设备消失且至少一个
+    /// <paramref name="appearedFilter"/> 设备出现——经典的"重启进 bootloader/模式切换"模式
+    /// （例如 adb → fastboot、fastboot → EDL）。</para>
+    /// </summary>
+    /// <param name="removedFilter">Filter for devices expected to disappear; pass <c>null</c> to skip this half. <para>预期消失的设备过滤条件；传 <c>null</c> 跳过该半边。</para></param>
+    /// <param name="appearedFilter">Filter for devices expected to appear; pass <c>null</c> to skip this half. <para>预期出现的设备过滤条件；传 <c>null</c> 跳过该半边。</para></param>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when the mode switch completed before the timeout. <para>超时前完成模式切换时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForModeSwitchAsync(
+        UsbDeviceFilter? removedFilter,
+        UsbDeviceFilter? appearedFilter,
+        UsbApiKind apiKind = UsbApiKind.Auto,
+        TimeSpan? timeout = null,
+        CancellationToken cancellationToken = default)
+    {
+        var effectiveTimeout = NormalizeWaitTimeout(timeout);
+        if (removedFilter == null && appearedFilter == null)
+        {
+            throw new ArgumentException("At least one of removedFilter/appearedFilter must be provided.");
+        }
+
+        return WaitAsync(
             () =>
             {
-                try
-                {
-                    return EnumerateDevicesCore(apiKind, filter, cancellationToken: default);
-                }
-                catch (Exception ex)
-                {
-                    onError?.Invoke(ex);
-                    UsbTrace.Log($"MonitorDevices enumerate failed: {ex.GetType().Name}: {ex.Message}");
-                    return Array.Empty<UsbDeviceInfo>();
-                }
+                int removedCount = removedFilter == null ? 0 : EnumerateDevicesCore(apiKind, removedFilter, cancellationToken).Count;
+                int appearedCount = appearedFilter == null ? 0 : EnumerateDevicesCore(apiKind, appearedFilter, cancellationToken).Count;
+                return removedCount == 0 && appearedCount > 0;
             },
-            onChanged,
-            onError,
-            interval,
-            fireInitialSnapshot);
+            effectiveTimeout,
+            cancellationToken);
+    }
+
+    private static TimeSpan NormalizeWaitTimeout(TimeSpan? timeout)
+    {
+        var effectiveTimeout = timeout ?? TimeSpan.FromSeconds(30);
+        if (effectiveTimeout <= TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(timeout), "Timeout must be positive.");
+        }
+
+        return effectiveTimeout;
+    }
+
+    private static async Task<bool> WaitAsync(Func<bool> condition, TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        const int PollIntervalMs = 250;
+        var deadline = DateTime.UtcNow + timeout;
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (condition())
+            {
+                return true;
+            }
+
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+            {
+                return false;
+            }
+
+            var delay = remaining < TimeSpan.FromMilliseconds(PollIntervalMs) ? remaining : TimeSpan.FromMilliseconds(PollIntervalMs);
+            await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     /// <summary>

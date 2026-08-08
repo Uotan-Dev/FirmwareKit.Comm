@@ -45,11 +45,16 @@ namespace FirmwareKit.Comm.Usb.Backend.Windows
                         IntPtr detailBuffer = Marshal.AllocHGlobal((int)detailSize);
                         try
                         {
-                            Marshal.WriteInt32(detailBuffer, 6);
+                            // SP_DEVICE_INTERFACE_DETAIL_DATA_W: cbSize is 6 on x86 and 8 on
+                            // x64, and DevicePath starts right after the DWORD (offset 4 / 8).
+                            // Hardcoding 6 + offset 4 breaks path parsing on 64-bit Windows.
+                            int cbSize = IntPtr.Size == 8 ? 8 : 6;
+                            int pathOffset = IntPtr.Size == 8 ? 8 : 4;
+                            Marshal.WriteInt32(detailBuffer, cbSize);
                             uint requiredSize;
                             if (Win32API.SetupDiGetDeviceInterfaceDetailW(devInfo, ref interfaceData, detailBuffer, detailSize, out requiredSize, IntPtr.Zero))
                             {
-                                string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + 4)) ?? "";
+                                string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + pathOffset)) ?? "";
                                 string lowerPath = path.ToLower();
 
                                 if (!PathMatchesFilter(path, filter))

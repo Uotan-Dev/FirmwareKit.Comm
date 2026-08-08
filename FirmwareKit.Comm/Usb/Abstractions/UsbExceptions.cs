@@ -151,3 +151,71 @@ public sealed class UsbDeviceOpenException : InvalidOperationException
         NativeErrorCode = nativeErrorCode;
     }
 }
+
+/// <summary>
+/// <para>当 USB 设备在传输期间被拔出或断开时抛出的异常。</para>
+/// Thrown when the USB device is unplugged or disconnected during a transfer.
+/// <para>上层协议（adb/fastboot/EDL 等）可捕获此异常以触发重枚举/重连逻辑，
+/// 它与一般 I/O 错误（<see cref="UsbTransferException"/>、IOException）相区分。</para>
+/// Upper-layer protocols (adb/fastboot/EDL etc.) can catch this exception to trigger
+/// re-enumeration / reconnect logic; it is distinct from ordinary I/O errors.
+/// </summary>
+public sealed class UsbDeviceDisconnectedException : IOException
+{
+    /// <summary>
+    /// <para>获取或设置后端名称。</para>
+    /// Gets or sets the backend name.
+    /// </summary>
+    public string? Backend { get; set; }
+
+    /// <summary>
+    /// <para>获取或设置原生错误码。</para>
+    /// Gets or sets the native error code.
+    /// </summary>
+    public int? NativeErrorCode { get; set; }
+
+    /// <summary>
+    /// <para>使用指定错误消息初始化异常。</para>
+    /// Initializes the exception with the specified error message.
+    /// </summary>
+    /// <param name="message">
+    /// <para>描述错误的消息。</para>
+    /// The message that describes the error.
+    /// </param>
+    public UsbDeviceDisconnectedException(string message) : base(message)
+    {
+    }
+
+    /// <summary>
+    /// <para>使用指定错误消息和原生错误码初始化异常。</para>
+    /// Initializes the exception with the specified error message and native error code.
+    /// </summary>
+    /// <param name="message">
+    /// <para>描述错误的消息。</para>
+    /// The message that describes the error.
+    /// </param>
+    /// <param name="nativeErrorCode">
+    /// <para>原生错误码。</para>
+    /// The native error code.
+    /// </param>
+    public UsbDeviceDisconnectedException(string message, int nativeErrorCode) : base(message)
+    {
+        NativeErrorCode = nativeErrorCode;
+    }
+
+    /// <summary>
+    /// <para>使用指定错误消息和内部异常初始化异常。</para>
+    /// Initializes the exception with the specified error message and inner exception.
+    /// </summary>
+    /// <param name="message">
+    /// <para>描述错误的消息。</para>
+    /// The message that describes the error.
+    /// </param>
+    /// <param name="innerException">
+    /// <para>导致当前异常的内部异常。</para>
+    /// The inner exception that caused the current exception.
+    /// </param>
+    public UsbDeviceDisconnectedException(string message, Exception innerException) : base(message, innerException)
+    {
+    }
+}

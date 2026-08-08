@@ -102,6 +102,45 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     public IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null) => _usb.OpenDeviceSession(apiKind, filter);
 
     /// <summary>
+    /// Waits until at least one device matching the filter appears (250 ms polling).
+    /// <para>等待至少一个匹配过滤条件的设备出现（250 ms 轮询）。</para>
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when a matching device appeared before the timeout. <para>超时前出现匹配设备时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForUsbDeviceAppearAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => _usb.WaitForDeviceAppearAsync(apiKind, filter, timeout, cancellationToken);
+
+    /// <summary>
+    /// Waits until no device matching the filter remains (250 ms polling).
+    /// <para>等待不再存在匹配过滤条件的设备（250 ms 轮询）。</para>
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when no matching device remains before the timeout. <para>超时前不再存在匹配设备时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForUsbDeviceDisappearAsync(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => _usb.WaitForDeviceDisappearAsync(apiKind, filter, timeout, cancellationToken);
+
+    /// <summary>
+    /// Waits until the <paramref name="removedFilter"/> devices are gone AND at least one
+    /// <paramref name="appearedFilter"/> device is present (mode-switch pattern).
+    /// <para>等待 <paramref name="removedFilter"/> 设备消失且至少一个
+    /// <paramref name="appearedFilter"/> 设备出现（模式切换模式）。</para>
+    /// </summary>
+    /// <param name="removedFilter">Filter for devices expected to disappear; pass <c>null</c> to skip this half. <para>预期消失的设备过滤条件；传 <c>null</c> 跳过该半边。</para></param>
+    /// <param name="appearedFilter">Filter for devices expected to appear; pass <c>null</c> to skip this half. <para>预期出现的设备过滤条件；传 <c>null</c> 跳过该半边。</para></param>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="timeout">Maximum wait time (default 30 s). <para>最大等待时间（默认 30 秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns><c>true</c> when the mode switch completed before the timeout. <para>超时前完成模式切换时返回 <c>true</c>。</para></returns>
+    public Task<bool> WaitForUsbDeviceModeSwitchAsync(UsbDeviceFilter? removedFilter, UsbDeviceFilter? appearedFilter, UsbApiKind apiKind = UsbApiKind.Auto, TimeSpan? timeout = null, CancellationToken cancellationToken = default)
+        => _usb.WaitForModeSwitchAsync(removedFilter, appearedFilter, apiKind, timeout, cancellationToken);
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// <para>注册自定义 USB API 提供器。</para>
     /// </summary>

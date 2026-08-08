@@ -262,6 +262,17 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
+        // DDK pipe requests must reference the buffer created by OH_Usb_CreateDeviceMemMap
+        // (passing an arbitrary caller pointer makes the request fail or misbehave), so the
+        // caller's data is copied into the mapped region before sending.
+        if (_devMmapBuffer == IntPtr.Zero || length > _devMmapSize)
+        {
+            return UsbChunkResult.Fatal(USB_DDK_INVALID_OPERATION);
+        }
+        byte[] tmp = new byte[length];
+        Marshal.Copy(buffer, tmp, 0, length);
+        Marshal.Copy(tmp, 0, _devMmapBuffer, length);
+
         var pipe = new UsbRequestPipe
         {
             interfaceHandle = _interfaceHandle,
@@ -272,8 +283,8 @@ internal class HarmonyOSUsbDevice : UsbDevice
         var devMmap = new UsbDeviceMemMap
         {
             deviceId = _deviceId,
-            buffer = buffer,
-            size = (UIntPtr)length,
+            buffer = _devMmapBuffer,
+            size = (UIntPtr)_devMmapSize,
             offset = UIntPtr.Zero,
             length = (UIntPtr)length
         };
@@ -373,7 +384,7 @@ internal class HarmonyOSUsbDevice : UsbDevice
     {
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
-            Backend = "harmony-usbddk",
+            Backend = "harmony-ddk",
             DevicePath = DevicePath,
             Operation = operation,
             RequestedBytes = requested,

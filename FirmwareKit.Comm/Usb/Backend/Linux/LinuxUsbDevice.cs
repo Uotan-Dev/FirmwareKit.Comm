@@ -24,8 +24,18 @@ internal class LinuxUsbDevice : UsbDevice
 
     public override int CreateHandle()
     {
-        _fd.SetFd(open(DevicePath, O_RDWR | O_CLOEXEC));
-        if (_fd.IsInvalid) return -1;
+        int fd = open(DevicePath, O_RDWR | O_CLOEXEC);
+        if (fd < 0)
+        {
+            int err = Marshal.GetLastWin32Error();
+            if (err == EACCES)
+            {
+                LinuxUsbFinder.ReportPermissionDenied(DevicePath);
+            }
+            _fd.SetFd(fd);
+            return -1;
+        }
+        _fd.SetFd(fd);
         int ifc = InterfaceId;
         int n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         if (n != 0)
@@ -243,6 +253,9 @@ internal class LinuxUsbDevice : UsbDevice
 
     protected override bool IsOpen => !_fd.IsInvalid;
 
+    protected override bool IsDisconnectionError(int nativeError)
+        => nativeError == ENODEV || nativeError == ESHUTDOWN || nativeError == EPROTO;
+
     protected override int MaxChunkSize => UsbTransferPolicies.LinuxUsbFsMaxBulkSize;
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
@@ -301,7 +314,7 @@ internal class LinuxUsbDevice : UsbDevice
                 if (err == EINTR || err == EAGAIN) continue;
                 if (err == ETIMEDOUT) return UsbChunkResult.Timeout(err);
                 if (err == ENODEV || err == ESHUTDOWN || err == EPROTO) return UsbChunkResult.Fatal(err);
-                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Timeout(err);
+                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Error(err);
                 retryCount++;
                 Thread.Sleep(500);
             }
@@ -435,7 +448,7 @@ internal class LinuxUsbDevice : UsbDevice
                 if (err == ETIMEDOUT || err == EPIPE) return 0;
                 if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
                 {
-                    throw new IOException($"USB async transfer failed with fatal error: {err}");
+                    throw new UsbDeviceDisconnectedException($"USB async transfer failed: device disconnected (error: {err}).", err);
                 }
                 return 0;
             }

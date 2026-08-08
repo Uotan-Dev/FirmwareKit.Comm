@@ -86,15 +86,18 @@ internal static class LinuxUsbAPI
         public short revents;
     }
 
-    // URB control ioctls (kernel _IOWR('U', nr, struct usbdevfs_urb *), dir=3 on 64-bit).
-    public static uint USBDEVFS_SUBMITURB_X86_64 = 0xC008550A;
-    public static uint USBDEVFS_SUBMITURB_X86 = 0x8004550A;
-    public static uint USBDEVFS_DISCARDURB_X86_64 = 0xC008550B;
-    public static uint USBDEVFS_DISCARDURB_X86 = 0x8004550B;
-    public static uint USBDEVFS_REAPURB_X86_64 = 0xC008550C;
-    public static uint USBDEVFS_REAPURB_X86 = 0x8004550C;
-    public static uint USBDEVFS_REAPURBNDELAY_X86_64 = 0xC008550D;
-    public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x8004550D;
+    // URB control ioctls (kernel _IOWR/_IOW('U', nr, struct usbdevfs_urb *)).
+    // sizeof(usbdevfs_urb) is 64 bytes on x86_64 (0x40) and 44 bytes on x86 (0x2C),
+    // and the ioctl encodes that size. Previously hardcoded to size 8, which the
+    // kernel rejected with ENOTTY and broke every async URB transfer.
+    public static uint USBDEVFS_SUBMITURB_X86_64 = 0xC040550A;
+    public static uint USBDEVFS_SUBMITURB_X86 = 0xC02C550A;
+    public static uint USBDEVFS_DISCARDURB_X86_64 = 0xC040550B;
+    public static uint USBDEVFS_DISCARDURB_X86 = 0xC02C550B;
+    public static uint USBDEVFS_REAPURB_X86_64 = 0x8040550C;
+    public static uint USBDEVFS_REAPURB_X86 = 0x802C550C;
+    public static uint USBDEVFS_REAPURBNDELAY_X86_64 = 0x8040550D;
+    public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x802C550D;
 
     public const byte USBDEVFS_URB_TYPE_BULK = 2;
     public const uint USBDEVFS_URB_SHORT_NOT_OK = 0x0002;

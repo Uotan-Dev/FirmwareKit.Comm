@@ -1,5 +1,6 @@
 using FirmwareKit.Comm.Usb.Abstractions;
 using FirmwareKit.Comm.Usb.Diagnostics;
+using LibUsbDotNet;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
 using System.Diagnostics;
@@ -328,15 +329,22 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
     protected override bool IsOpen => reader != null && writer != null;
 
+    protected override bool IsDisconnectionError(int nativeError)
+        => nativeError == (int)Error.NoDevice;
+
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         byte[] chunkBuffer = new byte[length];
-        reader!.Read(chunkBuffer, 0, length, timeoutMs, out int readLen);
+        Error error = reader!.Read(chunkBuffer, 0, length, timeoutMs, out int readLen);
+        if (error == Error.NoDevice)
+        {
+            return UsbChunkResult.Fatal((int)error);
+        }
         if (readLen > 0)
         {
             Marshal.Copy(chunkBuffer, 0, buffer, readLen);
         }
-        return readLen <= 0 ? UsbChunkResult.Timeout(0) : UsbChunkResult.Success(readLen);
+        return readLen <= 0 ? UsbChunkResult.Timeout((int)error) : UsbChunkResult.Success(readLen);
     }
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
@@ -345,8 +353,12 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
         Marshal.Copy(buffer, chunkBuffer, 0, length);
 
         int transferred;
-        var errorCode = writer!.Write(chunkBuffer, 0, length, timeoutMs, out transferred);
-        if (errorCode != 0) // UsbError.Success is 0; libusb write errors are reported without throwing.
+        Error errorCode = writer!.Write(chunkBuffer, 0, length, timeoutMs, out transferred);
+        if (errorCode == Error.NoDevice)
+        {
+            return UsbChunkResult.Fatal((int)errorCode);
+        }
+        if (errorCode != 0) // Error.Success is 0; libusb write errors are reported without throwing.
         {
             return UsbChunkResult.Error((int)errorCode);
         }
@@ -419,6 +431,11 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
 
             int lenToRead = Math.Min(lenRemaining, maxLenToRead);
             var (errorCode, read_len) = await reader.ReadAsync(buffer, offset + count, lenToRead, effectiveTimeoutMs).ConfigureAwait(false);
+
+            if (errorCode == Error.NoDevice)
+            {
+                throw new UsbDeviceDisconnectedException("USB read failed: device disconnected (Error.NoDevice).", (int)errorCode);
+            }
 
             if (errorCode != 0)
             {
@@ -534,6 +551,11 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
             int lenToSend = Math.Min(lenRemaining, maxLenToSend);
             var (errorCode, transferred) = await writer.WriteAsync(data, count, lenToSend, effectiveTimeoutMs).ConfigureAwait(false);
 
+            if (errorCode == Error.NoDevice)
+            {
+                throw new UsbDeviceDisconnectedException("USB write failed: device disconnected (Error.NoDevice).", (int)errorCode);
+            }
+
             if (errorCode != 0)
             {
                 UsbTrace.Log($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
@@ -588,7 +610,9 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Usb.Backend.UsbDevice
             Outcome = outcome
         });
 
-        return count > 0 ? count : (length == 0 ? 0 : -1);
+        // Match the sync Write contract: report transferred bytes, 0 on failure.
+        // (-1 was previously returned on failure and could be misread as a huge count.)
+        return count;
     }
 
     public override async Task<int> ControlTransferAsync(FirmwareKit.Comm.Usb.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)

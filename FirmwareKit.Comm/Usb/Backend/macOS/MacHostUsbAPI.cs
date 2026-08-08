@@ -11,6 +11,7 @@ internal static class MacHostUsbAPI
 {
     public const string IOUSBLib = "/System/Library/Frameworks/IOUSBLib.framework/IOUSBLib";
     public const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
+    public const string Libc = "libc";
 
     // ---- Object discovery ----
     // kern_return_t IOUSBLibCopyDevices(CFMutableDictionaryRef matching, CFArrayRef *devices);
@@ -109,6 +110,11 @@ internal static class MacHostUsbAPI
 
     [DllImport(CoreFoundation)]
     public static extern IntPtr CFArrayGetValueAtIndex(IntPtr array, long index);
+
+    // IOUSBLib descriptor memory is allocated with malloc() and must be released
+    // with free() - Marshal.FreeHGlobal (GlobalFree) does not match on macOS.
+    [DllImport(Libc, EntryPoint = "free")]
+    public static extern void Free(IntPtr ptr);
 
     // ---- Structs (IOUSBLib.h) ----
     [StructLayout(LayoutKind.Sequential)]

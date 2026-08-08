@@ -13,6 +13,10 @@ internal class WinUSBDevice : UsbDevice
 {
     private const int WinUsbDefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
     private const int ERROR_SEM_TIMEOUT = 121;
+    private const int ERROR_TIMEOUT = 146;
+    private const int ERROR_DEVICE_NOT_CONNECTED = 1167;
+    private const int ERROR_NO_SUCH_DEVICE = 433;
+    private const int ERROR_DEVICE_REMOVED = 1617;
     public override int DefaultTimeoutMs => WinUsbDefaultTimeoutMs;
 
     private byte InterfaceNum;
@@ -26,21 +30,30 @@ internal class WinUSBDevice : UsbDevice
 
     public override int CreateHandle()
     {
+        // Releases the file/interface handles already acquired when a step fails,
+        // so callers are not required to Dispose() on a non-zero return.
+        int Fail(int error)
+        {
+            WinUSBHandle.Dispose();
+            FileHandle.Dispose();
+            return error;
+        }
+
         IntPtr hUsb = SimpleCreateHandle(DevicePath, true);
         uint bytesTransferred;
         if (hUsb == new IntPtr(-1))
             return Marshal.GetLastWin32Error();
         FileHandle = new SafeFileHandle(hUsb, ownsHandle: true);
         if (!WinUsb_Initialize(hUsb, out IntPtr winUsbHandle))
-            return Marshal.GetLastWin32Error();
+            return Fail(Marshal.GetLastWin32Error());
         WinUSBHandle = new SafeWinUsbHandle(winUsbHandle);
         if (!WinUsb_GetCurrentAlternateSetting(WinUSBHandle.DangerousGetHandle(), out InterfaceNum))
-            return Marshal.GetLastWin32Error();
+            return Fail(Marshal.GetLastWin32Error());
         IntPtr ptr = Marshal.AllocHGlobal(Marshal.SizeOf<USBDeviceDescriptor>());
         if (!WinUsb_GetDescriptor(WinUSBHandle.DangerousGetHandle(), USB_DEVICE_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceDescriptor>(), out bytesTransferred))
         {
             Marshal.FreeHGlobal(ptr);
-            return Marshal.GetLastWin32Error();
+            return Fail(Marshal.GetLastWin32Error());
         }
         USBDeviceDescriptor = Marshal.PtrToStructure<USBDeviceDescriptor>(ptr);
         VendorId = USBDeviceDescriptor.idVendor;
@@ -50,23 +63,31 @@ internal class WinUSBDevice : UsbDevice
         if (!WinUsb_GetDescriptor(WinUSBHandle.DangerousGetHandle(), USB_CONFIGURATION_DESCRIPTOR_TYPE, 0, 0, ptr, (uint)Marshal.SizeOf<USBDeviceConfigDescriptor>(), out bytesTransferred))
         {
             Marshal.FreeHGlobal(ptr);
-            return Marshal.GetLastWin32Error();
+            return Fail(Marshal.GetLastWin32Error());
         }
         USBDeviceConfigDescriptor = Marshal.PtrToStructure<USBDeviceConfigDescriptor>(ptr);
         Marshal.FreeHGlobal(ptr);
         if (!WinUsb_QueryInterfaceSettings(WinUSBHandle.DangerousGetHandle(), InterfaceNum, out USBDeviceInterfaceDescriptor))
-            return Marshal.GetLastWin32Error();
+            return Fail(Marshal.GetLastWin32Error());
 
         InterfaceClass = USBDeviceInterfaceDescriptor.bInterfaceClass;
         InterfaceSubClass = USBDeviceInterfaceDescriptor.bInterfaceSubClass;
         InterfaceProtocol = USBDeviceInterfaceDescriptor.bInterfaceProtocol;
         InterfaceMetadataObserved = true;
 
+        var endpoints = new List<UsbEndpointInfo>();
         for (byte endpoint = 0; endpoint < USBDeviceInterfaceDescriptor.bNumEndpoints; endpoint++)
         {
             WinUSBPipeInfo pipeInfo;
             if (!WinUsb_QueryPipe(WinUSBHandle.DangerousGetHandle(), InterfaceNum, endpoint, out pipeInfo))
-                return Marshal.GetLastWin32Error();
+                return Fail(Marshal.GetLastWin32Error());
+            endpoints.Add(new UsbEndpointInfo
+            {
+                EndpointAddress = pipeInfo.PipeID,
+                Attributes = (byte)pipeInfo.PipeType,
+                MaxPacketSize = pipeInfo.MaximumPacketSize,
+                Interval = pipeInfo.Interval
+            });
             if (pipeInfo.PipeType == WinUSBPipeType.UsbdPipeTypeBulk)
             {
                 if ((pipeInfo.PipeID & USB_ENDPOINT_DIRECTION_MASK) != 0)
@@ -88,9 +109,22 @@ internal class WinUSBDevice : UsbDevice
             }
         }
 
+        // WinUSB binds a single interface per handle; report that interface's metadata.
+        Interfaces = new[]
+        {
+            new UsbInterfaceInfo
+            {
+                InterfaceNumber = InterfaceNum,
+                Class = USBDeviceInterfaceDescriptor.bInterfaceClass,
+                SubClass = USBDeviceInterfaceDescriptor.bInterfaceSubClass,
+                Protocol = USBDeviceInterfaceDescriptor.bInterfaceProtocol,
+                Endpoints = endpoints
+            }
+        };
+
         if (ReadBulkID == 0 || WriteBulkID == 0)
         {
-            return -1;
+            return Fail(-1);
         }
 
         GetSerialNumber();
@@ -215,6 +249,13 @@ internal class WinUSBDevice : UsbDevice
             Marshal.FreeHGlobal(ptr);
             ptr = Marshal.AllocHGlobal((int)descriptorSize);
         }
+        // A string descriptor is at least 2 header bytes; guard against a
+        // malformed short reply producing a negative PtrToStringUni length.
+        if (bytes_get <= 2)
+        {
+            Marshal.FreeHGlobal(ptr);
+            return -1;
+        }
         SerialNumber = Marshal.PtrToStringUni(ptr + 2, (int)(bytes_get - 2) / 2)?.TrimEnd('\0');
         Marshal.FreeHGlobal(ptr);
         return 0;
@@ -258,7 +299,7 @@ internal class WinUSBDevice : UsbDevice
         }
 
         int err = Marshal.GetLastWin32Error();
-        return err == ERROR_SEM_TIMEOUT ? UsbChunkResult.Timeout(err) : UsbChunkResult.Fatal(err);
+        return err == ERROR_SEM_TIMEOUT || err == ERROR_TIMEOUT ? UsbChunkResult.Timeout(err) : UsbChunkResult.Fatal(err);
     }
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
@@ -270,12 +311,18 @@ internal class WinUSBDevice : UsbDevice
             return UsbChunkResult.Success((int)bytesWritten);
         }
 
-        return UsbChunkResult.Fatal(Marshal.GetLastWin32Error());
+        int err = Marshal.GetLastWin32Error();
+        return err == ERROR_SEM_TIMEOUT || err == ERROR_TIMEOUT ? UsbChunkResult.Timeout(err) : UsbChunkResult.Fatal(err);
     }
 
-    protected override Exception CreateReadFatalException(int nativeError) => new Win32Exception(nativeError);
+    protected override bool IsDisconnectionError(int nativeError)
+        => nativeError == ERROR_DEVICE_NOT_CONNECTED || nativeError == ERROR_NO_SUCH_DEVICE || nativeError == ERROR_DEVICE_REMOVED;
 
-    protected override Exception CreateWriteFatalException(int nativeError) => new Win32Exception(nativeError);
+    protected override Exception CreateReadFatalException(int nativeError)
+        => IsDisconnectionError(nativeError) ? base.CreateReadFatalException(nativeError) : new Win32Exception(nativeError);
+
+    protected override Exception CreateWriteFatalException(int nativeError)
+        => IsDisconnectionError(nativeError) ? base.CreateWriteFatalException(nativeError) : new Win32Exception(nativeError);
 
     public override long Write(byte[] data, int length)
     {
