@@ -167,21 +167,51 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
         InterfaceId = targetInterfaceId;
 
+        // usbhid (and other kernel drivers) bind HID interrupt devices immediately, and
+        // udev may rebind right after a detach; retry detach+claim a few times instead of
+        // failing on the first contention (mirrors libusb's auto-detach behaviour).
+        Exception? claimError = null;
+        bool claimed = false;
         try
         {
             usbDevice.ClaimInterface(targetInterfaceId);
+            claimed = true;
         }
-        catch
+        catch (Exception ex)
         {
-            try
+            claimError = ex;
+        }
+
+        if (!claimed && usbDevice is LibUsbDotNet.LibUsb.UsbDevice libusbDevice)
+        {
+            for (int attempt = 0; attempt < 3; attempt++)
             {
-                (usbDevice as LibUsbDotNet.LibUsb.UsbDevice)?.DetachKernelDriver(targetInterfaceId);
-                usbDevice.ClaimInterface(targetInterfaceId);
+                try
+                {
+                    libusbDevice.DetachKernelDriver(targetInterfaceId);
+                }
+                catch (Exception detachEx)
+                {
+                    claimError = detachEx;
+                }
+
+                try
+                {
+                    usbDevice.ClaimInterface(targetInterfaceId);
+                    claimed = true;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    claimError = ex;
+                    Thread.Sleep(50);
+                }
             }
-            catch (Exception ex)
-            {
-                UsbTrace.Log($"LibUsbDevice.ClaimInterface fallback failed: {ex.GetType().Name}: {ex.Message}");
-            }
+        }
+
+        if (!claimed)
+        {
+            UsbTrace.Log($"LibUsbDevice.ClaimInterface failed: {claimError?.GetType().Name}: {claimError?.Message}");
         }
 
         reader = null;

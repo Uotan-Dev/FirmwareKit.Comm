@@ -68,6 +68,11 @@ jobs:
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE EP ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --ep-in 0x81 --ep-out 0x02
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE CONCURRENT ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --concurrent
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE OFFSET ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --offset-write
+            # The emulated usb-tablet is claimed by the guest's usbhid driver, which makes
+            # usbfs/libusb interface claims fail even after a detach (udev rebinds HID).
+            # Unbind usbhid from every HID interface and unload the driver so the
+            # interrupt-test can claim the tablet's interrupt-IN endpoint.
+            - export PATH=$PATH:/opt/dotnet && echo '--- RELEASE USBHID ---' && (for d in /sys/bus/usb/drivers/usbhid/*; do [ -e "$d" ] && echo "${d##*/}" > /sys/bus/usb/drivers/usbhid/unbind 2>/dev/null || true; done; modprobe -r usbhid 2>/dev/null || true) || true
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- INTERRUPT NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- interrupt-test --api native --vid 0x0627 --pid 0x0001 --ep 0x81
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- INTERRUPT LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- interrupt-test --api libusb --vid 0x0627 --pid 0x0001 --ep 0x81
             - poweroff
