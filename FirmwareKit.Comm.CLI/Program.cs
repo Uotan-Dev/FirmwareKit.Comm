@@ -34,6 +34,10 @@ switch (command)
         ExecuteMonitor(layer, argsList.Skip(1).ToArray());
         break;
 
+    case "selftest":
+        ExecuteSelftest(layer, argsList.Skip(1).ToArray());
+        break;
+
     default:
         ShowHelp();
         break;
@@ -354,6 +358,130 @@ static string Symbol(UsbDeviceChangeKind kind)
     };
 }
 
+/// <summary>
+/// Read-only device-level smoke test for real hardware: enumerate, open a session,
+/// issue a GET_DESCRIPTOR control transfer and a short ReadExact, and report PASS/FAIL.
+/// <para>面向真实硬件的只读设备级冒烟测试：枚举、打开会话、发起 GET_DESCRIPTOR 控制传输
+/// 与一次短 ReadExact，并报告 PASS/FAIL。</para>
+/// Deliberately performs NO write transfers and NO reset, so it is safe to run against
+/// devices in fastboot/EDL mode. Exit code 0 with "SKIP" means no matching device.
+/// <para>刻意不执行任何写传输与重置，可安全地对处于 fastboot/EDL 模式的设备运行。
+/// 输出 "SKIP" 且退出码 0 表示没有匹配设备。</para>
+/// </summary>
+static void ExecuteSelftest(UsbCommunicationLayer layer, string[] args)
+{
+    UsbApiKind apiKind = UsbApiKind.Auto;
+    ushort? vid = null;
+    ushort? pid = null;
+    int durationSeconds = 0;
+
+    for (var i = 0; i < args.Length; i++)
+    {
+        var arg = args[i];
+        switch (arg)
+        {
+            case "--api" when i + 1 < args.Length:
+                apiKind = ParseApi(args[++i]);
+                continue;
+            case "--vid" when i + 1 < args.Length:
+                vid = ParseUShort(args[++i]);
+                continue;
+            case "--pid" when i + 1 < args.Length:
+                pid = ParseUShort(args[++i]);
+                continue;
+            case "--duration" when i + 1 < args.Length:
+                durationSeconds = int.Parse(args[++i], CultureInfo.InvariantCulture);
+                continue;
+            case "-h" or "--help":
+                ShowHelp();
+                return;
+            default:
+                throw new ArgumentException($"Unknown argument: {arg}");
+        }
+    }
+
+    var filter = new UsbDeviceFilter { VendorId = vid, ProductId = pid };
+    int pass = 0;
+    int failures = 0;
+    var deadline = durationSeconds > 0 ? DateTime.UtcNow.AddSeconds(durationSeconds) : DateTime.MaxValue;
+
+    do
+    {
+        pass++;
+        Console.WriteLine($"--- selftest pass {pass} ---");
+
+        // 1) Enumeration
+        var devices = layer.EnumerateDevices(apiKind, filter);
+        if (devices.Count == 0)
+        {
+            Console.WriteLine("SKIP enumeration: no matching device present (attach hardware and retry).");
+            Environment.ExitCode = 0;
+            return;
+        }
+
+        Console.WriteLine($"PASS enumeration: {devices.Count} device(s)");
+        foreach (var d in devices)
+        {
+            Console.WriteLine($"  api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} speed={d.Speed} if=0x{d.InterfaceClass:X2}/0x{d.InterfaceSubClass:X2}/0x{d.InterfaceProtocol:X2} serial={d.SerialNumber ?? "<null>"}");
+        }
+
+        // 2) Open session
+        using var session = layer.OpenDeviceSession(apiKind, filter);
+        if (session == null)
+        {
+            Console.WriteLine("FAIL open session: no session could be opened (device busy? permissions?).");
+            failures++;
+            continue;
+        }
+
+        Console.WriteLine("PASS open session");
+
+        // 3) Control transfer: GET_DESCRIPTOR(DEVICE) - read-only, 18 bytes.
+        try
+        {
+            var setup = new UsbSetupPacket { RequestType = 0x80, Request = 0x06, Value = 0x0100, Index = 0, Length = 18 };
+            byte[] buf = new byte[18];
+            int n = session.ControlTransfer(setup, buf, 0, buf.Length, 3000);
+            if (n >= 18)
+            {
+                Console.WriteLine($"PASS control transfer (GET_DESCRIPTOR): {n} bytes, bcdUSB=0x{(ushort)(buf[2] | (buf[3] << 8)):X4}, bcdDevice=0x{(ushort)(buf[12] | (buf[13] << 8)):X4}");
+            }
+            else
+            {
+                Console.WriteLine($"FAIL control transfer: only {n} bytes returned.");
+                failures++;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FAIL control transfer: {ex.GetType().Name}: {ex.Message}");
+            failures++;
+        }
+
+        // 4) ReadExact short read (timeout-safe; a short/zero result is expected unless the
+        //    device is streaming data - this exercises the read path without side effects).
+        try
+        {
+            byte[] data = session.ReadExact(16, 1000);
+            Console.WriteLine($"INFO ReadExact: {data.Length} bytes received (short/zero is normal for idle devices).");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"INFO ReadExact: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        Console.WriteLine($"INFO session default timeout: {session.DefaultTimeoutMs} ms");
+
+        if (durationSeconds > 0 && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(1000);
+        }
+    } while (durationSeconds > 0 && DateTime.UtcNow < deadline);
+
+    Console.WriteLine($"=== selftest result: {pass} pass(es), {failures} failure(s) ===");
+    Environment.ExitCode = failures == 0 ? 0 : 1;
+}
+
 static UsbApiKind ParseApi(string value)
 {
     return value.ToLowerInvariant() switch
@@ -381,6 +509,11 @@ static void ShowHelp()
     Console.WriteLine();
     Console.WriteLine("  monitor [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--if-class <hex>] [--if-subclass <hex>] [--if-protocol <hex>] [--interval <seconds>]");
     Console.WriteLine("    Print USB device change events (Added/Removed/Changed) until Ctrl+C.");
+    Console.WriteLine();
+    Console.WriteLine("  selftest [--api auto|native|libusb] [--vid <hex>] [--pid <hex>] [--duration <seconds>]");
+    Console.WriteLine("    Read-only device smoke test for real hardware: enumerate, open a session,");
+    Console.WriteLine("    GET_DESCRIPTOR control transfer and a short ReadExact (no writes/reset).");
+    Console.WriteLine("    Exit 0 with 'SKIP' means no matching device is attached.");
     Console.WriteLine();
     Console.WriteLine("devices filters:");
     Console.WriteLine("  --if-class <hex|dec>");

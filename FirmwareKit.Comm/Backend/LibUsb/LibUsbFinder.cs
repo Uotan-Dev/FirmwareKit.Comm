@@ -15,6 +15,9 @@ internal static class LibUsbFinder
     [DllImport("libusb-1.0", CallingConvention = CallingConvention.Cdecl)]
     private static extern int libusb_init(out IntPtr context);
 
+    [DllImport("libusb-1.0", CallingConvention = CallingConvention.Cdecl)]
+    private static extern void libusb_exit(IntPtr context);
+
     private static bool IsNativeRuntimePresent()
     {
         try
@@ -226,16 +229,39 @@ internal static class LibUsbFinder
             return false;
         }
 
+        // Verify with the raw native API instead of constructing a LibUsbDotNet UsbContext:
+        // when libusb_init fails, LibUsbDotNet leaves a half-initialized context whose
+        // finalizer throws NullReferenceException (known upstream issue) - on CI this fails
+        // the whole test run even when every test passes. libusb_init/libusb_exit probe the
+        // runtime without creating any LibUsbDotNet object.
+        if (!ProbeNativeInit())
+        {
+            reason = "libusb_init failed";
+            UsbTrace.Log($"LibUsb runtime probe failed: {reason}");
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ProbeNativeInit()
+    {
         try
         {
-            using var context = new UsbContext();
-            _ = context.List();
-            return true;
+            if (libusb_init(out IntPtr context) == 0 && context != IntPtr.Zero)
+            {
+                libusb_exit(context);
+                return true;
+            }
+
+            return false;
         }
-        catch (Exception ex)
+        catch (DllNotFoundException)
         {
-            reason = ex.Message;
-            UsbTrace.Log($"LibUsb runtime probe failed: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+        catch (EntryPointNotFoundException)
+        {
             return false;
         }
     }

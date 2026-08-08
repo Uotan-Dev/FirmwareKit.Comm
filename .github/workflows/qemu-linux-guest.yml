@@ -80,7 +80,7 @@ jobs:
             -drive file=ubuntu.img,if=virtio \
             -drive file=seed.img,if=virtio,format=raw \
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
-            -device usb-uhci \
+            -device piix3-usb-uhci \
             -chardev null,id=usb0 \
             -device usb-serial,chardev=usb0 \
             -nographic 2>&1 | tee guest.log || true
