@@ -86,18 +86,23 @@ internal static class LinuxUsbAPI
         public short revents;
     }
 
-    // URB control ioctls (kernel _IOWR/_IOW('U', nr, struct usbdevfs_urb *)).
-    // sizeof(usbdevfs_urb) is 64 bytes on x86_64 (0x40) and 44 bytes on x86 (0x2C),
-    // and the ioctl encodes that size. Previously hardcoded to size 8, which the
-    // kernel rejected with ENOTTY and broke every async URB transfer.
-    public static uint USBDEVFS_SUBMITURB_X86_64 = 0xC040550A;
-    public static uint USBDEVFS_SUBMITURB_X86 = 0xC02C550A;
-    public static uint USBDEVFS_DISCARDURB_X86_64 = 0xC040550B;
-    public static uint USBDEVFS_DISCARDURB_X86 = 0xC02C550B;
-    public static uint USBDEVFS_REAPURB_X86_64 = 0x8040550C;
-    public static uint USBDEVFS_REAPURB_X86 = 0x802C550C;
-    public static uint USBDEVFS_REAPURBNDELAY_X86_64 = 0x8040550D;
-    public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x802C550D;
+    // URB control ioctls, encoded exactly as in kernel include/uapi/linux/usbdevice_fs.h:
+    //   USBDEVFS_SUBMITURB      _IOR('U', 10, struct usbdevfs_urb)   -> 56B on x86_64, 44B on x86
+    //   USBDEVFS_DISCARDURB     _IO('U', 11)                         -> no argument (same both ABIs)
+    //   USBDEVFS_REAPURB        _IOW('U', 12, void *)                -> sizeof(void*) = 8/4
+    //   USBDEVFS_REAPURBNDELAY  _IOW('U', 13, void *)                -> sizeof(void*) = 8/4
+    // ioctl code = (dir << 30) | (size << 16) | ('U' << 8) | nr, with dir READ=2, WRITE=1, NONE=0.
+    // Verified: x86_64 SUBMITURB = 0x8038550A (see QEMU linux-user usbfs emulation docs and
+    // kernel KASAN reports); the previous 0xC040550A (WRITE|READ, size 0x40) was wrong and
+    // made every async URB submit fail with ENOTTY (25).
+    public static uint USBDEVFS_SUBMITURB_X86_64 = 0x8038550A;
+    public static uint USBDEVFS_SUBMITURB_X86 = 0x802C550A;
+    public static uint USBDEVFS_DISCARDURB_X86_64 = 0x0000550B;
+    public static uint USBDEVFS_DISCARDURB_X86 = 0x0000550B;
+    public static uint USBDEVFS_REAPURB_X86_64 = 0x4008550C;
+    public static uint USBDEVFS_REAPURB_X86 = 0x4004550C;
+    public static uint USBDEVFS_REAPURBNDELAY_X86_64 = 0x4008550D;
+    public static uint USBDEVFS_REAPURBNDELAY_X86 = 0x4004550D;
 
     public const byte USBDEVFS_URB_TYPE_BULK = 2;
     public const byte USBDEVFS_URB_TYPE_INTERRUPT = 3;

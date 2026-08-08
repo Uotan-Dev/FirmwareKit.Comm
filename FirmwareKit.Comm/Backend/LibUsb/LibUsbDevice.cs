@@ -124,6 +124,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         byte inEndpoint = ReadEndpointId;
         byte outEndpoint = WriteEndpointId;
 
+        // Auto-discover a bulk IN/OUT pair only when the finder did not already bind both.
+        // IN-only (HID interrupt) and OUT-only devices must NOT be rejected here: the
+        // session supports single-direction binding, and ReadInterrupt/WriteInterrupt
+        // target explicit endpoints regardless of the bulk pair.
         if (inEndpoint == 0 || outEndpoint == 0)
         {
             foreach (var config in usbDevice.Configs)
@@ -134,7 +138,12 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
                     byte candidateOut = 0;
                     foreach (var endpoint in ifc.Endpoints)
                     {
-                        if ((endpoint.Attributes & 0x03) != 0x02) continue;
+                        // Collect bulk endpoints first (the session I/O path), then interrupt
+                        // endpoints as fallback candidates so devices with only interrupt pipes
+                        // (e.g. HID) can still be opened when the filter requests explicit
+                        // endpoint addresses (interrupt-test).
+                        int epType = endpoint.Attributes & 0x03;
+                        if (epType != 0x02 && epType != 0x03) continue;
 
                         if ((endpoint.EndpointAddress & 0x80) != 0)
                         {
@@ -146,11 +155,11 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
                         }
                     }
 
-                    if (candidateIn != 0 && candidateOut != 0)
+                    if (candidateIn != 0)
                     {
                         targetInterfaceId = (byte)ifc.Number;
-                        inEndpoint = candidateIn;
-                        outEndpoint = candidateOut;
+                        if (inEndpoint == 0) inEndpoint = candidateIn;
+                        if (outEndpoint == 0) outEndpoint = candidateOut;
                         break;
                     }
                 }
@@ -159,7 +168,9 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             }
         }
 
-        if (inEndpoint == 0 || outEndpoint == 0)
+        // Only reject when the session would have NO endpoint at all; single-direction
+        // sessions are valid (the missing direction's bulk helpers throw NotSupportedException).
+        if (inEndpoint == 0 && outEndpoint == 0)
         {
             Dispose();
             return -1;
