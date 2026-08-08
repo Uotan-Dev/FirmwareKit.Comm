@@ -65,14 +65,22 @@ jobs:
         package_update: true
         packages:
           - linux-tools-generic
+        # Mirror cloud-init output onto the serial console (host-side guest.log),
+        # so a failing wait step shows exactly what the guest did.
+        output:
+          all: '| tee -a /var/log/cloud-init-output.log /dev/console'
         runcmd:
-          - modprobe usbip-core usbip-host
+          - echo '[usbip] provisioning start'
+          # usbip-core/usbip-host ship in linux-modules-extra-*, which cloud
+          # images do not install; load them or install for the RUNNING kernel.
+          - modprobe usbip-core usbip-host 2>/dev/null || { apt-get install -y linux-modules-extra-$(uname -r) && modprobe usbip-core usbip-host; }
+          - lsmod | grep -E 'usbip|vhci' || echo '[usbip] usbip modules NOT loaded'
           - sleep 1
-          - usbip list -l
-          - usbip bind -b 1-1 || (rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1)
+          - usbip list -l || echo '[usbip] usbip list -l failed'
+          - usbip bind -b 1-1 || { rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1 || echo '[usbip] bind failed'; }
           - usbipd -D
-          - sleep 1
-          - usbip list -r localhost
+          - sleep 2
+          - usbip list -r localhost && echo '[usbip] server self-check OK' || echo '[usbip] server self-check FAILED'
         EOF
         cloud-localds seed.img user-data
 
@@ -99,10 +107,19 @@ jobs:
             usbip list -r 127.0.0.1
             exit 0
           fi
+          # Periodic diagnostics: distinguish "guest still booting" from
+          # "guest never started usbipd" (port 3240 closed).
+          if [ $((i % 12)) -eq 0 ]; then
+            if (exec 3<>/dev/tcp/127.0.0.1/3240) 2>/dev/null; then port=open; else port=closed; fi
+            echo "[debug] attempt $i ($((i * 5))s): port 3240 $port; guest.log tail:"
+            tail -25 guest.log 2>/dev/null || true
+            tail -5 qemu.err 2>/dev/null || true
+          fi
           sleep 5
         done
         echo "::error::guest usbip server did not become ready in time"
         tail -50 guest.log || true
+        tail -10 qemu.err || true
         exit 1
 
     - name: Attach remote USB device via vhci-hcd
@@ -167,14 +184,22 @@ jobs:
         package_update: true
         packages:
           - linux-tools-generic
+        # Mirror cloud-init output onto the serial console (host-side guest.log),
+        # so a failing wait step shows exactly what the guest did.
+        output:
+          all: '| tee -a /var/log/cloud-init-output.log /dev/console'
         runcmd:
-          - modprobe usbip-core usbip-host
+          - echo '[usbip] provisioning start'
+          # usbip-core/usbip-host ship in linux-modules-extra-*, which cloud
+          # images do not install; load them or install for the RUNNING kernel.
+          - modprobe usbip-core usbip-host 2>/dev/null || { apt-get install -y linux-modules-extra-$(uname -r) && modprobe usbip-core usbip-host; }
+          - lsmod | grep -E 'usbip|vhci' || echo '[usbip] usbip modules NOT loaded'
           - sleep 1
-          - usbip list -l
-          - usbip bind -b 1-1 || (rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1)
+          - usbip list -l || echo '[usbip] usbip list -l failed'
+          - usbip bind -b 1-1 || { rmmod ftdi_sio 2>/dev/null || true; usbip bind -b 1-1 || echo '[usbip] bind failed'; }
           - usbipd -D
-          - sleep 1
-          - usbip list -r localhost
+          - sleep 2
+          - usbip list -r localhost && echo '[usbip] server self-check OK' || echo '[usbip] server self-check FAILED'
         '@ | Set-Content -Path user-data -Encoding ascii
         @'
         instance-id: iid-local01
@@ -225,6 +250,10 @@ jobs:
             Write-Host "usbip server ready after $($i * 5)s"
             Write-Host $out
             exit 0
+          }
+          if ($i -gt 0 -and ($i % 24) -eq 0) {
+            Write-Host "[debug] attempt $($i * 5)s: guest.log tail:"
+            Get-Content guest.log -Tail 25 -ErrorAction SilentlyContinue
           }
           Start-Sleep -Seconds 5
         }
