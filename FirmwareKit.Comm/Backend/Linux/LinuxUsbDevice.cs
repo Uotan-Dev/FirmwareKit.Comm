@@ -44,7 +44,15 @@ internal class LinuxUsbDevice : UsbDevice
         if (n != 0)
         {
             ioctl(Fd, (UIntPtr)USBDEVFS_DISCONNECT, ref ifc);
-            n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
+            // udev may rebind a kernel driver (e.g. usbhid for HID devices) right after the
+            // disconnect, so retry the claim a few times instead of failing on the first
+            // EBUSY. Matches libusb's auto-detach behaviour.
+            for (int attempt = 0; attempt < 3; attempt++)
+            {
+                n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
+                if (n == 0) break;
+                Thread.Sleep(50);
+            }
         }
         if (n != 0)
         {

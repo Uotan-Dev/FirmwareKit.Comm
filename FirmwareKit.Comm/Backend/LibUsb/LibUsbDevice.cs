@@ -187,9 +187,16 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         reader = null;
         writer = null;
 
-        if (inEndpoint != 0 && outEndpoint != 0)
+        // Open each direction independently: interrupt-only HID devices (e.g. QEMU
+        // usb-tablet) expose no OUT pipe, so a missing direction must not fail the
+        // session — the session's ReadInterrupt/WriteInterrupt target explicit endpoints.
+        if (inEndpoint != 0)
         {
             reader = usbDevice.OpenEndpointReader((ReadEndpointID)inEndpoint);
+        }
+
+        if (outEndpoint != 0)
+        {
             writer = usbDevice.OpenEndpointWriter((WriteEndpointID)outEndpoint);
         }
 
@@ -200,12 +207,26 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
             for (int endpointIndex = 0; endpointIndex < candidateInEndpoints.Length; endpointIndex++)
             {
-                var testReader = usbDevice.OpenEndpointReader((ReadEndpointID)candidateInEndpoints[endpointIndex]);
-                var testWriter = usbDevice.OpenEndpointWriter((WriteEndpointID)candidateOutEndpoints[endpointIndex]);
-                if (testReader != null && testWriter != null)
+                if (reader == null)
                 {
-                    reader = testReader;
-                    writer = testWriter;
+                    var testReader = usbDevice.OpenEndpointReader((ReadEndpointID)candidateInEndpoints[endpointIndex]);
+                    if (testReader != null)
+                    {
+                        reader = testReader;
+                    }
+                }
+
+                if (writer == null)
+                {
+                    var testWriter = usbDevice.OpenEndpointWriter((WriteEndpointID)candidateOutEndpoints[endpointIndex]);
+                    if (testWriter != null)
+                    {
+                        writer = testWriter;
+                    }
+                }
+
+                if (reader != null && writer != null)
+                {
                     break;
                 }
             }
@@ -213,7 +234,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
         reader?.ReadFlush();
 
-        if (reader == null || writer == null)
+        // A session is usable as long as every direction it was asked to bind actually
+        // opened. IN-only (HID interrupt) and OUT-only devices are valid; the missing
+        // direction's bulk helpers throw NotSupportedException when invoked.
+        if ((inEndpoint != 0 && reader == null) || (outEndpoint != 0 && writer == null))
         {
             Dispose();
             return -1;
@@ -335,7 +359,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
     protected override string BackendName => "libusb";
 
-    protected override bool IsOpen => reader != null && writer != null;
+    // A session is open when at least one direction bound successfully; IN-only (HID
+    // interrupt) and OUT-only devices are valid sessions even though bulk I/O in the
+    // missing direction throws NotSupportedException.
+    protected override bool IsOpen => reader != null || writer != null;
 
     protected override bool IsDisconnectionError(int nativeError)
         => nativeError == (int)Error.NoDevice;
@@ -351,8 +378,14 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
+        if (reader == null)
+        {
+            // IN-only session bound without an OUT pipe is valid for interrupt reads;
+            // bulk reads in a direction that never opened must not NRE.
+            throw new NotSupportedException("The session has no bound IN endpoint for bulk reads (interrupt-only device?).");
+        }
         byte[] chunkBuffer = new byte[length];
-        Error error = reader!.Read(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs), out int readLen);
+        Error error = reader.Read(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs), out int readLen);
         if (error == Error.NoDevice)
         {
             return UsbChunkResult.Fatal((int)error);
@@ -366,6 +399,12 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
+        if (writer == null)
+        {
+            // OUT-only session bound without an IN pipe is valid for interrupt writes;
+            // bulk writes in a direction that never opened must not NRE.
+            throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
+        }
         byte[] chunkBuffer = new byte[length];
         Marshal.Copy(buffer, chunkBuffer, 0, length);
 

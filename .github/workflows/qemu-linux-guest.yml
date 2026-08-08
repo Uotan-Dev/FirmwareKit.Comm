@@ -65,7 +65,7 @@ jobs:
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- SELFTEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- selftest --api libusb --vid 0x0403 --pid 0x6001
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST LIBUSB ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api libusb --vid 0x0403 --pid 0x6001
-            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE EP ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --ep-in 0x81 --ep-out 0x01
+            - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE EP ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --ep-in 0x81 --ep-out 0x02
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE CONCURRENT ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --concurrent
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- IO-TEST NATIVE OFFSET ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- io-test --api native --vid 0x0403 --pid 0x6001 --offset-write
             - cd /opt/fkc && export PATH=$PATH:/opt/dotnet && echo '--- INTERRUPT NATIVE ---' && dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- interrupt-test --api native --vid 0x0627 --pid 0x0001 --ep 0x81
@@ -116,7 +116,7 @@ jobs:
           skips=$(grep -c "SKIP" guest.log || true)
           writes=$(grep -c "PASS write: 64 bytes pattern transferred" guest.log || true)
           resets=$(grep -c "PASS reset" guest.log || true)
-          endpoint_open=$(grep -c "PASS endpoint-open 0x81/0x01" guest.log || true)
+          endpoint_open=$(grep -c "PASS endpoint-open 0x81/0x02" guest.log || true)
           concurrent=$(grep -c "PASS concurrent-io" guest.log || true)
           offset_writes=$(grep -c "via offset overload" guest.log || true)
           interrupts=$(grep -c "PASS interrupt-read timeout count=0" guest.log || true)

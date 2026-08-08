@@ -87,8 +87,8 @@ public sealed class UsbDeviceFilterTests
     [Fact]
     public void Matches_EndpointAddresses_Exact()
     {
-        // Device exposes 0x81/0x01 on interface 0 (see Device()).
-        var filter = new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x01 };
+        // Device exposes 0x81/0x02 on interface 0 (matches the real QEMU usb-serial).
+        var filter = new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x02 };
         Assert.True(filter.Matches(Device()));
     }
 
@@ -96,14 +96,41 @@ public sealed class UsbDeviceFilterTests
     public void Matches_EndpointAddress_Missing_ReturnsFalse()
     {
         Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x82 }.Matches(Device()));
-        Assert.False(new UsbDeviceFilter { EndpointAddressOut = 0x02 }.Matches(Device()));
-        Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x02 }.Matches(Device()));
+        Assert.False(new UsbDeviceFilter { EndpointAddressOut = 0x01 }.Matches(Device())); // usb-serial OUT is 0x02, not 0x01
+        Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = 0x01 }.Matches(Device()));
     }
 
     [Fact]
     public void Matches_EndpointAddresses_IgnoreWhenNotSet()
     {
         Assert.True(new UsbDeviceFilter { EndpointAddressIn = null, EndpointAddressOut = null }.Matches(Device()));
+    }
+
+    [Fact]
+    public void Matches_InOnlyDevice_WithInOnlyFilter()
+    {
+        // HID interrupt-only devices (e.g. QEMU usb-tablet) expose just an IN endpoint;
+        // a filter requesting only EndpointAddressIn must match them.
+        var info = new UsbDeviceInfo
+        {
+            VendorId = 0x0627,
+            ProductId = 0x0001,
+            Interfaces = new[]
+            {
+                new UsbInterfaceInfo
+                {
+                    InterfaceNumber = 0,
+                    Class = 0x03,
+                    Endpoints = new[]
+                    {
+                        new UsbEndpointInfo { EndpointAddress = 0x81, Attributes = 0x03 } // interrupt IN only
+                    }
+                }
+            }
+        };
+
+        Assert.True(new UsbDeviceFilter { EndpointAddressIn = 0x81, EndpointAddressOut = null }.Matches(info));
+        Assert.False(new UsbDeviceFilter { EndpointAddressIn = 0x82, EndpointAddressOut = null }.Matches(info));
     }
 
     [Fact]
@@ -118,7 +145,7 @@ public sealed class UsbDeviceFilterTests
             SourceApiKind = UsbApiKind.Native,
             InterfaceNumber = 0,
             EndpointAddressIn = 0x81,
-            EndpointAddressOut = 0x01
+            EndpointAddressOut = 0x02
         };
         Assert.True(filter.Matches(Device()));
     }
@@ -143,7 +170,7 @@ public sealed class UsbDeviceFilterTests
                 Endpoints = new[]
                 {
                     new UsbEndpointInfo { EndpointAddress = 0x81, Attributes = 0x02 },
-                    new UsbEndpointInfo { EndpointAddress = 0x01, Attributes = 0x02 }
+                    new UsbEndpointInfo { EndpointAddress = 0x02, Attributes = 0x02 }
                 }
             }
         }
