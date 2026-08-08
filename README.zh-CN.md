@@ -52,7 +52,7 @@ dotnet add package FirmwareKit.Comm
 
 ```csharp
 using FirmwareKit.Comm;
-using FirmwareKit.Comm.Usb;
+using FirmwareKit.Comm.Abstractions;
 
 var comm = new FirmwareKitComm();
 

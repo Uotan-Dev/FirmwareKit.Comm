@@ -1,6 +1,6 @@
-using FirmwareKit.Comm.Usb.Abstractions;
-using FirmwareKit.Comm.Usb.Backend;
-using FirmwareKit.Comm.Usb.Core;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Backend;
+using FirmwareKit.Comm.Core;
 
 namespace FirmwareKit.Comm.Tests;
 

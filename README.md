@@ -62,7 +62,7 @@ Use the `FirmwareKitComm` facade to enumerate APIs and devices:
 
 ```csharp
 using FirmwareKit.Comm;
-using FirmwareKit.Comm.Usb;
+using FirmwareKit.Comm.Abstractions;
 
 var comm = new FirmwareKitComm();
 

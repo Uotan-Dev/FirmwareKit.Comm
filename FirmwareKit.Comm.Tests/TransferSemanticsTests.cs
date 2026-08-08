@@ -1,5 +1,5 @@
-using FirmwareKit.Comm.Usb.Abstractions;
-using FirmwareKit.Comm.Usb.Backend;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Backend;
 
 namespace FirmwareKit.Comm.IntegrationTests;
 
