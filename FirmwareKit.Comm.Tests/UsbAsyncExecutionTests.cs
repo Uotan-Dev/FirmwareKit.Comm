@@ -70,7 +70,7 @@ public sealed class UsbAsyncExecutionTests
             },
             cts.Token);
 
-        Assert.True(started.Wait(TimeSpan.FromSeconds(10)), "action did not start");
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken), "action did not start");
         cts.Cancel();
 
         Assert.Equal(42, await task);

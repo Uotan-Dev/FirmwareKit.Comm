@@ -14,76 +14,76 @@ namespace FirmwareKit.Comm.Tests;
 public sealed class UsbSessionConcurrencyTests
 {
     [Fact]
-    public void BlockedRead_DoesNotStallConcurrentWrite()
+    public async Task BlockedRead_DoesNotStallConcurrentWrite()
     {
         var device = new GateProbeDevice();
         using var session = new UsbDeviceSession("test", UsbApiKind.Native, device);
 
         // Start a read that blocks inside the device (holding the read gate).
-        var readTask = Task.Run(() => session.Read(16, 30000));
+        var readTask = Task.Run(() => session.Read(16, 30000), TestContext.Current.CancellationToken);
         Assert.True(SpinWaitUntil(() => device.ReadEntered > 0, TimeSpan.FromSeconds(5)), "read never reached the device");
 
         // A write must complete while the read is still blocked (full-duplex).
-        var writeTask = Task.Run(() => session.Write(new byte[] { 1, 2, 3, 4 }, 4, 2000));
-        Assert.True(writeTask.Wait(TimeSpan.FromSeconds(2)), "write was stalled by a blocked read");
+        var writeTask = Task.Run(() => session.Write(new byte[] { 1, 2, 3, 4 }, 4, 2000), TestContext.Current.CancellationToken);
+        await AssertCompletesWithin(writeTask, TimeSpan.FromSeconds(2), "write was stalled by a blocked read");
 
         device.ReleaseReads();
-        Assert.True(readTask.Wait(TimeSpan.FromSeconds(5)));
+        await AssertCompletesWithin(readTask, TimeSpan.FromSeconds(5), "read did not complete after release");
         Assert.Equal(1, device.WriteEntered);
     }
 
     [Fact]
-    public void BlockedRead_DoesNotStallConcurrentAsyncWrite()
+    public async Task BlockedRead_DoesNotStallConcurrentAsyncWrite()
     {
         var device = new GateProbeDevice();
         using var session = new UsbDeviceSession("test", UsbApiKind.Native, device);
 
-        var readTask = Task.Run(() => session.Read(16, 30000));
+        var readTask = Task.Run(() => session.Read(16, 30000), TestContext.Current.CancellationToken);
         Assert.True(SpinWaitUntil(() => device.ReadEntered > 0, TimeSpan.FromSeconds(5)), "read never reached the device");
 
         var writeTask = session.WriteAsync(new byte[] { 1, 2, 3, 4 }, 4, 2000, TestContext.Current.CancellationToken);
-        Assert.True(writeTask.Wait(TimeSpan.FromSeconds(2)), "async write was stalled by a blocked read");
+        await AssertCompletesWithin(writeTask, TimeSpan.FromSeconds(2), "async write was stalled by a blocked read");
 
         device.ReleaseReads();
-        Assert.True(readTask.Wait(TimeSpan.FromSeconds(5)));
+        await AssertCompletesWithin(readTask, TimeSpan.FromSeconds(5), "read did not complete after release");
         Assert.Equal(1, device.WriteEntered);
     }
 
     [Fact]
-    public void SameDirectionReads_AreSerialized()
+    public async Task SameDirectionReads_AreSerialized()
     {
         var device = new GateProbeDevice();
         using var session = new UsbDeviceSession("test", UsbApiKind.Native, device);
 
-        var first = Task.Run(() => session.Read(16, 30000));
+        var first = Task.Run(() => session.Read(16, 30000), TestContext.Current.CancellationToken);
         Assert.True(SpinWaitUntil(() => device.ReadEntered > 0, TimeSpan.FromSeconds(5)), "first read never reached the device");
 
-        var second = Task.Run(() => session.Read(16, 30000));
+        var second = Task.Run(() => session.Read(16, 30000), TestContext.Current.CancellationToken);
         Thread.Sleep(300);
         Assert.Equal(1, device.ReadEntered); // second read is queued behind the read gate
 
         device.ReleaseReads();
-        Assert.True(first.Wait(TimeSpan.FromSeconds(5)));
-        Assert.True(second.Wait(TimeSpan.FromSeconds(5)));
+        await AssertCompletesWithin(first, TimeSpan.FromSeconds(5), "first read did not complete");
+        await AssertCompletesWithin(second, TimeSpan.FromSeconds(5), "second read did not complete");
     }
 
     [Fact]
-    public void Reset_WaitsForInFlightRead()
+    public async Task Reset_WaitsForInFlightRead()
     {
         var device = new GateProbeDevice();
         using var session = new UsbDeviceSession("test", UsbApiKind.Native, device);
 
-        var readTask = Task.Run(() => session.Read(16, 30000));
+        var readTask = Task.Run(() => session.Read(16, 30000), TestContext.Current.CancellationToken);
         Assert.True(SpinWaitUntil(() => device.ReadEntered > 0, TimeSpan.FromSeconds(5)), "read never reached the device");
 
         // Reset must not overlap the in-flight read: it blocks until the read releases.
-        var resetTask = Task.Run(() => session.Reset());
+        var resetTask = Task.Run(() => session.Reset(), TestContext.Current.CancellationToken);
         Thread.Sleep(200);
         Assert.False(resetTask.IsCompleted);
 
         device.ReleaseReads();
-        Assert.True(resetTask.Wait(TimeSpan.FromSeconds(5)));
-        Assert.True(readTask.Wait(TimeSpan.FromSeconds(5)));
+        await AssertCompletesWithin(resetTask, TimeSpan.FromSeconds(5), "reset did not complete");
+        await AssertCompletesWithin(readTask, TimeSpan.FromSeconds(5), "read did not complete after release");
         Assert.Equal(1, device.ResetCount);
     }
 
@@ -207,6 +207,20 @@ public sealed class UsbSessionConcurrencyTests
         Assert.Equal(0xA1, device.LastSetupPacket!.Value.RequestType); // device→host, class, interface
         Assert.Equal(0x21, device.LastSetupPacket.Value.Request);      // GET_LINE_CODING
         Assert.Equal(7, device.LastSetupPacket.Value.Length);
+    }
+
+    /// <summary>
+    /// Asserts <paramref name="task"/> completes within <paramref name="timeout"/>, surfacing its
+    /// exception when it faulted. Await-based alternative to Task.Wait that keeps the xUnit
+    /// analyzers (xUnit1031/xUnit1051) quiet.
+    /// <para>断言 <paramref name="task"/> 在 <paramref name="timeout"/> 内完成，出错时上抛其异常。
+    /// 基于 await 的 Task.Wait 替代方案，避免触发 xUnit 分析器（xUnit1031/xUnit1051）。</para>
+    /// </summary>
+    private static async Task AssertCompletesWithin(Task task, TimeSpan timeout, string failureMessage)
+    {
+        var completed = await Task.WhenAny(task, Task.Delay(timeout, TestContext.Current.CancellationToken));
+        Assert.True(completed == task, failureMessage);
+        await task;
     }
 
     private static bool SpinWaitUntil(Func<bool> condition, TimeSpan timeout)
