@@ -85,6 +85,45 @@ public sealed class UsbDeviceInfoFactoryAndProjectionTests
         Assert.True(skip.Disposed);
     }
 
+    [Fact]
+    public void ToSessions_SkipsDevicesWithoutOpenHandle()
+    {
+        // A busy device (interface claimed by another session/process) is reported by the
+        // finders with metadata only; it must NOT back a usable session, and must be
+        // disposed so no handle is leaked. This guards the cross-platform enumeration
+        // hardening (Windows/Linux/macOS native + libusb).
+        // <para>被占用设备（接口被其他会话/进程声明）由各 finder 以仅元数据形式报告；
+        // 它不得支撑可用会话，且必须被释放以免句柄泄漏。该测试守护跨平台枚举加固
+        // （Windows/Linux/macOS native + libusb）。</para>
+        var open = NewDevice(serial: "open");
+        var busy = NewDevice(serial: "busy");
+        busy.HandleOpen = false;
+
+        var sessions = UsbProviderProjection.ToSessions("libusb", UsbApiKind.LibUsbDotNet, new[] { open, busy }, null);
+
+        Assert.Single(sessions);
+        Assert.False(open.Disposed);
+        Assert.True(busy.Disposed);
+    }
+
+    [Fact]
+    public void ToInfos_StillReportsDevicesWithoutOpenHandle()
+    {
+        // The enumeration (metadata) path must still report a busy device — it must not
+        // silently disappear from the device list just because its interface is claimed
+        // elsewhere. Only the session path skips it.
+        // <para>枚举（元数据）路径仍必须上报被占用设备——不能仅因其接口被其他位置声明就
+        // 静默地从设备列表中消失。只有会话路径跳过它。</para>
+        var busy = NewDevice(serial: "busy");
+        busy.HandleOpen = false;
+
+        var infos = UsbProviderProjection.ToInfos("libusb", UsbApiKind.LibUsbDotNet, new[] { busy }, null);
+
+        Assert.Single(infos);
+        Assert.Equal("busy", infos[0].SerialNumber);
+        Assert.True(busy.Disposed);
+    }
+
     private static FakeUsbDevice NewDevice(string serial = "FT123", string path = "/dev/bus/usb/001/002") => new()
     {
         DevicePath = path,
@@ -107,9 +146,14 @@ public sealed class UsbDeviceInfoFactoryAndProjectionTests
     {
         public bool Disposed { get; private set; }
 
+        public bool HandleOpen { get; set; } = true;
+
+        /// <inheritdoc/>
+        internal override bool IsHandleOpen => HandleOpen;
+
         protected override string BackendName => "fake";
 
-        protected override bool IsOpen => true;
+        protected override bool IsOpen => HandleOpen;
 
         protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
             => UsbChunkResult.Success(0);

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace FirmwareKit.Comm.Abstractions;
 
 /// <summary>
@@ -73,5 +75,63 @@ internal static class UsbDeviceIdentity
             interfaceProtocol,
             serial
         });
+    }
+
+    /// <summary>
+    /// Rebuilds a <see cref="UsbDeviceFilter"/> from a <see cref="BuildKey"/>-produced key
+    /// (segments: apiName|apiKind|VID|PID|ifClass|ifSub|ifProt|serial|path), carrying the
+    /// VID/PID and the interface triple forward so a by-key open binds the SAME interface
+    /// the key was produced from. A key whose interface segment is FF|42|01 (an ADB
+    /// interface-filtered enumeration) must not fall back to the first bulk interface
+    /// (FF|FF|00) of a composite device.
+    /// <para>从 <see cref="BuildKey"/> 生成的键（分段：apiName|apiKind|VID|PID|ifClass|ifSub|
+    /// ifProt|serial|path）重建 <see cref="UsbDeviceFilter"/>，携带 VID/PID 与接口三元组，
+    /// 使按键打开时绑定与生成该键时相同的接口。接口段为 FF|42|01 的键（ADB 接口过滤器枚举）
+    /// 不得回退到复合设备第一个 bulk 接口（FF|FF|00）。</para>
+    /// </summary>
+    /// <param name="deviceKey">A key produced by <see cref="BuildKey"/>. <para>由 <see cref="BuildKey"/> 生成的键。</para></param>
+    /// <returns>A filter, or <c>null</c> when the key cannot be parsed. <para>过滤器；无法解析时返回 <c>null</c>。</para></returns>
+    public static UsbDeviceFilter? TryParseKeyFilter(string deviceKey)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+        {
+            return null;
+        }
+
+        // Split into at most 9 segments; VID/PID/interface triple are segments 2..6.
+        // <para>最多拆为 9 段；VID/PID/接口三元组为第 2..6 段。</para>
+        string[] parts = deviceKey.Split('|');
+        if (parts.Length < 7)
+        {
+            return null;
+        }
+
+        var filter = new UsbDeviceFilter();
+        if (ushort.TryParse(parts[2], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort vid))
+        {
+            filter.VendorId = vid;
+        }
+
+        if (ushort.TryParse(parts[3], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out ushort pid))
+        {
+            filter.ProductId = pid;
+        }
+
+        if (byte.TryParse(parts[4], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte ifClass))
+        {
+            filter.InterfaceClass = ifClass;
+        }
+
+        if (byte.TryParse(parts[5], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte ifSubClass))
+        {
+            filter.InterfaceSubClass = ifSubClass;
+        }
+
+        if (byte.TryParse(parts[6], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out byte ifProtocol))
+        {
+            filter.InterfaceProtocol = ifProtocol;
+        }
+
+        return filter;
     }
 }

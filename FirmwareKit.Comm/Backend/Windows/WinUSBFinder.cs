@@ -54,6 +54,18 @@ namespace FirmwareKit.Comm.Backend.Windows
                 return devices;
             }
 
+            // Some winusb-driven interfaces (e.g. standard ADB interfaces on winusb.sys)
+            // do not write a DeviceInterfaceGUIDs value under their node's Device Parameters
+            // even though the interface registration exists under
+            // HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses. Build a reverse map
+            // (device instance -> interface GUIDs) once per enumeration and fall back to it
+            // when the node-level value is missing.
+            // <para>部分 winusb 驱动的接口（如 winusb.sys 上的标准 ADB 接口）不会在节点
+            // Device Parameters 下写入 DeviceInterfaceGUIDs 值，但接口注册实际存在于
+            // HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses。每次枚举构建一次反向映射
+            // （设备实例 -> 接口 GUID），当节点级值为空时回退使用。</para>
+            var deviceClassGuids = BuildDeviceClassGuidMap();
+
             try
             {
                 var seenGuids = new HashSet<Guid>();
@@ -76,7 +88,7 @@ namespace FirmwareKit.Comm.Backend.Windows
 
                     LastScannedNodeCount++;
                     UsbTrace.Log($"WinUSBFinder: node [{instanceId}]");
-                    foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId))
+                    foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId, deviceClassGuids))
                     {
                         if (!seenGuids.Add(guid))
                         {
@@ -114,18 +126,23 @@ namespace FirmwareKit.Comm.Backend.Windows
 
         /// <summary>
         /// Reads the DeviceInterfaceGUIDs (REG_MULTI_SZ) registered for a device node under
-        /// HKLM\SYSTEM\CurrentControlSet\Enum\&lt;instance&gt;\Device Parameters.
+        /// HKLM\SYSTEM\CurrentControlSet\Enum\&lt;instance&gt;\Device Parameters, falling back
+        /// to the DeviceClasses reverse map when the node-level value is absent (winusb-driven
+        /// interfaces such as ADB often register their interface GUID only there).
         /// <para>读取设备节点在 HKLM\SYSTEM\CurrentControlSet\Enum\&lt;instance&gt;\Device Parameters
-        /// 下注册的 DeviceInterfaceGUIDs（REG_MULTI_SZ）。</para>
+        /// 下注册的 DeviceInterfaceGUIDs（REG_MULTI_SZ）；节点级值缺失时回退到 DeviceClasses
+        /// 反向映射（winusb 驱动的接口如 ADB 通常只在那里注册接口 GUID）。</para>
         /// </summary>
-        private static IEnumerable<Guid> ReadDeviceInterfaceGuids(string instanceId)
+        private static IEnumerable<Guid> ReadDeviceInterfaceGuids(
+            string instanceId,
+            IReadOnlyDictionary<string, List<Guid>> deviceClassGuids)
         {
             var result = new List<Guid>();
             string subKey = @"SYSTEM\CurrentControlSet\Enum\" + instanceId + @"\Device Parameters";
             IntPtr key;
             if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, subKey, 0, Win32API.KEY_READ, out key) != 0)
             {
-                return result;
+                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
             }
 
             try
@@ -135,7 +152,7 @@ namespace FirmwareKit.Comm.Backend.Windows
                 if (Win32API.RegQueryValueExW(key, "DeviceInterfaceGUIDs", IntPtr.Zero, out type, IntPtr.Zero, ref size) != 0 ||
                     size == 0)
                 {
-                    return result;
+                    return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
                 }
 
                 IntPtr buffer = Marshal.AllocHGlobal((int)size);
@@ -163,6 +180,142 @@ namespace FirmwareKit.Comm.Backend.Windows
             finally
             {
                 Win32API.RegCloseKey(key);
+            }
+
+            if (result.Count == 0)
+            {
+                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Builds a reverse map from device instance id (lowercase, '\' separated) to the
+        /// interface GUIDs registered for it under HKLM\SYSTEM\CurrentControlSet\Control\
+        /// DeviceClasses. WinUSB drivers register the device interface class GUID in the
+        /// INF; the interface symbol links then live under the GUID key here.
+        /// <para>构建从设备实例 ID（小写、'\\' 分隔）到其在 HKLM\SYSTEM\CurrentControlSet\
+        /// Control\DeviceClasses 下注册的接口 GUID 的反向映射。WinUSB 驱动在 INF 中注册
+        /// 设备接口类 GUID，接口符号链接随后位于此处的 GUID 键下。</para>
+        /// </summary>
+        private static Dictionary<string, List<Guid>> BuildDeviceClassGuidMap()
+        {
+            var map = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
+            IntPtr classesKey;
+            const string classesSubKey = @"SYSTEM\CurrentControlSet\Control\DeviceClasses";
+            if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, classesSubKey, 0, Win32API.KEY_READ, out classesKey) != 0)
+            {
+                return map;
+            }
+
+            try
+            {
+                uint guidIndex = 0;
+                while (true)
+                {
+                    var guidName = new System.Text.StringBuilder(64);
+                    uint guidNameCapacity = (uint)guidName.Capacity;
+                    int guidEnumResult = Win32API.RegEnumKeyExW(
+                        classesKey, guidIndex++, guidName, ref guidNameCapacity,
+                        IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                    if (guidEnumResult != 0)
+                    {
+                        break; // ERROR_NO_MORE_ITEMS (or an unexpected failure) ends the walk.
+                    }
+
+                    if (!Guid.TryParse(guidName.ToString().Trim('{', '}'), out Guid guid))
+                    {
+                        continue;
+                    }
+
+                    IntPtr guidKey;
+                    if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, classesSubKey + @"\" + guidName, 0, Win32API.KEY_READ, out guidKey) != 0)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        uint linkIndex = 0;
+                        while (true)
+                        {
+                            var linkName = new System.Text.StringBuilder(512);
+                            uint linkNameCapacity = (uint)linkName.Capacity;
+                            int linkEnumResult = Win32API.RegEnumKeyExW(
+                                guidKey, linkIndex++, linkName, ref linkNameCapacity,
+                                IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+                            if (linkEnumResult != 0)
+                            {
+                                break;
+                            }
+
+                            // Link name format (lowercase):
+                            // ##?#USB#VID_12D1&PID_107D&MI_02#a&f92a917&2&0002#{dee824ef-...}
+                            // <para>链接名格式（小写）：
+                            // ##?#USB#VID_12D1&PID_107D&MI_02#a&f92a917&2&0002#{dee824ef-...}</para>
+                            string link = linkName.ToString();
+                            int hashHashQuestion = link.IndexOf("?#", StringComparison.Ordinal);
+                            if (hashHashQuestion < 0)
+                            {
+                                continue;
+                            }
+
+                            string instancePath = link.Substring(hashHashQuestion + 2);
+                            int guidBrace = instancePath.IndexOf("#{", StringComparison.Ordinal);
+                            if (guidBrace >= 0)
+                            {
+                                instancePath = instancePath.Substring(0, guidBrace);
+                            }
+
+                            if (instancePath.IndexOf("VID_", StringComparison.OrdinalIgnoreCase) < 0)
+                            {
+                                continue;
+                            }
+
+                            string instanceId = instancePath.Replace('#', '\\').ToLowerInvariant();
+                            if (!map.TryGetValue(instanceId, out List<Guid>? guids))
+                            {
+                                guids = new List<Guid>();
+                                map[instanceId] = guids;
+                            }
+
+                            if (!guids.Contains(guid))
+                            {
+                                guids.Add(guid);
+                            }
+                        }
+                    }
+                    finally
+                    {
+                        Win32API.RegCloseKey(guidKey);
+                    }
+                }
+            }
+            finally
+            {
+                Win32API.RegCloseKey(classesKey);
+            }
+
+            return map;
+        }
+
+        private static IReadOnlyList<Guid> FallbackToDeviceClassGuids(
+            List<Guid> result,
+            string instanceId,
+            IReadOnlyDictionary<string, List<Guid>> deviceClassGuids)
+        {
+            if (deviceClassGuids.TryGetValue(instanceId.ToLowerInvariant(), out List<Guid>? fallback))
+            {
+                foreach (Guid guid in fallback)
+                {
+                    if (!result.Contains(guid))
+                    {
+                        result.Add(guid);
+                    }
+                }
+
+                UsbTrace.Log($"WinUSBFinder: fell back to DeviceClasses GUIDs for [{instanceId}]: {string.Join(", ", fallback)}");
             }
 
             return result;

@@ -186,9 +186,8 @@ internal static class LibUsbFinder
         }
 
         using (var context = new UsbContext())
+        using (var deviceList = context.List())
         {
-            var deviceList = context.List();
-
             foreach (var device in deviceList)
             {
                 var libUsbDevice = device as LibUsbDotNet.LibUsb.UsbDevice;
@@ -229,14 +228,20 @@ internal static class LibUsbFinder
                     UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
                 };
 
-                if (usbDevice.CreateHandle() == 0)
+                // Keep the device even when the handle cannot be opened (e.g. the interface
+                // is claimed by another session or process). Enumeration must reflect the
+                // current device state: the metadata was already collected above, and a busy
+                // device must not silently disappear from the list. Sessions over a
+                // non-open device are skipped later by UsbProviderProjection.ToSessions.
+                // <para>即使句柄无法打开（例如接口已被其他会话或进程声明）也保留该设备。
+                // 枚举必须反映当前设备状态：元数据已在上方收集，被占用的设备不应静默地从
+                // 列表中消失。基于未打开设备的会话稍后由 UsbProviderProjection.ToSessions 跳过。</para>
+                if (usbDevice.CreateHandle() != 0)
                 {
-                    devices.Add(usbDevice);
+                    UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} busy or unopenable - reported with metadata only.");
                 }
-                else
-                {
-                    usbDevice.Dispose();
-                }
+
+                devices.Add(usbDevice);
             }
         }
         return devices;

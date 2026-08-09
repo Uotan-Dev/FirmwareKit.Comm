@@ -84,6 +84,32 @@ $devices = dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- al
 Write-Check "all-devices --json" ($LASTEXITCODE -eq 0)
 if ($LASTEXITCODE -ne 0) { $failures++ } else { Write-Host $devices }
 
+# --- 4b. Repeated enumeration stability -----------------------------------
+# Regression guard: a device must stay visible across repeated enumerations —
+# it must NOT vanish after the first pass (feedback issue: enumeration lost the
+# device while/after a session was opened). Compare the vid:pid:interface set
+# across two consecutive passes.
+# <para>回归守护：设备在重复枚举中必须持续可见——不得在首轮后消失（反馈问题：枚举在
+# 会话打开期间/之后丢失设备）。比较连续两轮的 vid:pid:interface 集合。</para>
+if ($LASTEXITCODE -eq 0) {
+    $devices2 = dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api $Api --json
+    if ($LASTEXITCODE -eq 0) {
+        $set1 = @($devices | ConvertFrom-Json | ForEach-Object { "$($_.vid):$($_.pid):$($_.interfaceClass)/$($_.interfaceSubClass)/$($_.interfaceProtocol)" } | Sort-Object) -join ';'
+        $set2 = @($devices2 | ConvertFrom-Json | ForEach-Object { "$($_.vid):$($_.pid):$($_.interfaceClass)/$($_.interfaceSubClass)/$($_.interfaceProtocol)" } | Sort-Object) -join ';'
+        if ($set1 -eq $set2) {
+            Write-Check "repeated enumeration stable ($(@($set1 -split ';')).Count devices both passes)" $true
+        }
+        else {
+            Write-Host "FAIL`trepeated enumeration: device set changed between passes"
+            $failures++
+        }
+    }
+    else {
+        Write-Host "FAIL`trepeated enumeration: second pass failed"
+        $failures++
+    }
+}
+
 # --- 5. Device selftest (read-only) --------------------------------------
 $selftestArgs = @("selftest", "--api", $Api)
 if ($Vid) { $selftestArgs += "--vid"; $selftestArgs += $Vid }

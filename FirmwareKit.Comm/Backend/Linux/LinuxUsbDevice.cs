@@ -317,6 +317,9 @@ internal class LinuxUsbDevice : UsbDevice
 
     protected override bool IsOpen => !_fd.IsInvalid;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => !_fd.IsInvalid;
+
     protected override bool IsDisconnectionError(int nativeError)
         => nativeError == ENODEV || nativeError == ESHUTDOWN || nativeError == EPROTO;
 

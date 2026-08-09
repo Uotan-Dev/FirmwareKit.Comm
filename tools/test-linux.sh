@@ -93,6 +93,33 @@ else
     echo "$DEVICES" | head -10
 fi
 
+# --- 4b. Repeated enumeration stability -----------------------------------
+# Regression guard: a device must stay visible across repeated enumerations —
+# it must NOT vanish after the first pass (feedback issue: enumeration lost the
+# device while/after a session was opened). Compare the vid:pid:interface set
+# across two consecutive passes.
+# <para>回归守护：设备在重复枚举中必须持续可见——不得在首轮后消失（反馈问题：枚举在
+# 会话打开期间/之后丢失设备）。比较连续两轮的 vid:pid:interface 集合。</para>
+if [ "$RC" -eq 0 ]; then
+    DEVICES2="$(dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- all-devices --api "$API" --json 2>&1)"
+    RC2=$?
+    if [ "$RC2" -ne 0 ]; then
+        echo "FAIL	repeated enumeration: second pass failed (exit $RC2)"
+        FAILURES=$((FAILURES + 1))
+    else
+        SET1="$(echo "$DEVICES" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        SET2="$(echo "$DEVICES2" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        COUNT1=$(echo "$SET1" | grep -c . || true)
+        COUNT2=$(echo "$SET2" | grep -c . || true)
+        if [ "$SET1" = "$SET2" ]; then
+            echo "PASS	repeated enumeration stable ($COUNT1 devices both passes)"
+        else
+            echo "FAIL	repeated enumeration: device set changed between passes ($COUNT1 vs $COUNT2)"
+            FAILURES=$((FAILURES + 1))
+        fi
+    fi
+fi
+
 # --- 5. Device selftest (read-only) --------------------------------------
 ARGS=(selftest --api "$API")
 [ -n "$VID" ] && ARGS+=(--vid "$VID")

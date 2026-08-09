@@ -464,6 +464,16 @@ public sealed class UsbCommunicationLayer
             throw new ArgumentException("Device key cannot be null or whitespace.", nameof(deviceKey));
         }
 
+        // Rebuild the filter embedded in the key (VID/PID + interface triple) so the
+        // backend binds the SAME interface the key was produced from. Without this, an
+        // interface-filtered key (e.g. ADB FF|42|01) is matched against sessions opened
+        // with no interface constraint, which binds the first bulk interface (FF|FF|00)
+        // of a composite device and never equals the requested key.
+        // <para>重建键中内嵌的过滤器（VID/PID + 接口三元组），使后端绑定与生成该键时相同的
+        // 接口。否则，接口过滤器产生的键（如 ADB FF|42|01）会被拿去与无接口约束打开的会话
+        // 比较，而无约束打开会绑定复合设备第一个 bulk 接口（FF|FF|00），永远不等于所请求的键。</para>
+        var keyFilter = UsbDeviceIdentity.TryParseKeyFilter(deviceKey);
+
         var providers = ResolveProviders(apiKind);
 
         foreach (var provider in providers)
@@ -473,7 +483,7 @@ public sealed class UsbCommunicationLayer
                 continue;
             }
 
-            var sessions = provider.EnumerateDeviceSessions(filter: null);
+            var sessions = provider.EnumerateDeviceSessions(keyFilter);
             foreach (var session in sessions)
             {
                 if (string.Equals(session.DeviceInfo.DeviceKey, deviceKey, StringComparison.Ordinal))

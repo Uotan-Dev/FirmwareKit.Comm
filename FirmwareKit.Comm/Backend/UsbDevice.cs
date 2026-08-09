@@ -943,6 +943,17 @@ internal abstract class UsbDevice : IDisposable
     }
 
     /// <summary>
+    /// Gets whether the native device handle is currently acquired (the device is open).
+    /// <para>获取是否已获取原生设备句柄（设备处于打开状态）。</para>
+    /// Most backends only create devices after a successful open, so the default is
+    /// <c>true</c>; the libusb backend overrides it because its finder reports busy
+    /// devices (occupied by another session/process) with metadata only.
+    /// <para>大多数后端仅在成功打开后创建设备，因此默认值为 <c>true</c>；libusb 后端重写
+    /// 该方法，因为其 finder 会以仅元数据的形式报告被占用设备（被其他会话/进程占用）。</para>
+    /// </summary>
+    internal virtual bool IsHandleOpen => true;
+
+    /// <summary>
     /// Releases the device handle and all associated resources.
     /// <para>释放设备句柄及所有关联资源。</para>
     /// </summary>

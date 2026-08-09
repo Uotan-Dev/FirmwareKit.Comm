@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Diagnostics;
 using static FirmwareKit.Comm.Backend.MacOS.MacHostUsbAPI;
 
 namespace FirmwareKit.Comm.Backend.MacOS;
@@ -107,14 +108,22 @@ internal static class MacHostUsbFinder
                     UsbDeviceType = UsbDeviceType.MacOS
                 };
 
-                if (dev.CreateHandle() == 0)
+                // Keep the device even when the handle cannot be opened (e.g. the device is
+                // claimed by another process and IOUSBHostDeviceOpen returns exclusive-access
+                // busy). Enumeration must reflect the current device state: the metadata was
+                // already collected above, and a busy device must not silently disappear from
+                // the list. Sessions over a non-open device are skipped later by
+                // UsbProviderProjection.ToSessions.
+                // <para>即使句柄无法打开（例如设备已被其他进程声明，IOUSBHostDeviceOpen 返回
+                // 独占访问繁忙）也保留该设备。枚举必须反映当前设备状态：元数据已在上方收集，
+                // 被占用的设备不应静默地从列表中消失。基于未打开设备的会话稍后由
+                // UsbProviderProjection.ToSessions 跳过。</para>
+                if (dev.CreateHandle() != 0)
                 {
-                    devices.Add(dev);
+                    UsbTrace.Log($"MacHostUsbFinder: device {registryEntryId} busy or unopenable - reported with metadata only.");
                 }
-                else
-                {
-                    dev.Dispose();
-                }
+
+                devices.Add(dev);
             }
         }
         finally

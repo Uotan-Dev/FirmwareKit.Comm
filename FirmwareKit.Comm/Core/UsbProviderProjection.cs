@@ -27,6 +27,16 @@ internal static class UsbProviderProjection
         var sessions = new List<IUsbDeviceSession>(devices.Count);
         foreach (var device in devices)
         {
+            // A device reported with metadata only (e.g. the interface is claimed by
+            // another session or process) cannot back a usable session - skip it.
+            // <para>仅以元数据形式报告的设备（例如接口已被其他会话或进程声明）无法支撑
+            // 可用会话——跳过。</para>
+            if (!device.IsHandleOpen)
+            {
+                device.Dispose();
+                continue;
+            }
+
             var session = new UsbDeviceSession(apiName, apiKind, device);
             if (filter == null || filter.Matches(session.DeviceInfo))
             {

@@ -40,6 +40,9 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     public override byte EndpointIn => ReadEndpointId;
     public override byte EndpointOut => WriteEndpointId;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => usbDevice != null;
+
     public override int DefaultTimeoutMs => PlatformDefaultTimeoutMs;
 
     private static string BuildDevicePath(LibUsbDotNet.LibUsb.UsbDevice device)
@@ -78,43 +81,72 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     public override int CreateHandle()
     {
         context = new UsbContext();
-        var candidates = context.List().OfType<LibUsbDotNet.LibUsb.UsbDevice>().ToList();
 
-        LibUsbDotNet.LibUsb.UsbDevice? device = null;
-
-        if (BusNumber != 0 || DeviceAddress != 0)
+        // UsbContext.List() returns a UsbDeviceCollection that MUST be disposed: the
+        // collection owns the native device handles, and leaving it undisposed lets the
+        // devices' SafeHandle finalizers run against memory already freed by
+        // libusb_exit, crashing with 0xC0000005 in UnrefDevice. Clone the matched
+        // device (as the LibUsbDotNet docs recommend) so the session keeps a valid
+        // handle after the collection is disposed.
+        // <para>UsbContext.List() 返回的 UsbDeviceCollection 必须释放：集合持有原生设备
+        // 句柄，不释放会导致设备 SafeHandle 终结器对 libusb_exit 已释放的内存执行 unref，
+        // 在 UnrefDevice 处以 0xC0000005 崩溃。按 LibUsbDotNet 文档建议 Clone 匹配到的
+        // 设备，使会话在集合释放后仍持有有效句柄。</para>
+        LibUsbDotNet.LibUsb.UsbDevice? device;
+        using (var candidates = context.List())
         {
-            device = candidates.FirstOrDefault(d => d.BusNumber == BusNumber && d.Address == DeviceAddress);
+            var candidateList = candidates.OfType<LibUsbDotNet.LibUsb.UsbDevice>().ToList();
+
+            device = null;
+            if (BusNumber != 0 || DeviceAddress != 0)
+            {
+                device = candidateList.FirstOrDefault(d => d.BusNumber == BusNumber && d.Address == DeviceAddress);
+            }
+
+            if (device == null && !string.IsNullOrWhiteSpace(DevicePath))
+            {
+                device = candidateList.FirstOrDefault(d =>
+                    string.Equals(BuildDevicePath(d), DevicePath, StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (device == null)
+            {
+                device = candidateList.FirstOrDefault(d =>
+                    d.VendorId == Vid &&
+                    d.ProductId == Pid &&
+                    HasBulkInterface(d));
+            }
+
+            if (device != null)
+            {
+                usbDevice = device.Clone();
+            }
         }
 
-        if (device == null && !string.IsNullOrWhiteSpace(DevicePath))
-        {
-            device = candidates.FirstOrDefault(d =>
-                string.Equals(BuildDevicePath(d), DevicePath, StringComparison.OrdinalIgnoreCase));
-        }
-
-        if (device == null)
-        {
-            device = candidates.FirstOrDefault(d =>
-                d.VendorId == Vid &&
-                d.ProductId == Pid &&
-                HasBulkInterface(d));
-        }
-
-        if (device == null)
+        if (device == null || usbDevice == null)
         {
             context.Dispose();
             context = null;
             return -1;
         }
 
-        usbDevice = device;
         try
         {
             usbDevice.Open();
         }
         catch
         {
+            // Open() failed (e.g. the interface is claimed by another session or process).
+            // Never Close() a device that was never opened: LibUsbDotNet's Close() on an
+            // unopened device corrupts the native refcount and the device's finalizer
+            // later crashes with 0xC0000005 in UnrefDevice. Dispose() the clone (releases
+            // the SafeHandle) and release only the context.
+            // <para>Open() 失败（例如接口已被其他会话或进程声明）。绝不对从未成功打开的设备
+            // 调用 Close()：LibUsbDotNet 对未打开设备调用 Close() 会破坏原生引用计数，
+            // 设备终结器随后在 UnrefDevice 处以 0xC0000005 崩溃。对克隆调用 Dispose()
+            // （释放 SafeHandle），并仅释放上下文。</para>
+            (usbDevice as IDisposable)?.Dispose();
+            usbDevice = null;
             Dispose();
             return -1;
         }
@@ -268,7 +300,15 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (usbDevice != null)
         {
+            // Close() releases the device handle; Dispose() additionally releases the
+            // underlying Device SafeHandle. Calling only Close() leaves the SafeHandle
+            // to the finalizer, which then UnrefDevices memory already freed by
+            // libusb_exit -> 0xC0000005.
+            // <para>Close() 释放设备句柄；Dispose() 额外释放底层 Device SafeHandle。
+            // 仅调用 Close() 会把 SafeHandle 留给终结器，终结器会对 libusb_exit 已释放的
+            // 内存执行 UnrefDevice，导致 0xC0000005。</para>
             usbDevice.Close();
+            (usbDevice as IDisposable)?.Dispose();
             usbDevice = null;
         }
         if (context != null)

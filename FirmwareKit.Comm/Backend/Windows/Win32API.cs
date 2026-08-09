@@ -86,6 +86,10 @@ internal class Win32API
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int RegQueryValueExW(IntPtr hKey, string lpValueName, IntPtr lpReserved, out uint lpType, IntPtr lpData, ref uint lpcbData);
 
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern int RegEnumKeyExW(IntPtr hKey, uint dwIndex, System.Text.StringBuilder lpName, ref uint lpcchName,
+                                           IntPtr lpReserved, IntPtr lpClass, IntPtr lpcchClass, IntPtr lpftLastWriteTime);
+
     [DllImport("advapi32.dll", SetLastError = true)]
     public static extern int RegCloseKey(IntPtr hKey);
 

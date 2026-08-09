@@ -338,6 +338,9 @@ internal class MacHostUsbDevice : UsbDevice
 
     protected override bool IsOpen => interfacePtr != IntPtr.Zero && pipeIn != IntPtr.Zero && pipeOut != IntPtr.Zero;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => devicePtr != IntPtr.Zero;
+
     protected override bool IsDisconnectionError(int nativeError)
         => nativeError == kIOReturnNoDevice || nativeError == kIOReturnNotResponding || nativeError == kIOReturnAborted;
 
