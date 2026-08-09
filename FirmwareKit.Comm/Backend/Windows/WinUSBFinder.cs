@@ -11,10 +11,35 @@ namespace FirmwareKit.Comm.Backend.Windows
         // Kept as a named constant so it can be lifted into configuration later.
         private const string PreferWinUsbVidPid = "vid_18d1&pid_d00d";
 
+        /// <summary>
+        /// Gets whether the SetupDi all-classes enumeration handle opened successfully during
+        /// the last enumeration. Lets upper layers distinguish "SetupDi failed" from
+        /// "SetupDi ran but found no devices" on device-less CI.
+        /// <para>获取上次枚举中 SetupDi 全类枚举句柄是否成功打开。让上层区分
+        /// "SetupDi 失败"与"SetupDi 运行但未发现设备"（无设备 CI 场景）。</para>
+        /// </summary>
+        public static bool LastSetupDiSucceeded { get; private set; }
+
+        /// <summary>
+        /// Gets the number of USB device nodes (instance ids containing VID_) walked during
+        /// the last enumeration. A non-zero value proves the scan loop actually ran.
+        /// <para>获取上次枚举中遍历的 USB 设备节点数（含 VID_ 的实例 ID）。
+        /// 非零值证明扫描循环确实执行过。</para>
+        /// </summary>
+        public static int LastScannedNodeCount { get; private set; }
+
+        /// <summary>
+        /// Gets the number of devices matched during the last enumeration.
+        /// <para>获取上次枚举中匹配到的设备数。</para>
+        /// </summary>
+        public static int LastMatchedDeviceCount { get; private set; }
+
         public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
         {
             var devices = new List<UsbDevice>();
             var uniqueKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            LastScannedNodeCount = 0;
+            LastMatchedDeviceCount = 0;
 
             // Enumerate ALL device nodes (no interface-GUID whitelist), then for each USB
             // node read its registered DeviceInterfaceGUIDs from the registry and enumerate
@@ -22,6 +47,7 @@ namespace FirmwareKit.Comm.Backend.Windows
             // libusb-win32/vendor) without a hardcoded GUID list.
             IntPtr devInfoSet = Win32API.SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero,
                 Win32API.DIGCF_PRESENT | Win32API.DIGCF_ALLCLASSES);
+            LastSetupDiSucceeded = devInfoSet != (IntPtr)(-1);
             if (devInfoSet == (IntPtr)(-1))
             {
                 UsbTrace.Log($"WinUSBFinder: SetupDiGetClassDevsW(all classes) failed err={Marshal.GetLastWin32Error()}");
@@ -48,6 +74,7 @@ namespace FirmwareKit.Comm.Backend.Windows
                         continue;
                     }
 
+                    LastScannedNodeCount++;
                     UsbTrace.Log($"WinUSBFinder: node [{instanceId}]");
                     foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId))
                     {
@@ -66,6 +93,7 @@ namespace FirmwareKit.Comm.Backend.Windows
                 Win32API.SetupDiDestroyDeviceInfoList(devInfoSet);
             }
 
+            LastMatchedDeviceCount = devices.Count;
             return devices;
         }
 

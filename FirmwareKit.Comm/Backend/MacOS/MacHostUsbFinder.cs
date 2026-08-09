@@ -10,18 +10,49 @@ namespace FirmwareKit.Comm.Backend.MacOS;
 /// </summary>
 internal static class MacHostUsbFinder
 {
+    /// <summary>
+    /// Gets whether <c>IOUSBLibCopyDevices</c> succeeded and returned a non-empty array
+    /// during the last enumeration. Lets upper layers distinguish "IOUSBLib call failed"
+    /// from "IOUSBLib ran but found no devices" on device-less CI.
+    /// <para>获取上次枚举中 <c>IOUSBLibCopyDevices</c> 是否成功且返回了非空数组。
+    /// 让上层区分"IOUSBLib 调用失败"与"IOUSBLib 运行但未发现设备"（无设备 CI 场景）。</para>
+    /// </summary>
+    public static bool LastCopyDevicesSucceeded { get; private set; }
+
+    /// <summary>
+    /// Gets the number of devices returned by <c>IOUSBLibCopyDevices</c> during the last
+    /// enumeration (before filter/probe). A non-zero value proves enumeration ran.
+    /// <para>获取上次枚举中 <c>IOUSBLibCopyDevices</c> 返回的设备数（过滤/探测前）。
+    /// 非零值证明枚举确实执行过。</para>
+    /// </summary>
+    public static int LastScannedDeviceCount { get; private set; }
+
+    /// <summary>
+    /// Gets the number of devices matched during the last enumeration.
+    /// <para>获取上次枚举中匹配到的设备数。</para>
+    /// </summary>
+    public static int LastMatchedDeviceCount { get; private set; }
+
     public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
+        LastScannedDeviceCount = 0;
+        LastMatchedDeviceCount = 0;
 
         IntPtr cfDevices = IntPtr.Zero;
         // NULL matching dictionary requests all USB devices.
         int kr = IOUSBLibCopyDevices(IntPtr.Zero, out cfDevices);
-        if (kr != kIOReturnSuccess || cfDevices == IntPtr.Zero) return devices;
+        LastCopyDevicesSucceeded = kr == kIOReturnSuccess && cfDevices != IntPtr.Zero;
+        if (!LastCopyDevicesSucceeded)
+        {
+            if (cfDevices != IntPtr.Zero) CFRelease(cfDevices);
+            return devices;
+        }
 
         try
         {
             long count = CFArrayGetCount(cfDevices);
+            LastScannedDeviceCount = (int)count;
             for (long i = 0; i < count; i++)
             {
                 IntPtr device = CFArrayGetValueAtIndex(cfDevices, i);
@@ -69,6 +100,7 @@ internal static class MacHostUsbFinder
             CFRelease(cfDevices);
         }
 
+        LastMatchedDeviceCount = devices.Count;
         return devices;
     }
 
