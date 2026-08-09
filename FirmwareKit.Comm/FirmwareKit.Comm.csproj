@@ -15,7 +15,7 @@
     <RepositoryUrl>https://github.com/Uotan-Dev/FirmwareKit.Comm</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>usb;firmware;communication;libusb;firmwarekit</PackageTags>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <RepositoryType>git</RepositoryType>
