@@ -82,6 +82,7 @@ jobs:
     # copy-devices=False with an empty result (no throw) — also acceptable as long as the
     # diagnostic is emitted.
     - name: Assert enumeration mechanism ran (native)
+      shell: bash
       run: |
         OUT="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1 || true)"
         echo "$OUT"
