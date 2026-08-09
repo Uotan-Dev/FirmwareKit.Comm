@@ -357,6 +357,9 @@ internal class WinUSBDevice : UsbDevice
 
     protected override bool IsOpen => !WinUSBHandle.IsInvalid;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => !WinUSBHandle.IsInvalid;
+
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         SetPipeTimeout(timeoutMs);

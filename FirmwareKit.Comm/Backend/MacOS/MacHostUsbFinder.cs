@@ -90,7 +90,52 @@ internal static class MacHostUsbFinder
                 if (filter?.VendorId is ushort filterVid && vid != filterVid) continue;
                 if (filter?.ProductId is ushort filterPid && pid != filterPid) continue;
 
-                if (!TryGetBulkEndpoints(device, filter?.InterfaceNumber, out byte bulkIn, out byte bulkOut, out byte ifcClass, out byte ifcSubClass, out byte ifcProtocol, out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
+                if (!TryGetBulkEndpoints(
+                    device,
+                    filter?.InterfaceNumber,
+                    out bool descriptorReadFailed,
+                    out byte bulkIn,
+                    out byte bulkOut,
+                    out byte ifcClass,
+                    out byte ifcSubClass,
+                    out byte ifcProtocol,
+                    out IReadOnlyList<UsbInterfaceInfo> interfaces))
+                {
+                    if (!descriptorReadFailed)
+                    {
+                        // Normal case: the device simply has no interface matching the
+                        // filter — skip it, keep scanning.
+                        // <para>正常情况：设备只是没有匹配过滤器的接口——跳过并继续扫描。</para>
+                        continue;
+                    }
+
+                    // Descriptor read failed (e.g. driver state corrupted after a failed
+                    // session read). Keep the device visible with metadata-only (VID/PID/
+                    // registry entry) instead of silently dropping it from enumeration;
+                    // sessions over a non-open device are skipped later by ToSessions.
+                    // <para>描述符读取失败（例如会话读失败后驱动状态损坏）。以仅元数据
+                    // （VID/PID/注册表项）保留设备可见，而不是将其静默地从枚举中丢弃；
+                    // 基于未打开设备的会话稍后由 ToSessions 跳过。</para>
+                    var degraded = new MacHostUsbDevice
+                    {
+                        RegistryEntryId = registryEntryId,
+                        DevicePath = $"IOUSBLib:{registryEntryId}",
+                        VendorId = vid,
+                        ProductId = pid,
+                        InterfaceMetadataObserved = false,
+                        Interfaces = Array.Empty<UsbInterfaceInfo>(),
+                        UsbDeviceType = UsbDeviceType.MacOS
+                    };
+
+                    UsbTrace.Log($"MacHostUsbFinder: device {registryEntryId} descriptor read failed - reported with metadata only.");
+                    if (degraded.CreateHandle() != 0)
+                    {
+                        UsbTrace.Log($"MacHostUsbFinder: device {registryEntryId} also unopenable - kept as metadata-only.");
+                    }
+
+                    devices.Add(degraded);
+                    continue;
+                }
 
                 var dev = new MacHostUsbDevice
                 {
@@ -145,6 +190,7 @@ internal static class MacHostUsbFinder
     private static bool TryGetBulkEndpoints(
         IntPtr device,
         byte? interfaceNumber,
+        out bool descriptorReadFailed,
         out byte bulkIn,
         out byte bulkOut,
         out byte interfaceClass,
@@ -152,6 +198,7 @@ internal static class MacHostUsbFinder
         out byte interfaceProtocol,
         out IReadOnlyList<UsbInterfaceInfo> interfaces)
     {
+        descriptorReadFailed = false;
         bulkIn = 0;
         bulkOut = 0;
         interfaceClass = 0;
@@ -162,6 +209,12 @@ internal static class MacHostUsbFinder
         IntPtr configPtr = IntPtr.Zero;
         if (IOUSBHostDeviceCopyConfigurationDescriptor(device, out configPtr) != kIOReturnSuccess || configPtr == IntPtr.Zero)
         {
+            // Reading the configuration descriptor failed (e.g. the device's driver state
+            // is corrupted). This is DIFFERENT from "no interface matches the filter":
+            // the caller must keep the device visible instead of silently dropping it.
+            // <para>读取配置描述符失败（例如设备驱动状态损坏）。这与"没有接口匹配过滤器"
+            // 不同：调用方必须保留该设备，而不是将其静默地丢弃。</para>
+            descriptorReadFailed = true;
             return false;
         }
 

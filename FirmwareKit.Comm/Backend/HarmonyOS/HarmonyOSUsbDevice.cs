@@ -223,6 +223,9 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
     protected override bool IsOpen => !_disposed && _ddkInitialized;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => !_disposed && _ddkInitialized;
+
     protected override int MaxChunkSize => _devMmapSize > 0 ? _devMmapSize : base.MaxChunkSize;
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)

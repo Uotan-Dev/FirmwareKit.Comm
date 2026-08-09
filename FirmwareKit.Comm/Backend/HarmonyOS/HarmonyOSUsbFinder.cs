@@ -151,15 +151,22 @@ internal static class HarmonyOSUsbFinder
                     dev.Interfaces = interfaces;
                     dev.Speed = UsbSpeedInference.FromBcdUsb(devDesc.bcdUSB);
 
-                    if (dev.CreateHandle() == 0)
+                    // Keep the device even when the handle cannot be opened (e.g. the
+                    // interface is claimed by another session/process). Enumeration must
+                    // reflect the current device state: the metadata was already populated
+                    // by Initialize, and a busy device must not silently disappear from the
+                    // list. Sessions over a non-open device are skipped later by
+                    // UsbProviderProjection.ToSessions.
+                    // <para>即使句柄无法打开（例如接口已被其他会话/进程声明）也保留该设备。
+                    // 枚举必须反映当前设备状态：元数据已由 Initialize 填充，被占用的设备
+                    // 不应静默地从列表中消失。基于未打开设备的会话稍后由
+                    // UsbProviderProjection.ToSessions 跳过。</para>
+                    if (dev.CreateHandle() != 0)
                     {
-                        devices.Add(dev);
+                        UsbTrace.Log($"HarmonyOSUsbFinder: device {deviceId} busy or unopenable - reported with metadata only.");
                     }
-                    else
-                    {
-                        UsbTrace.Log($"HarmonyOSUsbFinder: CreateHandle failed for device {deviceId}");
-                        dev.Dispose();
-                    }
+
+                    devices.Add(dev);
 
                     break;
                 }

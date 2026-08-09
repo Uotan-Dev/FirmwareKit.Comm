@@ -498,8 +498,22 @@ namespace FirmwareKit.Comm.Backend.Windows
         private static UsbDevice? ProbeDevice(string path)
         {
             (ushort? vid, ushort? pid) = TryParseVidPid(path);
+
+            // winusb.sys allows only one open handle per interface: when the interface is
+            // claimed by another session/process, CreateFile fails with access denied. Keep
+            // the device visible with metadata parsed from the interface path instead of
+            // silently dropping it from enumeration; sessions over a non-open device are
+            // skipped later by UsbProviderProjection.ToSessions.
+            // <para>winusb.sys 每个接口只允许一个打开句柄：当接口被其他会话/进程声明时，
+            // CreateFile 会以访问拒绝失败。以从接口路径解析的元数据保留设备，而不是将其
+            // 静默地从枚举中丢弃；基于未打开设备的会话稍后由
+            // UsbProviderProjection.ToSessions 跳过。</para>
             IntPtr hDevice = Win32API.SimpleCreateHandle(path);
-            if (hDevice == Win32API.INVALID_HANDLE_VALUE) return null;
+            if (hDevice == Win32API.INVALID_HANDLE_VALUE)
+            {
+                UsbTrace.Log($"WinUSBFinder: ProbeDevice cannot open [{path}] - reported with metadata only.");
+                return CreateMetadataOnlyDevice(path, vid ?? 0, pid ?? 0);
+            }
 
             bool isLegacy = false;
             try
@@ -525,21 +539,26 @@ namespace FirmwareKit.Comm.Backend.Windows
                     ProductId = pid ?? 0
                 };
                 if (dev.CreateHandle() == 0) return dev;
-                dev.Dispose();
-            }
-            else
-            {
-                var dev = new WinUSBDevice
-                {
-                    DevicePath = path,
-                    VendorId = vid ?? 0,
-                    ProductId = pid ?? 0
-                };
-                if (dev.CreateHandle() == 0) return dev;
-                dev.Dispose();
+
+                // Legacy open failed (busy/unopenable): keep the device visible with
+                // metadata only. <para>Legacy 打开失败（被占用/无法打开）：以仅元数据
+                // 形式保留设备可见。</para>
+                UsbTrace.Log($"WinUSBFinder: ProbeDevice legacy open failed for [{path}] - reported with metadata only.");
+                return dev;
             }
 
-            return null;
+            var winDev = new WinUSBDevice
+            {
+                DevicePath = path,
+                VendorId = vid ?? 0,
+                ProductId = pid ?? 0
+            };
+            if (winDev.CreateHandle() == 0) return winDev;
+
+            // WinUSB open failed (busy/unopenable): keep the device visible with metadata
+            // only. <para>WinUSB 打开失败（被占用/无法打开）：以仅元数据形式保留设备可见。</para>
+            UsbTrace.Log($"WinUSBFinder: ProbeDevice WinUSB open failed for [{path}] - reported with metadata only.");
+            return winDev;
         }
 
         private static UsbDevice? TryOpenWinUSB(string path)
@@ -552,8 +571,152 @@ namespace FirmwareKit.Comm.Backend.Windows
                 ProductId = pid ?? 0
             };
             if (dev.CreateHandle() == 0) return dev;
-            dev.Dispose();
-            return null;
+
+            // WinUSB open failed (busy/unopenable): keep the device visible with metadata
+            // only. <para>WinUSB 打开失败（被占用/无法打开）：以仅元数据形式保留设备可见。</para>
+            UsbTrace.Log($"WinUSBFinder: TryOpenWinUSB open failed for [{path}] - reported with metadata only.");
+            return dev;
+        }
+
+        /// <summary>
+        /// Creates a metadata-only WinUSB device (no open handle) so a busy device stays
+        /// visible in enumeration with the VID/PID parsed from its interface path. Interface
+        /// class/subclass/protocol are recovered from the device node's CompatibleIDs (e.g.
+        /// <c>USB\COMPAT_VID_12d1&amp;Class_ff&amp;SubClass_42&amp;Prot_01</c>) so an interface
+        /// filter (ADB FF/42/01) still matches the metadata-only device.
+        /// <para>创建仅元数据的 WinUSB 设备（无打开句柄），使被占用设备以从接口路径解析的
+        /// VID/PID 保持在枚举中可见。接口类/子类/协议从设备节点的 CompatibleIDs 恢复
+        /// （例如 <c>USB\COMPAT_VID_12d1&amp;Class_ff&amp;SubClass_42&amp;Prot_01</c>），
+        /// 使接口过滤器（ADB FF/42/01）仍能匹配该仅元数据设备。</para>
+        /// </summary>
+        private static WinUSBDevice CreateMetadataOnlyDevice(string path, ushort vid, ushort pid)
+        {
+            var dev = new WinUSBDevice
+            {
+                DevicePath = path,
+                VendorId = vid,
+                ProductId = pid,
+                InterfaceMetadataObserved = false,
+                Interfaces = Array.Empty<UsbInterfaceInfo>()
+            };
+
+            if (TryReadCompatibleIdInterface(path, out byte ifClass, out byte ifSubClass, out byte ifProtocol))
+            {
+                dev.InterfaceClass = ifClass;
+                dev.InterfaceSubClass = ifSubClass;
+                dev.InterfaceProtocol = ifProtocol;
+                dev.InterfaceMetadataObserved = true;
+                dev.Interfaces = new[]
+                {
+                    new UsbInterfaceInfo
+                    {
+                        InterfaceNumber = 0,
+                        Class = ifClass,
+                        SubClass = ifSubClass,
+                        Protocol = ifProtocol,
+                        Endpoints = Array.Empty<UsbEndpointInfo>()
+                    }
+                };
+            }
+
+            return dev;
+        }
+
+        /// <summary>
+        /// Recovers the interface class/subclass/protocol of a winusb interface from its
+        /// device node's CompatibleIDs (REG_MULTI_SZ) when the interface cannot be opened to
+        /// read the configuration descriptor directly. CompatibleIDs entries carry the
+        /// standard ADB triple as <c>Class_ff&amp;SubClass_42&amp;Prot_01</c>.
+        /// <para>当接口无法打开以直接读取配置描述符时，从设备节点的 CompatibleIDs
+        /// （REG_MULTI_SZ）恢复 winusb 接口的类/子类/协议。CompatibleIDs 条目以
+        /// <c>Class_ff&amp;SubClass_42&amp;Prot_01</c> 形式携带标准 ADB 三元组。</para>
+        /// </summary>
+        private static bool TryReadCompatibleIdInterface(string path, out byte interfaceClass, out byte interfaceSubClass, out byte interfaceProtocol)
+        {
+            interfaceClass = 0;
+            interfaceSubClass = 0;
+            interfaceProtocol = 0;
+
+            // Convert a device interface path "\\?\usb#vid_12d1&pid_107d&mi_02#a&f92a917&2&0002#{guid}"
+            // into a registry device instance id "USB\VID_12D1&PID_107D&MI_02\A&F92A917&2&0002"
+            // (registry key names are case-insensitive, so case does not need to match exactly).
+            // <para>将设备接口路径 "\\?\usb#vid_12d1&pid_107d&mi_02#a&f92a917&2&0002#{guid}"
+            // 转换为注册表设备实例 ID "USB\VID_12D1&PID_107D&MI_02\A&F92A917&2&0002"
+            // （注册表键名不区分大小写，大小写无需完全一致）。</para>
+            const string prefix = @"\\?\usb#";
+            string rest = path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? path.Substring(prefix.Length) : path;
+            int guidBrace = rest.IndexOf("#{", StringComparison.Ordinal);
+            if (guidBrace >= 0)
+            {
+                rest = rest.Substring(0, guidBrace);
+            }
+
+            if (string.IsNullOrWhiteSpace(rest) || rest.IndexOf("VID_", StringComparison.OrdinalIgnoreCase) < 0)
+            {
+                return false;
+            }
+
+            string instanceId = @"USB\" + rest.Replace('#', '\\');
+            // CompatibleIDs is a REG_MULTI_SZ VALUE of the device node key, not a subkey —
+            // open the node key and query the value directly.
+            // <para>CompatibleIDs 是设备节点键下的 REG_MULTI_SZ 值，不是子键——直接打开
+            // 节点键并查询该值。</para>
+            string subKey = @"SYSTEM\CurrentControlSet\Enum\" + instanceId;
+            IntPtr key;
+            if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, subKey, 0, Win32API.KEY_READ, out key) != 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                uint type = 0;
+                uint size = 0;
+                if (Win32API.RegQueryValueExW(key, "CompatibleIDs", IntPtr.Zero, out type, IntPtr.Zero, ref size) != 0 ||
+                    size == 0)
+                {
+                    return false;
+                }
+
+                IntPtr buffer = Marshal.AllocHGlobal((int)size);
+                try
+                {
+                    if (Win32API.RegQueryValueExW(key, "CompatibleIDs", IntPtr.Zero, out type, buffer, ref size) != 0)
+                    {
+                        return false;
+                    }
+
+                    // REG_MULTI_SZ: NUL-separated strings ending with double NUL.
+                    string multi = Marshal.PtrToStringUni(buffer, (int)size / 2) ?? string.Empty;
+                    foreach (string part in multi.Split('\0'))
+                    {
+                        var match = System.Text.RegularExpressions.Regex.Match(
+                            part,
+                            @"Class_([0-9a-fA-F]{2})&SubClass_([0-9a-fA-F]{2})&Prot_([0-9a-fA-F]{2})",
+                            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                        if (match.Success &&
+                            byte.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, null, out byte c) &&
+                            byte.TryParse(match.Groups[2].Value, System.Globalization.NumberStyles.HexNumber, null, out byte s) &&
+                            byte.TryParse(match.Groups[3].Value, System.Globalization.NumberStyles.HexNumber, null, out byte p))
+                        {
+                            interfaceClass = c;
+                            interfaceSubClass = s;
+                            interfaceProtocol = p;
+                            return true;
+                        }
+                    }
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(buffer);
+                }
+            }
+            finally
+            {
+                Win32API.RegCloseKey(key);
+            }
+
+            return false;
         }
 
         private static string BuildDeviceKey(UsbDevice device)

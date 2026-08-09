@@ -151,6 +151,9 @@ internal class LegacyUsbDevice : UsbDevice
 
     protected override bool IsOpen => !_disposed && !fileHandle.IsInvalid;
 
+    /// <inheritdoc/>
+    internal override bool IsHandleOpen => !_disposed && !fileHandle.IsInvalid;
+
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         uint bytesRead;

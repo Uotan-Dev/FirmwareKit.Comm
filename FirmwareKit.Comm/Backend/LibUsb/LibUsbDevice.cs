@@ -300,6 +300,28 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (usbDevice != null)
         {
+            // Explicitly release the claimed interface BEFORE closing the handle.
+            // libusb_close normally releases interfaces, but on Windows winusb.sys
+            // allows only one open handle per interface; leaving the claim in place
+            // (e.g. after a failed session read corrupted the transfer state) keeps the
+            // interface busy, so every later open/enumeration fails until a replug.
+            // Releasing it here restores the driver state so the device stays usable.
+            // <para>在关闭句柄之前显式释放已 claim 的接口。libusb_close 通常会释放接口，
+            // 但在 Windows 上 winusb.sys 每个接口只允许一个打开句柄；若 claim 残留
+            // （例如会话读失败损坏传输状态后），接口会一直保持占用，之后每次打开/枚举
+            // 都会失败，直到重新拔插。在此释放可恢复驱动状态，使设备保持可用。</para>
+            try
+            {
+                if (usbDevice is LibUsbDotNet.LibUsb.UsbDevice wholeUsbDevice)
+                {
+                    wholeUsbDevice.ReleaseInterface(InterfaceId);
+                }
+            }
+            catch (Exception ex)
+            {
+                UsbTrace.Log($"LibUsbDevice.ReleaseInterface ignored: {ex.GetType().Name}: {ex.Message}");
+            }
+
             // Close() releases the device handle; Dispose() additionally releases the
             // underlying Device SafeHandle. Calling only Close() leaves the SafeHandle
             // to the finalizer, which then UnrefDevices memory already freed by

@@ -44,6 +44,7 @@ internal static class LibUsbFinder
     private static bool TryGetBulkInterface(
         LibUsbDotNet.LibUsb.UsbDevice device,
         UsbDeviceFilter? filter,
+        out bool descriptorReadFailed,
         out byte interfaceId,
         out byte inEndpoint,
         out byte outEndpoint,
@@ -52,6 +53,7 @@ internal static class LibUsbFinder
         out byte interfaceProtocol,
         out IReadOnlyList<UsbInterfaceInfo> interfaces)
     {
+        descriptorReadFailed = false;
         interfaceId = 0;
         inEndpoint = 0;
         outEndpoint = 0;
@@ -169,6 +171,14 @@ internal static class LibUsbFinder
         }
         catch
         {
+            // Reading the configuration descriptors failed (e.g. the device's driver
+            // state is corrupted after a failed session read). This is DIFFERENT from
+            // "no interface matches the filter": the caller must keep the device
+            // visible instead of silently dropping it from enumeration.
+            // <para>读取配置描述符失败（例如会话读失败后设备驱动状态损坏）。这与
+            // "没有接口匹配过滤器"不同：调用方必须保留该设备，而不是将其静默地从
+            // 枚举中丢弃。</para>
+            descriptorReadFailed = true;
             UsbTrace.Log("LibUsbFinder: failed to inspect interface descriptors.");
             return false;
         }
@@ -198,13 +208,53 @@ internal static class LibUsbFinder
                 if (!TryGetBulkInterface(
                     libUsbDevice,
                     filter,
+                    out bool descriptorReadFailed,
                     out byte interfaceId,
                     out byte readEndpoint,
                     out byte writeEndpoint,
                     out byte interfaceClass,
                     out byte interfaceSubClass,
                     out byte interfaceProtocol,
-                    out IReadOnlyList<UsbInterfaceInfo> interfaces)) continue;
+                    out IReadOnlyList<UsbInterfaceInfo> interfaces))
+                {
+                    if (!descriptorReadFailed)
+                    {
+                        // Normal case: the device simply has no interface matching the
+                        // filter — skip it, keep scanning.
+                        // <para>正常情况：设备只是没有匹配过滤器的接口——跳过并继续扫描。</para>
+                        continue;
+                    }
+
+                    // Descriptor read failed (e.g. driver state corrupted after a failed
+                    // session read). Keep the device visible with metadata-only (VID/PID/
+                    // path) instead of silently dropping it from enumeration; sessions
+                    // over a non-open device are skipped later by ToSessions.
+                    // <para>描述符读取失败（例如会话读失败后驱动状态损坏）。以仅元数据
+                    // （VID/PID/路径）保留设备可见，而不是将其静默地从枚举中丢弃；
+                    // 基于未打开设备的会话稍后由 ToSessions 跳过。</para>
+                    byte degradedBus = libUsbDevice?.BusNumber ?? 0;
+                    byte degradedAddress = libUsbDevice?.Address ?? 0;
+                    var degraded = new LibUsbDevice
+                    {
+                        Vid = (ushort)device.VendorId,
+                        Pid = (ushort)device.ProductId,
+                        BusNumber = degradedBus,
+                        DeviceAddress = degradedAddress,
+                        InterfaceMetadataObserved = false,
+                        Speed = MapSpeed(libUsbDevice?.Speed ?? Speed.Unknown),
+                        DevicePath = $"Bus {degradedBus} Device {degradedAddress}: {device.VendorId:X4}:{device.ProductId:X4}",
+                        UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
+                    };
+
+                    UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} descriptor read failed - reported with metadata only.");
+                    if (degraded.CreateHandle() != 0)
+                    {
+                        UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} also unopenable - kept as metadata-only.");
+                    }
+
+                    devices.Add(degraded);
+                    continue;
+                }
 
                 byte busNumber = libUsbDevice?.BusNumber ?? 0;
                 byte address = libUsbDevice?.Address ?? 0;
