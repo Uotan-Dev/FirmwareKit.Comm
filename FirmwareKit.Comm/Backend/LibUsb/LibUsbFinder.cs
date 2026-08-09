@@ -62,8 +62,16 @@ internal static class LibUsbFinder
 
         try
         {
+            // Collect the FULL interface list first (all configs, all interfaces), then
+            // match the filter in a separate pass. Matching while collecting truncated
+            // the reported list: the first matching interface returned early with only
+            // the interfaces enumerated so far, so later interfaces never made it into
+            // the list (e.g. FT2232H: interface 0 matched, interface 1 was dropped).
+            // <para>先完整收集所有配置下的全部接口，再单独进行过滤器匹配。边收集边匹配会在
+            // 首个命中接口处提前返回，导致后续接口（如 FT2232H 的接口 1）从列表中丢失。</para>
+            var configs = device.Configs.ToList();
             var collected = new List<UsbInterfaceInfo>();
-            foreach (var config in device.Configs)
+            foreach (var config in configs)
             {
                 foreach (var ifc in config.Interfaces)
                 {
@@ -86,7 +94,13 @@ internal static class LibUsbFinder
                         Protocol = (byte)ifc.Protocol,
                         Endpoints = endpoints
                     });
+                }
+            }
 
+            foreach (var config in configs)
+            {
+                foreach (var ifc in config.Interfaces)
+                {
                     if (filter?.InterfaceClass is byte c && (byte)ifc.Class != c) continue;
                     if (filter?.InterfaceSubClass is byte s && (byte)ifc.SubClass != s) continue;
                     if (filter?.InterfaceProtocol is byte p && (byte)ifc.Protocol != p) continue;
@@ -138,11 +152,11 @@ internal static class LibUsbFinder
                             return true;
                         }
                     }
-                    else if (hasIn && filter?.EndpointAddressIn is byte && filter?.EndpointAddressOut == null)
+                    else if (hasIn && filter is { EndpointAddressIn: byte inOnlyEp, EndpointAddressOut: null })
                     {
                         // IN-only match: interrupt-test on HID devices that expose no OUT pipe.
                         interfaceId = (byte)ifc.Number;
-                        inEndpoint = filter.EndpointAddressIn.Value;
+                        inEndpoint = inOnlyEp;
                         outEndpoint = 0;
                         interfaceClass = (byte)ifc.Class;
                         interfaceSubClass = (byte)ifc.SubClass;

@@ -1,6 +1,4 @@
 #if DEBUG
-using Microsoft.Extensions.Logging;
-
 namespace FirmwareKit.Comm.Diagnostics;
 
 /// <summary>

@@ -64,7 +64,7 @@
   <!-- Debug-only: bridges UsbTrace to Microsoft.Extensions.Logging (UsbLoggerBridge).
        Release builds stay zero-dependency for the custom logging abstraction. -->
   <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
   </ItemGroup>
 
 </Project>

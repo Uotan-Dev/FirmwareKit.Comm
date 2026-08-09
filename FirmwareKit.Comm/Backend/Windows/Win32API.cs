@@ -94,7 +94,7 @@ internal class Win32API
 
     [DllImport("setupapi.dll", CharSet = CharSet.Unicode, CallingConvention = CallingConvention.Winapi, SetLastError = true)]
     public static extern bool SetupDiGetDeviceInstanceIdW(IntPtr deviceInfoSet, ref SpDevInfoData deviceInfoData,
-                                                          System.Text.StringBuilder deviceInstanceId, uint deviceInstanceIdSize,
+                                                          System.Text.StringBuilder? deviceInstanceId, uint deviceInstanceIdSize,
                                                           out uint requiredSize);
 
     [StructLayout(LayoutKind.Sequential)]
