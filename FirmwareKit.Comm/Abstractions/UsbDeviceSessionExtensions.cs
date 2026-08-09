@@ -40,6 +40,11 @@ public static class UsbDeviceSessionExtensions
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
+        }
+
         if (length == 0)
         {
             return Array.Empty<byte>();
@@ -112,6 +117,11 @@ public static class UsbDeviceSessionExtensions
         if (length < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
         }
 
         if (length == 0)

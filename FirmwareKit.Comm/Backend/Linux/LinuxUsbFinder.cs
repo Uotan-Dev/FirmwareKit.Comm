@@ -282,6 +282,7 @@ internal static class LinuxUsbFinder
                             ep_in = epIn,
                             ep_out = epOut,
                             InterfaceId = matchedIfcId,
+                            ClaimedInterfaceIds = filter?.InterfaceNumbers?.ToArray() ?? Array.Empty<byte>(),
                             iSerialNumber = iSerialNumber,
                             UsbDeviceType = UsbDeviceType.Linux,
                             SerialNumber = iSerialNumber == 0 ? null : "UNKNOWN"

@@ -396,6 +396,32 @@ internal abstract class UsbDevice : IDisposable
         return ReadPacket(buffer, offset, length, timeoutMs).Count;
     }
 
+#if NET8_0_OR_GREATER
+    /// <summary>
+    /// Reads bytes into a caller-provided span with a timeout (net8.0+ only).
+    /// <para>在指定超时时间内将数据读取到调用方提供的跨度（仅 net8.0+）。</para>
+    /// The span is bridged through a temporary array; use the byte[] overloads for
+    /// zero-copy transfers on hot paths.
+    /// <para>跨度通过临时数组桥接；热路径的零拷贝传输请使用 byte[] 重载。</para>
+    /// </summary>
+    /// <param name="buffer">The destination span. <para>目标跨度。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <returns>The number of bytes read. <para>实际读取的字节数。</para></returns>
+    public virtual int ReadInto(Span<byte> buffer, int timeoutMs)
+    {
+        if (buffer.Length == 0) return 0;
+
+        byte[] temp = new byte[buffer.Length];
+        int count = ReadInto(temp, 0, temp.Length, timeoutMs);
+        if (count > 0)
+        {
+            temp.AsSpan(0, count).CopyTo(buffer);
+        }
+
+        return count;
+    }
+#endif
+
     /// <summary>
     /// Reads bytes into the specified buffer and reports the transfer outcome.
     /// <para>将数据读取到指定缓冲区并报告传输结果。</para>
@@ -413,6 +439,21 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <returns>The read result with byte count and outcome flags. <para>包含字节数与结果标志的读取结果。</para></returns>
     public virtual UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
+        => ReadPacket(buffer, offset, length, timeoutMs, progress: null);
+
+    /// <summary>
+    /// Reads bytes into the specified buffer and reports the transfer outcome, reporting
+    /// cumulative bytes read after each completed chunk when <paramref name="progress"/> is set.
+    /// <para>将数据读取到指定缓冲区并报告传输结果；设置 <paramref name="progress"/> 时
+    /// 在每个分块完成后报告累计读取字节数。</para>
+    /// </summary>
+    /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>读取字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <returns>The read result with byte count and outcome flags. <para>包含字节数与结果标志的读取结果。</para></returns>
+    public virtual UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress)
     {
         var stopwatch = Stopwatch.StartNew();
         int? lastError = null;
@@ -465,6 +506,7 @@ internal abstract class UsbDevice : IDisposable
                 int transferred = chunk.Transferred;
                 count += transferred;
                 lenRemaining -= transferred;
+                progress?.Report(count);
 
                 if (transferred < lenToRead) break;
             }
@@ -530,6 +572,25 @@ internal abstract class UsbDevice : IDisposable
     }
 
     /// <summary>
+    /// Asynchronously reads bytes into the specified buffer and reports the transfer outcome,
+    /// reporting cumulative bytes read after each completed chunk.
+    /// <para>异步将数据读取到指定缓冲区并报告传输结果，在每个分块完成后报告累计读取字节数。</para>
+    /// </summary>
+    /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>读取字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
+    public virtual Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    {
+        return progress == null
+            ? ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken)
+            : FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => ReadPacket(buffer, offset, length, timeoutMs, progress), cancellationToken);
+    }
+
+    /// <summary>
     /// Writes data to the device using the default timeout.
     /// <para>使用默认超时时间向设备写入数据。</para>
     /// </summary>
@@ -571,6 +632,22 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <returns>The number of bytes actually written. <para>实际写入的字节数。</para></returns>
     public virtual long Write(byte[] data, int offset, int length, int timeoutMs)
+        => Write(data, offset, length, timeoutMs, progress: null);
+
+    /// <summary>
+    /// Writes data to the device starting at the specified offset, with a specified timeout,
+    /// reporting cumulative bytes written after each completed chunk when
+    /// <paramref name="progress"/> is set.
+    /// <para>使用指定超时时间从指定偏移量向设备写入数据；设置 <paramref name="progress"/> 时
+    /// 在每个分块完成后报告累计写入字节数。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>要写入的数据。</para></param>
+    /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <returns>The number of bytes actually written. <para>实际写入的字节数。</para></returns>
+    public virtual long Write(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress)
     {
         var stopwatch = Stopwatch.StartNew();
         int? lastError = null;
@@ -629,6 +706,7 @@ internal abstract class UsbDevice : IDisposable
                 int transferred = chunk.Transferred;
                 count += transferred;
                 lenRemaining -= transferred;
+                progress?.Report(count);
 
                 if (transferred < lenToSend) break;
             }
@@ -675,6 +753,47 @@ internal abstract class UsbDevice : IDisposable
     {
         return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Write(data, offset, length, timeoutMs), cancellationToken);
     }
+
+    /// <summary>
+    /// Asynchronously writes data to the device starting at the specified offset, reporting
+    /// cumulative bytes written after each completed chunk.
+    /// <para>异步从指定偏移量向设备写入数据，并在每个分块完成后报告累计写入字节数。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>要写入的数据。</para></param>
+    /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the asynchronous write operation with the number of bytes written. <para>表示异步写入操作并返回已写入字节数的任务。</para></returns>
+    public virtual Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    {
+        return progress == null
+            ? WriteAsync(data, offset, length, timeoutMs, cancellationToken)
+            : FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Write(data, offset, length, timeoutMs, progress), cancellationToken);
+    }
+
+    /// <summary>
+    /// Sends a zero-length packet (ZLP) on the bulk OUT endpoint.
+    /// <para>在批量 OUT 端点上发送零长度包（ZLP）。</para>
+    /// The default implementation reports the capability as unsupported; backends that can
+    /// perform an explicit zero-length bulk write (WinUSB/usbfs/libusb/macOS) override it.
+    /// <para>默认实现报告该能力不受支持；可执行显式零长度批量写入的后端
+    /// （WinUSB/usbfs/libusb/macOS）覆盖此方法。</para>
+    /// </summary>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    public virtual void WriteZlp(int timeoutMs)
+        => throw new NotSupportedException("The backend does not support explicit zero-length packet (ZLP) writes.");
+
+    /// <summary>
+    /// Asynchronously sends a zero-length packet (ZLP) on the bulk OUT endpoint.
+    /// <para>异步在批量 OUT 端点上发送零长度包（ZLP）。</para>
+    /// </summary>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that represents the zero-length write operation. <para>表示零长度写入操作的任务。</para></returns>
+    public virtual Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default)
+        => FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => WriteZlp(timeoutMs), cancellationToken);
 
     /// <summary>
     /// Asynchronously performs a USB control transfer.

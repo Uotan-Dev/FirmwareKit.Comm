@@ -608,6 +608,12 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return Task.FromResult(new UsbReadResult(length, isTimeout: false, isShortPacket: false));
         }
 
+        public Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+        {
+            LastAsyncReadIntoTimeoutMs = timeoutMs;
+            return Task.FromResult(new UsbReadResult(length, isTimeout: false, isShortPacket: false));
+        }
+
         public Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();
 
@@ -652,6 +658,14 @@ public sealed class UsbCommunicationLayerIntegrationTests
             return length;
         }
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => buffer.Length;
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }
@@ -683,6 +697,15 @@ public sealed class UsbCommunicationLayerIntegrationTests
             LastAsyncWriteTimeoutMs = timeoutMs;
             return Task.FromResult((long)length);
         }
+
+        public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+        {
+            LastAsyncWriteTimeoutMs = timeoutMs;
+            return Task.FromResult((long)length);
+        }
+
+        public Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public Task<int> ControlTransferAsync(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
         {

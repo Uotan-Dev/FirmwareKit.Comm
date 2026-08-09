@@ -430,6 +430,51 @@ public sealed class UsbCommunicationLayer
     }
 
     /// <summary>
+    /// Opens the session whose <see cref="UsbDeviceInfo.DeviceKey"/> matches the specified key.
+    /// <para>打开 <see cref="UsbDeviceInfo.DeviceKey"/> 与指定键匹配的设备会话。</para>
+    /// Protocol layers that stash a device's key (e.g. after a mode switch like adb →
+    /// fastboot → EDL where VID/PID change) can reopen the same physical device by key
+    /// instead of re-specifying a filter. Non-matching opened sessions are disposed.
+    /// <para>协议层保存设备键后（例如 adb → fastboot → EDL 模式切换导致 VID/PID 变化），
+    /// 可按键重开同一物理设备，而无需重新指定过滤条件。不匹配的已打开会话会被释放。</para>
+    /// </summary>
+    /// <param name="deviceKey">The stable device key from <see cref="UsbDeviceInfo.DeviceKey"/>. <para>来自 <see cref="UsbDeviceInfo.DeviceKey"/> 的稳定设备键。</para></param>
+    /// <param name="apiKind">The backend selection mode. <para>后端选择模式。</para></param>
+    /// <returns>The matching session, or <c>null</c> when no device matches. <para>匹配的会话；无匹配设备时返回 <c>null</c>。</para></returns>
+    public IUsbDeviceSession? OpenDeviceSessionByKey(
+        string deviceKey,
+        UsbApiKind apiKind = UsbApiKind.Auto)
+    {
+        if (string.IsNullOrWhiteSpace(deviceKey))
+        {
+            throw new ArgumentException("Device key cannot be null or whitespace.", nameof(deviceKey));
+        }
+
+        var providers = ResolveProviders(apiKind);
+
+        foreach (var provider in providers)
+        {
+            if (!provider.IsSupportedOnCurrentPlatform)
+            {
+                continue;
+            }
+
+            var sessions = provider.EnumerateDeviceSessions(filter: null);
+            foreach (var session in sessions)
+            {
+                if (string.Equals(session.DeviceInfo.DeviceKey, deviceKey, StringComparison.Ordinal))
+                {
+                    return session;
+                }
+
+                session.Dispose();
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
     /// Registers a custom USB API provider.
     /// <para>注册自定义 USB API 提供器。</para>
     /// </summary>

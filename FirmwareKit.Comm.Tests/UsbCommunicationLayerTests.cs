@@ -151,6 +151,14 @@ public sealed class UsbCommunicationLayerTests
 
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs) => 0;
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => 0;
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }

@@ -52,6 +52,21 @@ public static class UsbTrace
     }
 
     /// <summary>
+    /// Writes an interpolated diagnostic message, deferring formatting until logging is
+    /// confirmed enabled — hot transfer paths (e.g. per-chunk libusb writes) must call this
+    /// instead of <c>Log($"...")</c> so the interpolation is not built when diagnostics are off.
+    /// <para>写入插值诊断消息，并在确认日志开启后才执行格式化——传输热路径
+    /// （例如 libusb 每块写入）应调用此方法而非 <c>Log($"...")</c>，
+    /// 避免诊断关闭时仍构造插值字符串。</para>
+    /// </summary>
+    /// <param name="message">The interpolated message. <para>插值消息。</para></param>
+    public static void LogFormatted(FormattableString message)
+    {
+        if (!IsEnabled || message == null) return;
+        Logger.Log(message.ToString());
+    }
+
+    /// <summary>
     /// Emits a structured transfer event.
     /// <para>发送结构化传输事件。</para>
     /// </summary>

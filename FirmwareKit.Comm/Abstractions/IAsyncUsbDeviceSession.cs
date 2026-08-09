@@ -49,6 +49,21 @@ public interface IAsyncUsbDeviceSession
     Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Reads into a caller-provided buffer asynchronously, reporting cumulative bytes read
+    /// after each completed chunk (useful for large protocol downloads, e.g. EDL firehose).
+    /// <para>异步读取到调用方提供的缓冲区，并在每个分块完成后报告累计读取字节数
+    /// （适用于大文件协议下载，例如 EDL firehose）。</para>
+    /// </summary>
+    /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
+    /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
+    /// <param name="length">The number of bytes to read. <para>读取字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
+    Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Writes bytes to the device asynchronously.
     /// <para>异步向设备写入字节数据。</para>
     /// </summary>
@@ -70,6 +85,32 @@ public interface IAsyncUsbDeviceSession
     /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
     /// <returns>A task that resolves to the number of bytes written. <para>返回实际写入字节数的任务。</para></returns>
     Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Writes bytes to the device asynchronously, reporting cumulative bytes written after
+    /// each completed chunk (useful for flashing large firmware images).
+    /// <para>异步从指定偏移量开始向设备写入字节数据，并在每个分块完成后报告累计写入字节数
+    /// （适用于刷写大固件镜像）。</para>
+    /// </summary>
+    /// <param name="data">The data to write. <para>待写入数据。</para></param>
+    /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
+    /// <param name="length">The number of bytes to write. <para>写入字节数。</para></param>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that resolves to the number of bytes written. <para>返回实际写入字节数的任务。</para></returns>
+    Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Sends a zero-length packet (ZLP) on the bulk OUT endpoint asynchronously.
+    /// <para>异步在批量 OUT 端点上发送零长度包（ZLP）。</para>
+    /// See <see cref="IUsbDeviceSession.WriteZlp"/> for the ZLP semantics.
+    /// <para>ZLP 语义参见 <see cref="IUsbDeviceSession.WriteZlp"/>。</para>
+    /// </summary>
+    /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>
+    /// <returns>A task that completes when the zero-length packet is sent. <para>零长度包发送完成的任务。</para></returns>
+    Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Sends or receives a USB control transfer asynchronously.

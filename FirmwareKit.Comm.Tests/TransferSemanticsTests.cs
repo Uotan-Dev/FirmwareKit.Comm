@@ -296,6 +296,14 @@ public sealed class TransferSemanticsTests
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => ReadInto(buffer.ToArray(), 0, buffer.Length, timeoutMs);
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }

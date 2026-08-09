@@ -21,6 +21,7 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
     private readonly SemaphoreSlim _readGate = new(1, 1);
     private readonly SemaphoreSlim _writeGate = new(1, 1);
     private readonly SemaphoreSlim _controlGate = new(1, 1);
+    private int _disposed;
 
     public UsbDeviceSession(string apiName, UsbApiKind kind, UsbDevice device)
     {
@@ -43,6 +44,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
             throw new ArgumentOutOfRangeException(nameof(length));
         }
 
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
+        }
+
         _readGate.Wait();
         try
         {
@@ -59,6 +65,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         if (length < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
         }
 
         _readGate.Wait();
@@ -100,6 +111,21 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         }
     }
 
+#if NET8_0_OR_GREATER
+    public int ReadInto(Span<byte> buffer, int timeoutMs)
+    {
+        _readGate.Wait();
+        try
+        {
+            return _device.ReadInto(buffer, timeoutMs);
+        }
+        finally
+        {
+            _readGate.Release();
+        }
+    }
+#endif
+
     public UsbReadResult ReadPacket(byte[] buffer, int offset, int length, int timeoutMs)
     {
         UsbDevice.ValidateBufferRange(buffer, offset, length);
@@ -121,6 +147,20 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         try
         {
             return await _device.ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _readGate.Release();
+        }
+    }
+
+    public async Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    {
+        UsbDevice.ValidateBufferRange(buffer, offset, length);
+        await _readGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _device.ReadPacketAsync(buffer, offset, length, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -198,6 +238,20 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         }
     }
 
+    public async Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    {
+        UsbDevice.ValidateWriteData(data, offset, length);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await _device.WriteAsync(data, offset, length, timeoutMs, progress, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
     public async Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         UsbDevice.ValidateWriteData(data, length);
@@ -205,6 +259,32 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         try
         {
             return await _device.WriteAsync(data, length, timeoutMs, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public void WriteZlp(int timeoutMs)
+    {
+        _writeGate.Wait();
+        try
+        {
+            _device.WriteZlp(timeoutMs);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
+    }
+
+    public async Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await _device.WriteZlpAsync(timeoutMs, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -231,6 +311,11 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
         if (length < 0)
         {
             throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
         }
 
         await _readGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -404,6 +489,15 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
 
     public void Dispose()
     {
+        // Idempotent: a second Dispose (e.g. via UsbSessionCollection after the caller
+        // already disposed the session) must not touch the released semaphores again.
+        // <para>幂等：二次 Dispose（例如调用方已释放会话后，UsbSessionCollection 再次释放）
+        // 不得再次触碰已释放的信号量。</para>
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
         // Waiting here also drains any in-flight async operation before the device is released.
         _readGate.Wait();
         _writeGate.Wait();

@@ -271,6 +271,14 @@ public sealed class FirmwareKitCommFacadeTests
 
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs) => length;
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => buffer.Length;
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }

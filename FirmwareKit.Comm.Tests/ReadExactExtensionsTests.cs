@@ -178,6 +178,14 @@ public sealed class ReadExactExtensionsTests
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => ReadInto(buffer.ToArray(), 0, buffer.Length, timeoutMs);
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }
@@ -227,6 +235,14 @@ public sealed class ReadExactExtensionsTests
         public int ControlTransfer(UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs)
             => throw new NotSupportedException();
 
+        public void WriteZlp(int timeoutMs)
+        {
+        }
+
+#if NET8_0_OR_GREATER
+        public int ReadInto(Span<byte> buffer, int timeoutMs) => throw new NotSupportedException();
+#endif
+
         public void SetInterfaceAltSetting(byte interfaceNumber, byte altSetting) { }
 
         public void SetConfiguration(byte configuration) { }
@@ -254,11 +270,22 @@ public sealed class ReadExactExtensionsTests
             return Task.FromResult(new UsbReadResult(n, isTimeout: false, isShortPacket: n > 0 && n < length));
         }
 
+        public Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+        {
+            return ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken);
+        }
+
         public Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => Task.FromResult((long)length);
 
         public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => Task.FromResult((long)length);
+
+        public Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+            => WriteAsync(data, offset, length, timeoutMs, cancellationToken);
+
+        public Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
 
         public Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
             => throw new NotSupportedException();

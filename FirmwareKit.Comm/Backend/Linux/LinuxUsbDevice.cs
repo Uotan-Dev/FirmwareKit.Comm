@@ -20,6 +20,17 @@ internal class LinuxUsbDevice : UsbDevice
     public int InterfaceId { get; set; }
     public byte iSerialNumber { get; set; }
 
+    /// <summary>
+    /// Additional interfaces to claim in addition to <see cref="InterfaceId"/> (e.g. the
+    /// CDC-ACM control interface next to the data interface). Each is claimed with the same
+    /// detach-and-retry fallback as the primary interface.
+    /// <para>除 <see cref="InterfaceId"/> 外还需要声明的附加接口（例如数据接口旁边的
+    /// CDC-ACM 控制接口）。每个接口都使用与主接口相同的分离并重试回退。</para>
+    /// </summary>
+    public IReadOnlyList<byte> ClaimedInterfaceIds { get; set; } = Array.Empty<byte>();
+
+    private readonly List<byte> _claimedInterfaces = new();
+
     public override byte EndpointIn => ep_in;
     public override byte EndpointOut => ep_out;
 
@@ -39,7 +50,40 @@ internal class LinuxUsbDevice : UsbDevice
             return -1;
         }
         _fd.SetFd(fd);
-        int ifc = InterfaceId;
+
+        // Claim the primary interface plus any additional requested interfaces (e.g.
+        // CDC-ACM control + data). A failure to claim any of them fails the open so the
+        // session is never half-claimed.
+        // <para>声明主接口及所有附加请求接口（例如 CDC-ACM 控制 + 数据）。
+        // 任一接口声明失败都会导致打开失败，避免会话处于半声明状态。</para>
+        var interfacesToClaim = new List<byte>(ClaimedInterfaceIds);
+        if (InterfaceId is >= 0 and <= byte.MaxValue && !interfacesToClaim.Contains((byte)InterfaceId))
+        {
+            interfacesToClaim.Insert(0, (byte)InterfaceId);
+        }
+
+        foreach (byte ifcByte in interfacesToClaim)
+        {
+            if (!ClaimInterface(ifcByte))
+            {
+                _fd.Dispose();
+                return Marshal.GetLastWin32Error();
+            }
+        }
+
+        GetSerialNumber();
+        return 0;
+    }
+
+    /// <summary>
+    /// Claims a single interface with a detach-and-retry fallback for udev-rebound drivers.
+    /// <para>使用分离并重试回退声明单个接口，以应对 udev 重新绑定驱动。</para>
+    /// </summary>
+    /// <param name="interfaceId">The interface number to claim. <para>要声明的接口编号。</para></param>
+    /// <returns><c>true</c> when claimed; otherwise <c>false</c>. <para>声明成功返回 <c>true</c>；否则返回 <c>false</c>。</para></returns>
+    private bool ClaimInterface(byte interfaceId)
+    {
+        int ifc = interfaceId;
         int n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
         if (n != 0)
         {
@@ -47,6 +91,8 @@ internal class LinuxUsbDevice : UsbDevice
             // udev may rebind a kernel driver (e.g. usbhid for HID devices) right after the
             // disconnect, so retry the claim a few times instead of failing on the first
             // EBUSY. Matches libusb's auto-detach behaviour.
+            // <para>udev 可能在分离后立即重新绑定内核驱动（例如 HID 设备的 usbhid），
+            // 因此重试几次而不是在第一次 EBUSY 即失败。与 libusb 的自动分离行为一致。</para>
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
@@ -54,6 +100,7 @@ internal class LinuxUsbDevice : UsbDevice
                 Thread.Sleep(50);
             }
         }
+
         if (n != 0)
         {
             int err = Marshal.GetLastWin32Error();
@@ -61,11 +108,11 @@ internal class LinuxUsbDevice : UsbDevice
             {
                 LinuxUsbFinder.ReportBusy(DevicePath);
             }
-            _fd.Dispose();
-            return n;
+            return false;
         }
-        GetSerialNumber();
-        return 0;
+
+        _claimedInterfaces.Add(interfaceId);
+        return true;
     }
 
     public override void Reset()
@@ -173,8 +220,13 @@ internal class LinuxUsbDevice : UsbDevice
     {
         if (!_fd.IsInvalid)
         {
-            int ifc = InterfaceId;
-            ioctl(Fd, (UIntPtr)USBDEVFS_RELEASEINTERFACE, ref ifc);
+            foreach (byte ifc in _claimedInterfaces)
+            {
+                int interfaceId = ifc;
+                ioctl(Fd, (UIntPtr)USBDEVFS_RELEASEINTERFACE, ref interfaceId);
+            }
+
+            _claimedInterfaces.Clear();
             _fd.Dispose();
         }
     }
@@ -290,6 +342,7 @@ internal class LinuxUsbDevice : UsbDevice
         int n = -1;
         int retry = 0;
         int retryCount = 0;
+        UsbTransferRetryPolicy retryPolicy = UsbTransferPolicies.DefaultRetryPolicy;
         do
         {
             n = ioctl(Fd, bulkCodePtr, ref bulk);
@@ -299,9 +352,9 @@ internal class LinuxUsbDevice : UsbDevice
                 if (err == EINTR || err == EAGAIN) continue;
                 if (err == ETIMEDOUT) return UsbChunkResult.Timeout(err);
                 if (err == ENODEV || err == ESHUTDOWN || err == EPROTO) return UsbChunkResult.Fatal(err);
-                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Error(err);
+                if (++retry > retryPolicy.MaxRetries) return UsbChunkResult.Error(err);
                 retryCount++;
-                Thread.Sleep(500);
+                Thread.Sleep(retryPolicy.RetryDelayMs);
             }
         } while (n < 0);
         return new UsbChunkResult(UsbChunkStatus.Success, n, 0, retryCount);
@@ -323,6 +376,7 @@ internal class LinuxUsbDevice : UsbDevice
         int n = -1;
         int retry = 0;
         int retryCount = 0;
+        UsbTransferRetryPolicy retryPolicy = UsbTransferPolicies.DefaultRetryPolicy;
         do
         {
             n = ioctl(Fd, bulkCodePtr, ref bulk);
@@ -332,9 +386,9 @@ internal class LinuxUsbDevice : UsbDevice
                 if (err == EINTR || err == EAGAIN) continue;
                 if (err == ETIMEDOUT) return UsbChunkResult.Timeout(err);
                 if (err == ENODEV || err == ESHUTDOWN || err == EPROTO) return UsbChunkResult.Fatal(err);
-                if (++retry > UsbTransferPolicies.LinuxMaxRetries) return UsbChunkResult.Error(err);
+                if (++retry > retryPolicy.MaxRetries) return UsbChunkResult.Error(err);
                 retryCount++;
-                Thread.Sleep(500);
+                Thread.Sleep(retryPolicy.RetryDelayMs);
             }
         } while (n < 0);
         return new UsbChunkResult(UsbChunkStatus.Success, n, 0, retryCount);
@@ -343,6 +397,35 @@ internal class LinuxUsbDevice : UsbDevice
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
+    }
+
+    public override void WriteZlp(int timeoutMs)
+    {
+        if (_fd.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        var bulk = new usbdevfs_bulktransfer
+        {
+            ep = ep_out,
+            len = 0,
+            // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
+            timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
+            data = IntPtr.Zero
+        };
+
+        uint bulkCode = (IntPtr.Size == 8) ? USBDEVFS_BULK_X86_64 : USBDEVFS_BULK_X86;
+        int n = ioctl(Fd, (UIntPtr)bulkCode, ref bulk);
+        if (n < 0)
+        {
+            int err = Marshal.GetLastWin32Error();
+            if (err == ENODEV || err == ESHUTDOWN || err == EPROTO)
+            {
+                throw new UsbDeviceDisconnectedException("USB device disconnected during zero-length write.", err);
+            }
+            throw new IOException($"USB zero-length write failed with error: {err}");
+        }
     }
 
     public override UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)

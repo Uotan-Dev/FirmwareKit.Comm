@@ -117,7 +117,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         }
         catch (Exception ex)
         {
-            UsbTrace.Log($"LibUsbDevice.SetConfiguration ignored: {ex.GetType().Name}: {ex.Message}");
+            UsbTrace.LogFormatted($"LibUsbDevice.SetConfiguration ignored: {ex.GetType().Name}: {ex.Message}");
         }
 
         byte targetInterfaceId = InterfaceId;
@@ -222,7 +222,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
         if (!claimed)
         {
-            UsbTrace.Log($"LibUsbDevice.ClaimInterface failed: {claimError?.GetType().Name}: {claimError?.Message}");
+            UsbTrace.LogFormatted($"LibUsbDevice.ClaimInterface failed: {claimError?.GetType().Name}: {claimError?.Message}");
         }
 
         reader = null;
@@ -322,7 +322,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             }
             catch (Exception ex)
             {
-                UsbTrace.Log($"LibUsbDevice.Reset failed: {ex.GetType().Name}: {ex.Message}");
+                UsbTrace.LogFormatted($"LibUsbDevice.Reset failed: {ex.GetType().Name}: {ex.Message}");
             }
         }
     }
@@ -469,6 +469,28 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     public override long Write(byte[] data, int length)
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
+    }
+
+    public override void WriteZlp(int timeoutMs)
+    {
+        if (writer == null)
+        {
+            // OUT-only session without a writer cannot send a ZLP; interrupt writes target
+            // explicit endpoints regardless of the bulk pair.
+            throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
+        }
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        byte[] zero = Array.Empty<byte>();
+        Error errorCode = writer.Write(zero, 0, 0, ToLibusbTimeout(effectiveTimeoutMs), out int transferred);
+        if (errorCode == Error.NoDevice)
+        {
+            throw new UsbDeviceDisconnectedException("USB write failed: device disconnected (Error.NoDevice).", (int)errorCode);
+        }
+        if (errorCode != 0)
+        {
+            throw new IOException($"USB zero-length write failed with libusb error: {errorCode}");
+        }
     }
 
     public override UsbReadResult ReadInterrupt(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs)
@@ -671,12 +693,12 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         int lenRemaining = length;
         int count = 0;
 
-        UsbTrace.Log($"LibUsbDevice: Write attempt - length: {length}");
+        UsbTrace.LogFormatted($"LibUsbDevice: Write attempt - length: {length}");
 
         if (length == 0)
         {
             var (errorCode, transferred) = await writer.WriteAsync(data, 0, 0, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
-            UsbTrace.Log($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
+            UsbTrace.LogFormatted($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
             UsbTrace.EmitTransfer(new UsbTransferEvent
             {
                 Backend = "libusb",
@@ -707,14 +729,14 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
             if (errorCode != 0)
             {
-                UsbTrace.Log($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
+                UsbTrace.LogFormatted($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
                 lastError = (int)errorCode;
                 outcome = UsbTransferOutcome.FatalError;
             }
 
             if (transferred <= 0)
             {
-                UsbTrace.Log($"LibUsbDevice: Write returned non-positive transferred: {transferred}, errorCode: {errorCode}");
+                UsbTrace.LogFormatted($"LibUsbDevice: Write returned non-positive transferred: {transferred}, errorCode: {errorCode}");
                 if (outcome == UsbTransferOutcome.Success)
                 {
                     outcome = UsbTransferOutcome.Timeout;
@@ -729,7 +751,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
             if (transferred < lenToSend)
             {
-                UsbTrace.Log($"LibUsbDevice: Short write - transferred {transferred} < requested {lenToSend}");
+                UsbTrace.LogFormatted($"LibUsbDevice: Short write - transferred {transferred} < requested {lenToSend}");
                 if (outcome == UsbTransferOutcome.Success)
                 {
                     outcome = UsbTransferOutcome.ShortTransfer;
@@ -739,7 +761,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             }
         }
 
-        UsbTrace.Log($"LibUsbDevice: Write finished - total count: {count}");
+        UsbTrace.LogFormatted($"LibUsbDevice: Write finished - total count: {count}");
         if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
         {
             outcome = UsbTransferOutcome.ShortTransfer;

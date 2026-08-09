@@ -386,4 +386,24 @@ internal class MacHostUsbDevice : UsbDevice
     {
         return Write(data, length, PlatformDefaultTimeoutMs);
     }
+
+    public override void WriteZlp(int timeoutMs)
+    {
+        if (pipeOut == IntPtr.Zero)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        uint transferred = 0;
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        int kr = IOUSBHostPipeWriteBulkData(pipeOut, IntPtr.Zero, 0, out transferred, (uint)effectiveTimeoutMs);
+        if (kr != kIOReturnSuccess)
+        {
+            if (kr == kIOReturnNoDevice || kr == kIOReturnNotResponding || kr == kIOReturnAborted)
+            {
+                throw new UsbDeviceDisconnectedException($"USB device disconnected during zero-length write (error: 0x{kr:X}).", kr);
+            }
+            throw new IOException($"USB zero-length write failed with error: 0x{kr:X}");
+        }
+    }
 }

@@ -66,6 +66,17 @@ public sealed class UsbDeviceFilter
     public byte? InterfaceNumber { get; set; }
 
     /// <summary>
+    /// Gets or sets the required USB interface numbers — every listed interface must be
+    /// present on the device. Used by protocol layers that need multiple claimed interfaces
+    /// (e.g. CDC-ACM control + data interfaces, EDL multi-interface devices); the primary
+    /// data interface stays in <see cref="InterfaceNumber"/>.
+    /// <para>获取或设置要求的 USB 接口编号列表——设备必须包含列表中的每一个接口。
+    /// 供需要多个已声明接口的协议层使用（例如 CDC-ACM 控制 + 数据接口、EDL 多接口设备）；
+    /// 主数据接口仍由 <see cref="InterfaceNumber"/> 指定。</para>
+    /// </summary>
+    public IReadOnlyList<byte>? InterfaceNumbers { get; set; }
+
+    /// <summary>
     /// Gets or sets the required bulk IN endpoint address (bit 7 set), when a protocol
     /// layer must target a specific endpoint pair instead of the first bulk pair found
     /// (e.g. Rockchip loader on 0x82/0x02).
@@ -104,6 +115,9 @@ public sealed class UsbDeviceFilter
         if (InterfaceProtocol.HasValue && info.InterfaceProtocol != InterfaceProtocol.Value) return false;
         if (InterfaceNumber.HasValue &&
             !info.Interfaces.Any(i => i.InterfaceNumber == InterfaceNumber.Value)) return false;
+        if (InterfaceNumbers is { Count: > 0 } requestedInterfaces &&
+            requestedInterfaces.Any(required =>
+                !info.Interfaces.Any(i => i.InterfaceNumber == required))) return false;
 
         if (EndpointAddressIn.HasValue || EndpointAddressOut.HasValue)
         {

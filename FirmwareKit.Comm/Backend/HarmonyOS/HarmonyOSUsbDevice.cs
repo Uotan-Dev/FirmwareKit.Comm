@@ -309,6 +309,40 @@ internal class HarmonyOSUsbDevice : UsbDevice
         return Write(data, length, PlatformDefaultTimeoutMs);
     }
 
+    public override void WriteZlp(int timeoutMs)
+    {
+        if (_devMmapBuffer == IntPtr.Zero || _devMmapSize == 0)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        var pipe = new UsbRequestPipe
+        {
+            interfaceHandle = _interfaceHandle,
+            endpointAddress = _epOut,
+            timeout = (uint)timeoutMs
+        };
+
+        var devMmap = new UsbDeviceMemMap
+        {
+            deviceId = _deviceId,
+            buffer = _devMmapBuffer,
+            size = (UIntPtr)_devMmapSize,
+            offset = UIntPtr.Zero,
+            length = UIntPtr.Zero
+        };
+
+        int ret = OH_Usb_SendPipeRequest(ref pipe, ref devMmap);
+        if (ret != USB_DDK_NO_ERROR)
+        {
+            if (ret == USB_DDK_TIMEOUT)
+            {
+                return;
+            }
+            throw new IOException($"HarmonyOS zero-length write failed with error: {ret}");
+        }
+    }
+
     public override int GetSerialNumber()
     {
         if (_disposed || !_ddkInitialized) return -1;

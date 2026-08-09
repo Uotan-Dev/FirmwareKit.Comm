@@ -80,6 +80,19 @@ public interface IFirmwareKitComm
     IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null);
 
     /// <summary>
+    /// Opens the session whose <see cref="UsbDeviceInfo.DeviceKey"/> matches the specified key.
+    /// <para>打开 <see cref="UsbDeviceInfo.DeviceKey"/> 与指定键匹配的设备会话。</para>
+    /// Protocol layers that stash a device's key (e.g. after a mode switch like adb →
+    /// fastboot → EDL where VID/PID change) can reopen the same physical device by key.
+    /// <para>协议层保存设备键后（例如 adb → fastboot → EDL 模式切换导致 VID/PID 变化），
+    /// 可按键重开同一物理设备。</para>
+    /// </summary>
+    /// <param name="deviceKey">The stable device key from <see cref="UsbDeviceInfo.DeviceKey"/>. <para>来自 <see cref="UsbDeviceInfo.DeviceKey"/> 的稳定设备键。</para></param>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <returns>The matching session, or <c>null</c> when no device matches. <para>匹配的会话；无匹配设备时返回 <c>null</c>。</para></returns>
+    IUsbDeviceSession? OpenUsbDeviceSessionByKey(string deviceKey, UsbApiKind apiKind = UsbApiKind.Auto);
+
+    /// <summary>
     /// Waits until at least one device matching the filter appears (250 ms polling).
     /// <para>等待至少一个匹配过滤条件的设备出现（250 ms 轮询）。</para>
     /// </summary>

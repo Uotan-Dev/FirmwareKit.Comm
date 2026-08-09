@@ -399,9 +399,21 @@ namespace FirmwareKit.Comm.Backend.Windows
 
         private static string BuildDeviceKey(UsbDevice device)
         {
+            // Composite devices (e.g. FT2232HL) expose the same serial number on every
+            // interface (MI_00/MI_01). The interface number must be part of the dedup key
+            // so each WinUSB-bound interface enumerates as its own device.
+            // <para>复合设备（例如 FT2232HL）在每个接口（MI_00/MI_01）上暴露相同的序列号。
+            // 接口号必须参与去重键，使每个 WinUSB 绑定的接口都被枚举为独立设备。</para>
+            string interfaceTag = string.Empty;
+            Match miMatch = Regex.Match(device.DevicePath, @"mi_([0-9a-fA-F]{2})", RegexOptions.IgnoreCase);
+            if (miMatch.Success)
+            {
+                interfaceTag = $"|mi:{miMatch.Groups[1].Value.ToLowerInvariant()}";
+            }
+
             if (!string.IsNullOrWhiteSpace(device.SerialNumber))
             {
-                return $"serial:{device.SerialNumber}";
+                return $"serial:{device.SerialNumber}{interfaceTag}";
             }
 
             // Fallback for devices that do not expose serial numbers.
