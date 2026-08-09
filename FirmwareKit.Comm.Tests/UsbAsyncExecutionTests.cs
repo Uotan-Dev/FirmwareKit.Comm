@@ -51,15 +51,27 @@ public sealed class UsbAsyncExecutionTests
     {
         // Cancellation is honored at the entry/checkpoint of UsbAsyncExecution, not by
         // aborting an action that already started: the action completes normally.
+        // The cancellation must only fire AFTER the action has actually begun, so the
+        // test synchronizes on a started signal instead of racing a fixed CancelAfter
+        // delay (on a loaded CI runner the thread-pool lambda may not reach the action
+        // before the delay fires, and the checkpoint throws OperationCanceledException).
+        // <para>取消仅在 UsbAsyncExecution 的入口/检查点生效，不会中止已启动的操作：
+        // 操作会正常完成。取消必须发生在操作真正开始之后，因此测试通过 started 信号同步，
+        // 而不是与固定的 CancelAfter 延迟竞速（高负载 CI 上线程池 lambda 可能在延迟触发前
+        // 尚未执行到操作，检查点会抛出 OperationCanceledException）。</para>
         using var cts = new CancellationTokenSource();
+        using var started = new ManualResetEventSlim(false);
         var task = UsbAsyncExecution.Run(
             () =>
             {
+                started.Set();
                 Thread.Sleep(150);
                 return 42;
             },
             cts.Token);
-        cts.CancelAfter(30);
+
+        Assert.True(started.Wait(TimeSpan.FromSeconds(10)), "action did not start");
+        cts.Cancel();
 
         Assert.Equal(42, await task);
     }
