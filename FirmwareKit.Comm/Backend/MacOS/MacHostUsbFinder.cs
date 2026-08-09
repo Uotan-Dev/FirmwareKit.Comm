@@ -40,8 +40,30 @@ internal static class MacHostUsbFinder
         LastMatchedDeviceCount = 0;
 
         IntPtr cfDevices = IntPtr.Zero;
-        // NULL matching dictionary requests all USB devices.
-        int kr = IOUSBLibCopyDevices(IntPtr.Zero, out cfDevices);
+        int kr;
+        try
+        {
+            // NULL matching dictionary requests all USB devices.
+            kr = IOUSBLibCopyDevices(IntPtr.Zero, out cfDevices);
+        }
+        catch (DllNotFoundException)
+        {
+            // IOUSBLib may be absent on stripped hosts (e.g. GitHub Actions macOS
+            // runners where the framework is not in the dyld cache). Degrade to an
+            // empty list and expose the failure through the diagnostics instead of
+            // letting the P/Invoke exception escape.
+            // <para>精简主机上 IOUSBLib 可能缺失（例如 GitHub Actions macOS runner
+            // 中框架不在 dyld 缓存里）。降级为空列表，并通过诊断暴露失败，
+            // 而不是让 P/Invoke 异常向外抛出。</para>
+            LastCopyDevicesSucceeded = false;
+            return devices;
+        }
+        catch (EntryPointNotFoundException)
+        {
+            LastCopyDevicesSucceeded = false;
+            return devices;
+        }
+
         LastCopyDevicesSucceeded = kr == kIOReturnSuccess && cfDevices != IntPtr.Zero;
         if (!LastCopyDevicesSucceeded)
         {

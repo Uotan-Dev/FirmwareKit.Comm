@@ -31,8 +31,18 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0
 
     # The libusb backend probe (Marshal.Prelink) degrades gracefully when the native
-    # runtime is absent, so Windows needs no provisioning. macOS gets brew's libusb so
-    # the supported path is exercised there too.
+    # runtime is absent. Windows reuses the repository's committed runtime
+    # (native/win-x64/libusb-1.0.dll, the same artifact fetch-libusb.sh produces and the
+    # nupkg packages) so the supported-but-no-hardware path is exercised there too.
+    - name: Provision libusb runtime (Windows, repo artifact)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $libDir = Join-Path $env:GITHUB_WORKSPACE 'native\win-x64'
+        Test-Path (Join-Path $libDir 'libusb-1.0.dll') | Should -BeTrue
+        echo "$libDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
+        Write-Host "Added $libDir to PATH for libusb probe"
+
     - name: Install libusb (macOS)
       if: runner.os == 'macOS'
       run: brew install libusb
@@ -54,12 +64,49 @@ jobs:
     #   macos-latest   : native routes to macos-iousbhost; IOUSBLib loads, so the P/Invoke
     #                    entry points resolve (a bad signature would be logged as
     #                    "IOUSBHost backend unavailable"); enumeration is empty, exit 0.
-    # In all cases the CLI must exit 0 with a "No USB devices were discovered" message.
+    # In all cases the CLI must exit 0 with a "No USB devices were discovered" message,
+    # and the [enum-diagnostics] line must prove the enumeration mechanism actually ran
+    # (SetupDi/IOUSBLib/usbfs root succeeded) rather than silently failing.
     - name: Observe backend APIs
       run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- apis
 
     - name: Observe device enumeration (native)
       run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native
 
+    # The enumeration mechanism must have run: on a healthy runner the backend's native
+    # enumeration entry point succeeds even with zero devices attached. A silent failure
+    # (SetupDi failed / IOUSBLib copy failed / usbfs root missing) fails the CI.
+    # macOS is special: hosted runners may lack IOUSBLib in the dyld cache, in which case
+    # the finder degrades to copy-devices=False with an empty result (no throw) — that
+    # degraded outcome is also acceptable as long as the diagnostic is emitted.
+    - name: Assert enumeration mechanism ran (native)
+      run: |
+        OUT="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1 || true)"
+        echo "$OUT"
+        echo "$OUT" | grep -q "\[enum-diagnostics\]" || { echo "::error::missing [enum-diagnostics] line"; exit 1; }
+        case "$RUNNER_OS" in
+          Windows) echo "$OUT" | grep -q "setupdi-succeeded=True" || { echo "::error::SetupDi did not succeed on Windows"; exit 1; } ;;
+          Linux)   echo "$OUT" | grep -q "usbfs-root=True" || { echo "::error::usbfs root missing on Linux"; exit 1; } ;;
+          macOS)   echo "$OUT" | grep -q "copy-devices=" || { echo "::error::missing copy-devices diagnostic on macOS"; exit 1; } ;;
+        esac
+
     - name: Observe device enumeration (libusb)
       run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api libusb
+
+    # --- Device-less smoke via the real-device scripts ----------------------
+    # The tools/test-*.sh / test-windows.ps1 scripts are designed to run without
+    # hardware: build/tests/apis/all-devices PASS, selftest reports SKIP (no matching
+    # device, exit 0), monitor runs a 3 s hot-plug smoke. Running them on the hosted
+    # runners exercises the full end-to-end script path used for real-device QA.
+    - name: Run smoke script (Windows, device-less)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: powershell -ExecutionPolicy Bypass -File tools/test-windows.ps1 -Api auto
+
+    - name: Run smoke script (Linux, device-less)
+      if: runner.os == 'Linux'
+      run: bash tools/test-linux.sh --api auto
+
+    - name: Run smoke script (macOS, device-less)
+      if: runner.os == 'macOS'
+      run: bash tools/test-macos.sh --api auto

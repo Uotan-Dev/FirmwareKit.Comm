@@ -198,6 +198,11 @@ static void ExecuteAllDevices(UsbCommunicationLayer layer, string[] args)
     var devices = layer.EnumerateDevices(apiKind, filter: null);
     PrintDevices(devices, json);
 
+    // Always print the enumeration diagnostics so CI can assert the mechanism ran
+    // even when zero devices are present (device-less runners).
+    // <para>始终打印枚举诊断，使 CI 在零设备（无设备 runner）时也能断言枚举机制确实运行。</para>
+    Console.Error.WriteLine($"[enum-diagnostics] {layer.GetEnumerationDiagnostics()}");
+
     if (devices.Count == 0)
     {
         Console.Error.WriteLine("No USB devices were discovered for the selected API on this platform.");

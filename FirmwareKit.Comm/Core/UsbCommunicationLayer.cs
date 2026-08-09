@@ -1,6 +1,8 @@
 using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Backend.LibUsb;
+using FirmwareKit.Comm.Backend.Linux;
+using FirmwareKit.Comm.Backend.MacOS;
 using FirmwareKit.Comm.Backend.Windows;
 using FirmwareKit.Comm.Diagnostics;
 using FirmwareKit.Comm.Providers;
@@ -554,5 +556,35 @@ public sealed class UsbCommunicationLayer
             RequiresExternalRuntime = false,
             Notes = "Capability data was inferred because the provider does not implement IUsbApiCapabilityProvider."
         };
+    }
+
+    /// <summary>
+    /// Returns a compact diagnostic summary of the last enumeration on the current platform,
+    /// exposing the per-backend observability state (SetupDi succeeded, IOUSBLib copy
+    /// succeeded, usbfs root present, scanned node counts) so device-less CI can assert that
+    /// the enumeration mechanism actually ran instead of silently returning empty.
+    /// <para>返回当前平台上次枚举的紧凑诊断摘要，暴露各后端可观测状态
+    /// （SetupDi 成功、IOUSBLib copy 成功、usbfs 根存在、扫描节点数），
+    /// 使无设备 CI 能断言枚举机制确实运行，而非静默返回空。</para>
+    /// </summary>
+    /// <returns>A <c>key=value; ...</c> diagnostic string. <para><c>key=value; ...</c> 形式的诊断字符串。</para></returns>
+    public string GetEnumerationDiagnostics()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return $"setupdi-succeeded={WinUSBFinder.LastSetupDiSucceeded}; nodes={WinUSBFinder.LastScannedNodeCount}; matched={WinUSBFinder.LastMatchedDeviceCount}";
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+        {
+            return $"usbfs-root={LinuxUsbFinder.LastUsbfsRootExists}; nodes={LinuxUsbFinder.LastScannedNodes}; matched={LinuxUsbFinder.LastMatchedDeviceCount}; perm-denied={LinuxUsbFinder.PermissionDeniedCount}; busy={LinuxUsbFinder.BusyCount}";
+        }
+
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+        {
+            return $"copy-devices={MacHostUsbFinder.LastCopyDevicesSucceeded}; scanned={MacHostUsbFinder.LastScannedDeviceCount}; matched={MacHostUsbFinder.LastMatchedDeviceCount}";
+        }
+
+        return "unsupported-platform";
     }
 }

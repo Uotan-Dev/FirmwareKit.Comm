@@ -1,0 +1,45 @@
+name: Cross-publish RID check
+
+# Verifies the solution cross-publishes to every supported runtime identifier from a
+# single Linux runner. Plain build/test on the three-OS matrix only exercises the host
+# RID; this job catches RID-specific issues (native runtime layout in the nupkg, TFM/RID
+# asset resolution, publish-time errors) without needing a machine per target.
+#
+# Publish is framework-dependent (--self-contained false): the goal is to validate the
+# publish graph and packaging, not to produce runnable binaries. Execution still needs
+# the target OS (covered by the matrix + tools/test-*.sh on real hardware).
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  cross-publish:
+    name: Publish ${{ matrix.rid }}
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64, win-arm64, osx-x64, osx-arm64, linux-x64, linux-arm64]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Publish CLI (${{ matrix.rid }})
+        run: |
+          dotnet publish FirmwareKit.Comm.CLI/FirmwareKit.Comm.CLI.csproj \
+            -c Release -r ${{ matrix.rid }} --self-contained false --nologo \
+            -o publish/${{ matrix.rid }}
+
+      - name: Assert publish output
+        run: |
+          test -f "publish/${{ matrix.rid }}/FirmwareKit.Comm.CLI.dll"
+          test -f "publish/${{ matrix.rid }}/FirmwareKit.Comm.dll"
+          echo "::notice::published ${{ matrix.rid }} ok (CLI + library dll present)"
