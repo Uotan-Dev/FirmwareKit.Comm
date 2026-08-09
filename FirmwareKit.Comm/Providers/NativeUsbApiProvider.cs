@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Backend;
 using FirmwareKit.Comm.Backend.HarmonyOS;
@@ -5,7 +6,6 @@ using FirmwareKit.Comm.Backend.Linux;
 using FirmwareKit.Comm.Backend.MacOS;
 using FirmwareKit.Comm.Backend.Windows;
 using FirmwareKit.Comm.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Providers;
 
@@ -47,14 +47,23 @@ internal sealed class NativeUsbApiProvider : UsbApiProviderBase
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = false,
             RequiresExternalRuntime = false,
+            // The native provider spans platform backends whose Reset semantics differ:
+            // WinUSB/legacy/macOS are pipe-level (session stays valid), while Linux usbfs
+            // and HarmonyOS DDK reset the device/DDK session (must re-open). The top-level
+            // flag is therefore the conservative "true" (at least one backend re-enumerates).
+            // <para>native 提供器覆盖多个平台后端，其 Reset 语义不同：
+            // WinUSB/legacy/macOS 为管道级（会话保持有效），而 Linux usbfs 与 HarmonyOS DDK
+            // 重置设备/DDK 会话（必须重新打开）。顶层标志因此取保守的 true
+            // （至少一个后端会重新枚举）。</para>
+            ResetReenumeratesDevice = true,
             Notes = notes,
             Backends = new[]
             {
-                new UsbBackendCapability { BackendName = "winusb", SupportsNativeAsyncIo = true },
-                new UsbBackendCapability { BackendName = "winusb-legacy", SupportsNativeAsyncIo = false },
-                new UsbBackendCapability { BackendName = "linux-usbfs", SupportsNativeAsyncIo = true },
-                new UsbBackendCapability { BackendName = "macos-iousbhost", SupportsNativeAsyncIo = false },
-                new UsbBackendCapability { BackendName = "harmony-ddk", SupportsNativeAsyncIo = false }
+                new UsbBackendCapability { BackendName = "winusb", SupportsNativeAsyncIo = true, ResetReenumeratesDevice = false },
+                new UsbBackendCapability { BackendName = "winusb-legacy", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = false },
+                new UsbBackendCapability { BackendName = "linux-usbfs", SupportsNativeAsyncIo = true, ResetReenumeratesDevice = true },
+                new UsbBackendCapability { BackendName = "macos-iousbhost", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = false },
+                new UsbBackendCapability { BackendName = "harmony-ddk", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = true }
             }
         };
     }

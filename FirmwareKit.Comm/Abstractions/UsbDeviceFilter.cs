@@ -67,12 +67,12 @@ public sealed class UsbDeviceFilter
 
     /// <summary>
     /// Gets or sets the required USB interface numbers — every listed interface must be
-    /// present on the device. Used by protocol layers that need multiple claimed interfaces
-    /// (e.g. CDC-ACM control + data interfaces, EDL multi-interface devices); the primary
-    /// data interface stays in <see cref="InterfaceNumber"/>.
-    /// <para>获取或设置要求的 USB 接口编号列表——设备必须包含列表中的每一个接口。
-    /// 供需要多个已声明接口的协议层使用（例如 CDC-ACM 控制 + 数据接口、EDL 多接口设备）；
-    /// 主数据接口仍由 <see cref="InterfaceNumber"/> 指定。</para>
+    /// present on the device.
+    /// <para>获取或设置要求的 USB 接口编号列表——设备必须包含列表中的每一个接口。</para>
+    /// The primary data interface stays in <see cref="InterfaceNumber"/>; this list covers
+    /// additional interfaces that must also be claimed (e.g. CDC-ACM control + data).
+    /// <para>主数据接口仍由 <see cref="InterfaceNumber"/> 指定；本列表涵盖同样需要声明的
+    /// 附加接口（例如 CDC-ACM 控制 + 数据接口）。</para>
     /// </summary>
     public IReadOnlyList<byte>? InterfaceNumbers { get; set; }
 

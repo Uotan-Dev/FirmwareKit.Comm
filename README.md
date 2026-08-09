@@ -44,6 +44,53 @@ Protocol layers (for example Sahara, Firehose, Fastboot, or custom binary protoc
 - When an exact number of bytes must be read within a total budget (e.g. fixed-size fastboot/EDL responses), use `ReadExact(length, timeoutMs)` / `ReadExactAsync` — they loop over short reads with a total deadline and return the bytes actually received on timeout.
 - Short reads/writes stop the transfer and return the partial byte count; a disconnected device throws `UsbDeviceDisconnectedException` (distinct from ordinary `IOException`/`UsbTransferException`).
 
+**Default timeouts differ per backend.** Omit `timeoutMs` only when the default is acceptable for your use case:
+
+| Backend | Default timeout |
+|---------|-----------------|
+| Windows WinUSB | 60 000 ms |
+| Windows legacy / Linux usbfs / libusb / macOS / HarmonyOS | 5 000 ms |
+
+Pass an explicit `timeoutMs` (or `UsbTransferPolicies.InfiniteTimeoutMs` = -1 for an unbounded wait) when the operation must not depend on the backend default.
+
+On the Linux usbfs backend, interrupt-endpoint reads/writes (`ReadInterrupt`/`WriteInterrupt`) wait on `poll()` from a thread-pool thread; with `InfiniteTimeoutMs` and an unresponsive device the waiting thread is held until the device responds or disconnects.
+
+## Zero-Length Packet (ZLP) Handling
+
+Bulk transfers whose payload length is an **exact multiple** of the endpoint's max packet size (typically 512 or 1024 bytes) must be terminated with a zero-length packet so the device knows the transfer ended. This matters for protocol downloads (adb push, fastboot `download:`, EDL firehose) and for bootrom loaders.
+
+- Check whether a ZLP is needed: `payloadLength % maxPacketSize == 0` (read `MaxPacketSize` from the device's `Interfaces[i].Endpoints` metadata).
+- After such a write, call `session.WriteZlp(timeoutMs)` (or `WriteZlpAsync`) to send the terminating zero-length packet.
+- Backends that cannot perform an explicit ZLP write (legacy Windows drivers) throw `NotSupportedException`; check `UsbApiCapabilities` / backend capabilities first.
+
+```csharp
+// Example: writing a 512 KiB block to a device whose OUT max packet size is 512.
+long written = session.Write(block, 0, block.Length, timeoutMs);
+if (block.Length % 512 == 0)
+    session.WriteZlp(timeoutMs);
+```
+
+## Reset Semantics
+
+`IUsbDeviceSession.Reset()` semantics differ per backend. Query `UsbApiCapabilities.ResetReenumeratesDevice` (or `UsbBackendCapability.ResetReenumeratesDevice` for the concrete backend) before relying on the session after a reset:
+
+| Backend | Reset effect | Session after Reset | `ResetReenumeratesDevice` |
+|---------|-------------|---------------------|---------------------------|
+| Windows WinUSB | `WinUsb_ResetPipe` (pipe-level) | still usable | `false` |
+| Windows legacy | no-op | still usable | `false` |
+| macOS IOUSBHost | pipe abort + clear stall | still usable | `false` |
+| Linux usbfs | `USBDEVFS_RESET` (device reset) | **invalid — re-enumerate and re-open** | `true` |
+| libusb | `libusb_reset_device` (device reset) | **invalid — re-enumerate and re-open** | `true` |
+| HarmonyOS DDK | re-init DDK session + re-claim | **invalid — re-open** | `true` |
+
+For device-level resets, use `WaitForUsbDeviceDisappearAsync` / `WaitForUsbDeviceAppearAsync` (or `WaitForUsbDeviceModeSwitchAsync`) and then `OpenUsbDeviceSession` / `OpenUsbDeviceSessionByKey` to obtain a fresh session.
+
+## Async I/O Semantics
+
+True asynchronous (non-blocking) I/O is implemented natively by **WinUSB** (overlapped I/O) and **Linux usbfs** (URB + poll). All other backends — macOS IOUSBHost, libusb fallback paths, HarmonyOS DDK, and the `AsAsync()` adapter — execute the underlying synchronous transfer on a thread-pool thread (`UsbAsyncExecution.Run`).
+
+Check `UsbApiCapabilities.SupportsNativeAsyncIo` (or `UsbBackendCapability.SupportsNativeAsyncIo` per backend) to know whether `ReadAsync`/`WriteAsync` are truly non-blocking or just offloaded. Protocol layers that must not block the caller's thread should treat `SupportsNativeAsyncIo == false` backends as synchronous-with-offload.
+
 ## Hot-Plug Monitoring
 
 `MonitorUsbDevices` prefers event-driven notifications where available: `WM_DEVICECHANGE` (Windows native backend) and libusb hotplug (Linux/macOS, `UsbApiKind.LibUsbDotNet`); unsupported platforms fall back to polling (`pollInterval`, default 1 s). Change events include `Added`, `Removed` and `Changed` (metadata changed while keeping the same physical identity). Pass a `CancellationToken` to auto-dispose the monitor handle, or use the `WaitForUsbDeviceAppearAsync` / `WaitForUsbDeviceDisappearAsync` / `WaitForUsbDeviceModeSwitchAsync` helpers for mode-switch workflows.

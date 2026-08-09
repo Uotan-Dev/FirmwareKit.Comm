@@ -777,9 +777,8 @@ internal abstract class UsbDevice : IDisposable
     /// Sends a zero-length packet (ZLP) on the bulk OUT endpoint.
     /// <para>在批量 OUT 端点上发送零长度包（ZLP）。</para>
     /// The default implementation reports the capability as unsupported; backends that can
-    /// perform an explicit zero-length bulk write (WinUSB/usbfs/libusb/macOS) override it.
-    /// <para>默认实现报告该能力不受支持；可执行显式零长度批量写入的后端
-    /// （WinUSB/usbfs/libusb/macOS）覆盖此方法。</para>
+    /// perform an explicit zero-length bulk write override it.
+    /// <para>默认实现报告该能力不受支持；可执行显式零长度批量写入的后端覆盖此方法。</para>
     /// </summary>
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     public virtual void WriteZlp(int timeoutMs)

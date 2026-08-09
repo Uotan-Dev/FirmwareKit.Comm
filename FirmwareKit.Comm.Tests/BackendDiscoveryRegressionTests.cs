@@ -1,5 +1,4 @@
 using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Backend;
 using FirmwareKit.Comm.Backend.LibUsb;
 using FirmwareKit.Comm.Backend.Linux;
 

@@ -50,9 +50,8 @@ public interface IAsyncUsbDeviceSession
 
     /// <summary>
     /// Reads into a caller-provided buffer asynchronously, reporting cumulative bytes read
-    /// after each completed chunk (useful for large protocol downloads, e.g. EDL firehose).
-    /// <para>异步读取到调用方提供的缓冲区，并在每个分块完成后报告累计读取字节数
-    /// （适用于大文件协议下载，例如 EDL firehose）。</para>
+    /// after each completed chunk.
+    /// <para>异步读取到调用方提供的缓冲区，并在每个分块完成后报告累计读取字节数。</para>
     /// </summary>
     /// <param name="buffer">The destination buffer. <para>目标缓冲区。</para></param>
     /// <param name="offset">The destination offset. <para>目标偏移量。</para></param>
@@ -88,9 +87,8 @@ public interface IAsyncUsbDeviceSession
 
     /// <summary>
     /// Writes bytes to the device asynchronously, reporting cumulative bytes written after
-    /// each completed chunk (useful for flashing large firmware images).
-    /// <para>异步从指定偏移量开始向设备写入字节数据，并在每个分块完成后报告累计写入字节数
-    /// （适用于刷写大固件镜像）。</para>
+    /// each completed chunk.
+    /// <para>异步从指定偏移量向设备写入字节数据，并在每个分块完成后报告累计写入字节数。</para>
     /// </summary>
     /// <param name="data">The data to write. <para>待写入数据。</para></param>
     /// <param name="offset">The offset into <paramref name="data"/> at which to start. <para><paramref name="data"/> 中的起始偏移量。</para></param>
@@ -104,8 +102,6 @@ public interface IAsyncUsbDeviceSession
     /// <summary>
     /// Sends a zero-length packet (ZLP) on the bulk OUT endpoint asynchronously.
     /// <para>异步在批量 OUT 端点上发送零长度包（ZLP）。</para>
-    /// See <see cref="IUsbDeviceSession.WriteZlp"/> for the ZLP semantics.
-    /// <para>ZLP 语义参见 <see cref="IUsbDeviceSession.WriteZlp"/>。</para>
     /// </summary>
     /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <param name="cancellationToken">A cancellation token. <para>取消令牌。</para></param>

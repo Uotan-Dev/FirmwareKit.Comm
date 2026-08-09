@@ -1,7 +1,7 @@
-using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Diagnostics;
 
 namespace FirmwareKit.Comm.Backend.Windows
 {

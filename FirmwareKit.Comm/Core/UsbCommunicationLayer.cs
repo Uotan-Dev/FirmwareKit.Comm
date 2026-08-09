@@ -1,9 +1,9 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Backend.LibUsb;
 using FirmwareKit.Comm.Backend.Windows;
 using FirmwareKit.Comm.Diagnostics;
 using FirmwareKit.Comm.Providers;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Core;
 
@@ -382,10 +382,25 @@ public sealed class UsbCommunicationLayer
         var providers = ResolveProviders(apiKind);
         var sessions = new List<IUsbDeviceSession>();
 
+        // Auto 解析多个后端时，同一物理设备可能被 native 与 libusb 各枚举一次，
+        // 按物理键去重，避免同一设备被打开两次。
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
         foreach (var provider in providers)
         {
             if (!provider.IsSupportedOnCurrentPlatform) continue;
-            sessions.AddRange(provider.EnumerateDeviceSessions(filter));
+
+            foreach (var session in provider.EnumerateDeviceSessions(filter))
+            {
+                if (seen.Add(UsbDeviceIdentity.BuildPhysicalKey(session.DeviceInfo)))
+                {
+                    sessions.Add(session);
+                }
+                else
+                {
+                    session.Dispose();
+                }
+            }
         }
 
         return new UsbSessionCollection(sessions);
@@ -432,11 +447,8 @@ public sealed class UsbCommunicationLayer
     /// <summary>
     /// Opens the session whose <see cref="UsbDeviceInfo.DeviceKey"/> matches the specified key.
     /// <para>打开 <see cref="UsbDeviceInfo.DeviceKey"/> 与指定键匹配的设备会话。</para>
-    /// Protocol layers that stash a device's key (e.g. after a mode switch like adb →
-    /// fastboot → EDL where VID/PID change) can reopen the same physical device by key
-    /// instead of re-specifying a filter. Non-matching opened sessions are disposed.
-    /// <para>协议层保存设备键后（例如 adb → fastboot → EDL 模式切换导致 VID/PID 变化），
-    /// 可按键重开同一物理设备，而无需重新指定过滤条件。不匹配的已打开会话会被释放。</para>
+    /// Non-matching opened sessions are disposed.
+    /// <para>不匹配的已打开会话会被释放。</para>
     /// </summary>
     /// <param name="deviceKey">The stable device key from <see cref="UsbDeviceInfo.DeviceKey"/>. <para>来自 <see cref="UsbDeviceInfo.DeviceKey"/> 的稳定设备键。</para></param>
     /// <param name="apiKind">The backend selection mode. <para>后端选择模式。</para></param>

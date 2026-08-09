@@ -1,7 +1,7 @@
-using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Diagnostics;
 using System.Globalization;
 using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Diagnostics;
 using static FirmwareKit.Comm.Backend.Linux.LinuxUsbAPI;
 
 namespace FirmwareKit.Comm.Backend.Linux;

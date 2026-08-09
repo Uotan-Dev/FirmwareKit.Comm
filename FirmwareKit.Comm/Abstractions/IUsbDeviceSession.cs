@@ -94,10 +94,8 @@ public interface IUsbDeviceSession : IDisposable
 
 #if NET8_0_OR_GREATER
     /// <summary>
-    /// Reads bytes into a caller-provided span with an operation timeout, avoiding the
-    /// intermediate array when the span is backed by an array (net8.0+ only).
-    /// <para>在指定超时时间内将数据读取到调用方提供的跨度（仅 net8.0+）。
-    /// 当跨度由数组支持时避免中间数组分配。</para>
+    /// Reads bytes into a caller-provided span with an operation timeout (net8.0+ only).
+    /// <para>在指定超时时间内将数据读取到调用方提供的跨度（仅 net8.0+）。</para>
     /// </summary>
     /// <param name="buffer">The destination span. <para>目标跨度。</para></param>
     /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
@@ -142,12 +140,6 @@ public interface IUsbDeviceSession : IDisposable
     /// <summary>
     /// Sends a zero-length packet (ZLP) on the bulk OUT endpoint.
     /// <para>在批量 OUT 端点上发送零长度包（ZLP）。</para>
-    /// Protocol layers whose payload length is an exact multiple of the endpoint max packet
-    /// size must terminate the transfer with a ZLP so the device knows the transfer ended
-    /// (fastboot/EDL downloads, adb push). Call this after such a write.
-    /// <para>当协议层载荷长度恰好是端点最大包大小的整数倍时，必须以 ZLP 结束传输，
-    /// 设备才能判断传输已结束（fastboot/EDL 下载、adb push 等场景）。
-    /// 此类写操作完成后应调用本方法。</para>
     /// </summary>
     /// <param name="timeoutMs">Timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     void WriteZlp(int timeoutMs);
@@ -217,6 +209,9 @@ public interface IUsbDeviceSession : IDisposable
     /// <summary>
     /// Resets the device or backend transport.
     /// <para>重置设备或后端传输层。</para>
+    /// Whether the session remains usable afterwards is exposed by
+    /// <see cref="UsbApiCapabilities.ResetReenumeratesDevice"/>.
+    /// <para>复位后会话是否仍可用由 <see cref="UsbApiCapabilities.ResetReenumeratesDevice"/> 指示。</para>
     /// </summary>
     void Reset();
 }

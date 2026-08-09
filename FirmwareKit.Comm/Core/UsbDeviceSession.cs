@@ -491,8 +491,7 @@ internal sealed class UsbDeviceSession : IUsbDeviceSession, IAsyncUsbDeviceSessi
     {
         // Idempotent: a second Dispose (e.g. via UsbSessionCollection after the caller
         // already disposed the session) must not touch the released semaphores again.
-        // <para>幂等：二次 Dispose（例如调用方已释放会话后，UsbSessionCollection 再次释放）
-        // 不得再次触碰已释放的信号量。</para>
+        // <para>幂等：二次 Dispose 不得再次触碰已释放的信号量。</para>
         if (Interlocked.Exchange(ref _disposed, 1) != 0)
         {
             return;

@@ -69,6 +69,18 @@ public sealed class UsbApiCapabilities
     public bool SupportsNativeHotPlugMonitoring { get; set; }
 
     /// <summary>
+    /// Gets or sets whether <see cref="IUsbDeviceSession.Reset"/> causes the device to
+    /// re-enumerate, invalidating the session (the caller must re-open it).
+    /// <para>获取或设置 <see cref="IUsbDeviceSession.Reset"/> 是否会导致设备重新枚举并使会话失效
+    /// （调用方必须重新打开会话）。</para>
+    /// <c>false</c> means a pipe-level reset that keeps the session usable (WinUSB, macOS,
+    /// legacy); <c>true</c> means a device-level reset (Linux usbfs, libusb, HarmonyOS DDK).
+    /// <para><c>false</c> 表示管道级复位，会话保持可用（WinUSB、macOS、legacy）；
+    /// <c>true</c> 表示设备级复位（Linux usbfs、libusb、HarmonyOS DDK）。</para>
+    /// </summary>
+    public bool ResetReenumeratesDevice { get; set; }
+
+    /// <summary>
     /// Gets or sets whether the backend requires an external runtime library.
     /// <para>获取或设置后端是否依赖外部运行时库。</para>
     /// </summary>
@@ -105,6 +117,14 @@ public sealed class UsbBackendCapability
     /// <para>获取或设置该后端是否原生实现异步 I/O。</para>
     /// </summary>
     public bool SupportsNativeAsyncIo { get; set; }
+
+    /// <summary>
+    /// Gets or sets whether <see cref="IUsbDeviceSession.Reset"/> re-enumerates the device
+    /// on this specific backend (see <see cref="UsbApiCapabilities.ResetReenumeratesDevice"/>).
+    /// <para>获取或设置该具体后端上 <see cref="IUsbDeviceSession.Reset"/> 是否重新枚举设备
+    /// （参见 <see cref="UsbApiCapabilities.ResetReenumeratesDevice"/>）。</para>
+    /// </summary>
+    public bool ResetReenumeratesDevice { get; set; }
 }
 
 /// <summary>

@@ -1,7 +1,7 @@
-using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Diagnostics;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Diagnostics;
 using static FirmwareKit.Comm.Backend.HarmonyOS.HarmonyOSUsbDDK;
 
 namespace FirmwareKit.Comm.Backend.HarmonyOS;
@@ -247,14 +247,17 @@ internal class HarmonyOSUsbDevice : UsbDevice
         if (ret == USB_DDK_NO_ERROR)
         {
             int transferred = (int)devMmap.length;
-            if (transferred > 0)
+            int copyLen = Math.Min(transferred, length);
+            if (copyLen > 0)
             {
-                int copyLen = Math.Min(transferred, length);
                 byte[] tmp = new byte[copyLen];
                 Marshal.Copy(_devMmapBuffer, tmp, 0, copyLen);
                 Marshal.Copy(tmp, 0, buffer, copyLen);
             }
-            return UsbChunkResult.Success(transferred);
+
+            // 报告实际拷贝到调用方缓冲区的字节数：transferred 可能因驱动行为超过 length，
+            // 若原样返回会导致基类分块循环按未填充的字节数推进。
+            return UsbChunkResult.Success(copyLen);
         }
 
         return ret == USB_DDK_TIMEOUT ? UsbChunkResult.Timeout(ret) : UsbChunkResult.Fatal(ret);

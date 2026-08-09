@@ -1,7 +1,7 @@
-using FirmwareKit.Comm.Abstractions;
-using Microsoft.Win32.SafeHandles;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Abstractions;
+using Microsoft.Win32.SafeHandles;
 using static FirmwareKit.Comm.Backend.Windows.Win32API;
 
 namespace FirmwareKit.Comm.Backend.Windows;

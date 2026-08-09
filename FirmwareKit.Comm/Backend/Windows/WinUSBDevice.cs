@@ -1,9 +1,8 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Diagnostics;
 using Microsoft.Win32.SafeHandles;
-using System.ComponentModel;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Backend.Windows.Win32API;
 using static FirmwareKit.Comm.Backend.Windows.WinUSBAPI;
 
@@ -30,8 +29,7 @@ internal class WinUSBDevice : UsbDevice
     private Win32API.USBDeviceDescriptor USBDeviceDescriptor;
     private Win32API.USBDeviceConfigDescriptor USBDeviceConfigDescriptor;
     private Win32API.USBDeviceInterfaceDescriptor USBDeviceInterfaceDescriptor;
-    private int _configuredPipeTimeoutMs = -1;
-
+    private int _configuredPipeTimeoutMs = -1; // accessed via Volatile.Read/Write (S5)
     public override int CreateHandle()
     {
         // Releases the file/interface handles already acquired when a step fails,
@@ -209,8 +207,13 @@ internal class WinUSBDevice : UsbDevice
         }
 
         // Cache the configured value so per-chunk calls do not hit WinUsb_SetPipePolicy
-        // (a kernel transition) when the timeout has not changed.
-        if (_configuredPipeTimeoutMs == effective)
+        // (a kernel transition) when the timeout has not changed. Read/write via Volatile:
+        // ReadChunk and WriteChunk run concurrently on separate direction gates, so the
+        // cache must not be a torn/unsynchronized read.
+        // <para>缓存已配置的值，避免每分块在超时未变化时触发 WinUsb_SetPipePolicy
+        // （内核切换）。经 Volatile 读写：ReadChunk 与 WriteChunk 在各自方向门闩上并发，
+        // 缓存读写不得撕裂。</para>
+        if (Volatile.Read(ref _configuredPipeTimeoutMs) == effective)
         {
             return;
         }
@@ -218,7 +221,7 @@ internal class WinUSBDevice : UsbDevice
         uint timeout = (uint)effective;
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
-        _configuredPipeTimeoutMs = effective;
+        Volatile.Write(ref _configuredPipeTimeoutMs, effective);
     }
 
     public override void Reset()
@@ -403,8 +406,9 @@ internal class WinUSBDevice : UsbDevice
 
         SetPipeTimeout(timeoutMs);
         uint bytesWritten;
-        // A zero-length bulk OUT write transmits a ZLP, which terminates a transfer whose
-        // length is an exact multiple of the endpoint max packet size.
+        // A zero-length bulk OUT write transmits a ZLP, ending a transfer whose length is an
+        // exact multiple of the endpoint max packet size.
+        // <para>零长度批量 OUT 写会发送 ZLP，结束长度恰为端点最大包大小整数倍的传输。</para>
         if (!WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), WriteBulkID, IntPtr.Zero, 0, out bytesWritten, IntPtr.Zero))
         {
             int err = Marshal.GetLastWin32Error();
@@ -614,10 +618,10 @@ internal class WinUSBDevice : UsbDevice
                     }
 
                     // The driver did not acknowledge the abort in time (device stalled or
-                    // detached). Never free the OVERLAPPED now — the kernel may still hold a
-                    // reference. Hand ownership to a background releaser (UAF guard).
-                    // <para>驱动未及时确认中止（设备卡死或已拔出）。现在绝不能释放
-                    // OVERLAPPED——内核可能仍持有引用。将所有权交给后台释放器（UAF 防护）。</para>
+                    // detached); never free a kernel-referenced OVERLAPPED — hand ownership
+                    // to a background releaser (UAF guard).
+                    // <para>驱动未及时确认中止（设备卡死或已拔出）；绝不释放仍被内核引用的
+                    // OVERLAPPED——将所有权交给后台释放器（UAF 防护）。</para>
                     ScheduleDelayedOverlappedRelease(ovHandle, evt);
                     ownershipTransferred = true;
                     throw;

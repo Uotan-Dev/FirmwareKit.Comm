@@ -1,8 +1,8 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Backend.HarmonyOS;
 using FirmwareKit.Comm.Backend.Linux;
 using FirmwareKit.Comm.Backend.MacOS;
 using FirmwareKit.Comm.Backend.Windows;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.IntegrationTests;
 

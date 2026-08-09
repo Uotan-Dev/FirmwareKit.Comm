@@ -45,14 +45,9 @@ internal static class UsbTransferPolicies
 
     /// <summary>
     /// The safety cap for a single read allocation requested by the caller (or derived from
-    /// an untrusted protocol length field). Prevents a malicious/errant device or malformed
-    /// frame header from driving an OOM-sized <c>new byte[length]</c> allocation.
-    /// <para>单次读取分配的安全上限（由调用方指定或从不可信协议长度字段得出）。
-    /// 防止恶意/异常设备或畸形帧头导致 OOM 级别的 <c>new byte[length]</c> 分配。</para>
-    /// Protocol layers MUST clamp device-provided lengths to this value (or lower) before
-    /// calling <c>Read</c>/<c>ReadExact</c>; the library rejects requests above the cap.
-    /// <para>协议层在调用 <c>Read</c>/<c>ReadExact</c> 前必须把设备提供的长度钳制到
-    /// 该值（或更低）；库会拒绝超出上限的请求。</para>
+    /// an untrusted protocol length field), preventing an OOM-sized <c>new byte[length]</c>.
+    /// <para>单次读取分配的安全上限（由调用方指定或从不可信协议长度字段得出），
+    /// 防止 OOM 级别的 <c>new byte[length]</c> 分配。</para>
     /// </summary>
     public const int MaxReadLength = 64 * 1024 * 1024;
 
@@ -63,11 +58,8 @@ internal static class UsbTransferPolicies
     public const int LinuxMaxRetries = 5;
 
     /// <summary>
-    /// Gets or sets the process-wide default retry policy for recoverable transfer errors
-    /// (transient usbfs ioctl failures etc.). Protocol layers can tune this at startup,
-    /// e.g. to fast-fail on flaky cables; the value is snapshotted per chunk attempt.
-    /// <para>获取或设置进程级的可恢复传输错误默认重试策略（瞬时 usbfs ioctl 失败等）。
-    /// 协议层可在启动时调整，例如在劣质线缆上快速失败；该值在每次分块尝试时读取。</para>
+    /// Gets or sets the process-wide default retry policy for recoverable transfer errors.
+    /// <para>获取或设置进程级的可恢复传输错误默认重试策略。</para>
     /// </summary>
     public static UsbTransferRetryPolicy DefaultRetryPolicy { get; set; } =
         new UsbTransferRetryPolicy(LinuxMaxRetries, retryDelayMs: 500);

@@ -1,5 +1,5 @@
-using FirmwareKit.Comm.Abstractions;
 using System.Runtime.InteropServices;
+using FirmwareKit.Comm.Abstractions;
 using static FirmwareKit.Comm.Backend.MacOS.MacHostUsbAPI;
 
 namespace FirmwareKit.Comm.Backend.MacOS;

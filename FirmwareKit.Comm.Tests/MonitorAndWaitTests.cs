@@ -1,4 +1,3 @@
-using FirmwareKit.Comm;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Core;
 

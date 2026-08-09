@@ -1,8 +1,5 @@
-using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Diagnostics;
-using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Text;
+using FirmwareKit.Comm.Abstractions;
 using static FirmwareKit.Comm.Backend.Linux.LinuxUsbAPI;
 
 namespace FirmwareKit.Comm.Backend.Linux;
@@ -88,11 +85,10 @@ internal class LinuxUsbDevice : UsbDevice
         if (n != 0)
         {
             ioctl(Fd, (UIntPtr)USBDEVFS_DISCONNECT, ref ifc);
-            // udev may rebind a kernel driver (e.g. usbhid for HID devices) right after the
-            // disconnect, so retry the claim a few times instead of failing on the first
-            // EBUSY. Matches libusb's auto-detach behaviour.
-            // <para>udev 可能在分离后立即重新绑定内核驱动（例如 HID 设备的 usbhid），
-            // 因此重试几次而不是在第一次 EBUSY 即失败。与 libusb 的自动分离行为一致。</para>
+            // udev may rebind a kernel driver right after the disconnect, so retry the claim
+            // instead of failing on the first EBUSY. Matches libusb's auto-detach behaviour.
+            // <para>udev 可能在分离后立即重新绑定内核驱动，因此重试几次而不是首次 EBUSY 即失败；
+            // 与 libusb 的自动分离行为一致。</para>
             for (int attempt = 0; attempt < 3; attempt++)
             {
                 n = ioctl(Fd, (UIntPtr)USBDEVFS_CLAIMINTERFACE, ref ifc);
@@ -411,6 +407,7 @@ internal class LinuxUsbDevice : UsbDevice
             ep = ep_out,
             len = 0,
             // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
+            // <para>usbfs 将 0 视为"无超时"；因此将 -1 哨兵映射为 0。</para>
             timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
             data = IntPtr.Zero
         };

@@ -1,16 +1,24 @@
+using System.Diagnostics;
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Diagnostics;
 using LibUsbDotNet;
 using LibUsbDotNet.LibUsb;
 using LibUsbDotNet.Main;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Backend.LibUsb;
 
 internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 {
     private const int PlatformDefaultTimeoutMs = UsbTransferPolicies.DefaultTimeoutMs;
+
+    // Reusable chunk buffers avoid a per-chunk allocation during large transfers. The
+    // session serializes same-direction transfers (read gate / write gate), and reads and
+    // writes use separate buffers, so no additional locking is required.
+    // <para>可复用的分块缓冲避免大传输时每次分块分配；会话串行化同向传输
+    // （读/写门闩）且读/写缓冲分离，无需额外加锁。</para>
+    private byte[]? _readChunkBuffer;
+    private byte[]? _writeChunkBuffer;
 
     private UsbContext? context;
     private IUsbDevice? usbDevice;
@@ -425,7 +433,13 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             // bulk reads in a direction that never opened must not NRE.
             throw new NotSupportedException("The session has no bound IN endpoint for bulk reads (interrupt-only device?).");
         }
-        byte[] chunkBuffer = new byte[length];
+
+        if (_readChunkBuffer == null || _readChunkBuffer.Length < length)
+        {
+            _readChunkBuffer = new byte[length];
+        }
+
+        byte[] chunkBuffer = _readChunkBuffer;
         Error error = reader.Read(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs), out int readLen);
         if (error == Error.NoDevice)
         {
@@ -446,7 +460,13 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             // bulk writes in a direction that never opened must not NRE.
             throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
         }
-        byte[] chunkBuffer = new byte[length];
+
+        if (_writeChunkBuffer == null || _writeChunkBuffer.Length < length)
+        {
+            _writeChunkBuffer = new byte[length];
+        }
+
+        byte[] chunkBuffer = _writeChunkBuffer;
         Marshal.Copy(buffer, chunkBuffer, 0, length);
 
         int transferred;
@@ -475,8 +495,6 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (writer == null)
         {
-            // OUT-only session without a writer cannot send a ZLP; interrupt writes target
-            // explicit endpoints regardless of the bulk pair.
             throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
         }
 

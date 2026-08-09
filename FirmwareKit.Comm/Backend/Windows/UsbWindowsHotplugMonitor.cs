@@ -1,7 +1,7 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Core;
 using FirmwareKit.Comm.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Backend.Windows;
 

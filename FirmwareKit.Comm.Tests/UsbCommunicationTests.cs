@@ -1,6 +1,6 @@
+using System.Collections.Concurrent;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Core;
-using System.Collections.Concurrent;
 
 namespace FirmwareKit.Comm.IntegrationTests;
 

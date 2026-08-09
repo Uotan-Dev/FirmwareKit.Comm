@@ -67,10 +67,7 @@ public static class UsbDeviceSessionAsyncExtensions
                 return ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken);
             }
 
-            // The sync session interface has no progress-aware ReadPacket, so emulate the
-            // base chunk loop here and report cumulative bytes after each chunk.
-            // <para>同步会话接口没有带进度的 ReadPacket，因此在此模拟基类的分块循环，
-            // 并在每个分块完成后报告累计字节数。</para>
+            // 同步会话接口没有带进度的 ReadPacket，模拟基类分块循环并逐块报告。
             return UsbAsyncExecution.Run(() =>
             {
                 int total = 0;
@@ -112,10 +109,7 @@ public static class UsbDeviceSessionAsyncExtensions
                 return WriteAsync(data, offset, length, timeoutMs, cancellationToken);
             }
 
-            // The sync session interface has no progress-aware Write, so emulate the
-            // base chunk loop here and report cumulative bytes after each chunk.
-            // <para>同步会话接口没有带进度的 Write，因此在此模拟基类的分块循环，
-            // 并在每个分块完成后报告累计字节数。</para>
+            // 同步会话接口没有带进度的 Write，模拟基类分块循环并逐块报告。
             return UsbAsyncExecution.Run(() =>
             {
                 long total = 0;

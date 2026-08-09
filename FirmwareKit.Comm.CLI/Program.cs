@@ -1,7 +1,7 @@
-using FirmwareKit.Comm.Abstractions;
-using FirmwareKit.Comm.Core;
 using System.Globalization;
 using System.Text.Json;
+using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Core;
 
 var argsList = args.ToList();
 if (argsList.Count == 0)

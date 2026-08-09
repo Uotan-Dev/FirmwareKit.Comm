@@ -1,6 +1,6 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Diagnostics;
-using System.Runtime.InteropServices;
 using static FirmwareKit.Comm.Backend.HarmonyOS.HarmonyOSUsbDDK;
 
 namespace FirmwareKit.Comm.Backend.HarmonyOS;

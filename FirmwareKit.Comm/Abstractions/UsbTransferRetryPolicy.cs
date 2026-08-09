@@ -4,13 +4,10 @@ namespace FirmwareKit.Comm.Abstractions;
 /// Describes how recoverable USB transfer errors (e.g. transient Linux usbfs ioctl failures)
 /// are retried by the backends.
 /// <para>描述可恢复的 USB 传输错误（例如 Linux usbfs ioctl 的瞬时失败）由后端如何重试。</para>
-/// The default policy matches the historical hard-coded behaviour (5 retries, 500 ms apart).
 /// Set <see cref="UsbTransferPolicies.DefaultRetryPolicy"/> at startup to tune retry
-/// behaviour for a whole process, e.g. a protocol layer that prefers fast-fail over long
-/// blocking on flaky cables.
-/// <para>默认策略与历史硬编码行为一致（重试 5 次、间隔 500 ms）。
-/// 可在启动时设置 <see cref="UsbTransferPolicies.DefaultRetryPolicy"/> 来调整整个进程的
- /// 重试行为，例如协议层在劣质线缆上更倾向快速失败而非长时间阻塞。</para>
+/// behaviour for the whole process.
+/// <para>可在启动时设置 <see cref="UsbTransferPolicies.DefaultRetryPolicy"/> 调整整个进程的
+/// 重试行为。</para>
 /// </summary>
 public sealed class UsbTransferRetryPolicy
 {

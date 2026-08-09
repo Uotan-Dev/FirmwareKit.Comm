@@ -1,8 +1,8 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Diagnostics;
 using LibUsbDotNet;
 using LibUsbDotNet.LibUsb;
-using System.Runtime.InteropServices;
 
 namespace FirmwareKit.Comm.Backend.LibUsb;
 
