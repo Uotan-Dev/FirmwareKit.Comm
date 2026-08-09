@@ -201,6 +201,7 @@ static void ExecuteAllDevices(UsbCommunicationLayer layer, string[] args)
     if (devices.Count == 0)
     {
         Console.Error.WriteLine("No USB devices were discovered for the selected API on this platform.");
+        Console.Error.WriteLine("Hint: set FIRMWAREKIT_USB_DEBUG=1 to see per-backend enumeration diagnostics (usbfs root present, nodes scanned, runtime availability, permission/busy counters).");
     }
 }
 

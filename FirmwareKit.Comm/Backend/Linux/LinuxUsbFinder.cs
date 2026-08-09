@@ -40,6 +40,29 @@ internal static class LinuxUsbFinder
     public static bool HasBusyIssues => BusyCount > 0;
 
     /// <summary>
+    /// Gets whether the usbfs root (<c>/dev/bus/usb</c>) existed during the last
+    /// enumeration. Lets upper layers distinguish "no USB filesystem mounted" from
+    /// "filesystem present but no devices" on device-less CI.
+    /// <para>获取上次枚举时 usbfs 根目录（<c>/dev/bus/usb</c>）是否存在。让上层区分
+    /// "未挂载 USB 文件系统"与"文件系统存在但无设备"（无设备 CI 场景）。</para>
+    /// </summary>
+    public static bool LastUsbfsRootExists { get; private set; }
+
+    /// <summary>
+    /// Gets the number of device nodes scanned during the last enumeration (regardless of
+    /// whether each open succeeded). A non-zero value proves the scan loop actually ran.
+    /// <para>获取上次枚举中扫描的设备节点数（无论每个节点是否打开成功）。
+    /// 非零值证明扫描循环确实执行过。</para>
+    /// </summary>
+    public static int LastScannedNodes { get; private set; }
+
+    /// <summary>
+    /// Gets the number of devices matched during the last enumeration.
+    /// <para>获取上次枚举中匹配到的设备数。</para>
+    /// </summary>
+    public static int LastMatchedDeviceCount { get; private set; }
+
+    /// <summary>
     /// Records a permission-denied open attempt and logs a udev hint. Used by the finder
     /// and by <see cref="LinuxUsbDevice.CreateHandle"/>.
     /// <para>记录一次权限不足的打开尝试并记录 udev 提示。由查找器与
@@ -65,18 +88,23 @@ internal static class LinuxUsbFinder
         UsbTrace.Log($"LinuxUsbFinder: interface busy on '{path}' (EBUSY) - another process (e.g. adb server) may have claimed it.");
     }
 
-    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
+    public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null, string? usbfsRoot = null)
     {
         List<UsbDevice> devices = new List<UsbDevice>();
         Volatile.Write(ref _permissionDeniedCount, 0);
         Volatile.Write(ref _busyCount, 0);
-        const string base_path = "/dev/bus/usb";
-        if (!Directory.Exists(base_path)) return devices;
+        const string default_base_path = "/dev/bus/usb";
+        string base_path = usbfsRoot ?? default_base_path;
+        LastUsbfsRootExists = Directory.Exists(base_path);
+        LastScannedNodes = 0;
+        LastMatchedDeviceCount = 0;
+        if (!LastUsbfsRootExists) return devices;
 
         foreach (var bus_dir in Directory.GetDirectories(base_path))
         {
             foreach (var dev_path in Directory.GetFiles(bus_dir))
             {
+                LastScannedNodes++;
                 int fd = open(dev_path, O_RDWR | O_CLOEXEC);
                 if (fd < 0)
                 {
@@ -128,175 +156,40 @@ internal static class LinuxUsbFinder
 
                     Marshal.Copy(ptr, desc, 0, n);
 
-                    ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
-                    ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
-                    byte iSerialNumber = desc[16];
-                    ushort bcdUsb = (ushort)(desc[2] | (desc[3] << 8));
-
-                    if (filter?.VendorId is ushort filterVid && idVendor != filterVid)
+                    var info = TryParseDescriptor(desc, n, filter);
+                    if (info == null)
                     {
                         continue;
                     }
 
-                    if (filter?.ProductId is ushort filterPid && idProduct != filterPid)
+                    var dev = new LinuxUsbDevice
                     {
-                        continue;
+                        DevicePath = dev_path,
+                        VendorId = info.VendorId,
+                        ProductId = info.ProductId,
+                        InterfaceClass = info.InterfaceClass,
+                        InterfaceSubClass = info.InterfaceSubClass,
+                        InterfaceProtocol = info.InterfaceProtocol,
+                        InterfaceMetadataObserved = true,
+                        Speed = ResolveSpeed(dev_path, info.BcdUsb),
+                        Interfaces = info.Interfaces,
+                        ep_in = info.EndpointIn,
+                        ep_out = info.EndpointOut,
+                        InterfaceId = info.InterfaceId,
+                        ClaimedInterfaceIds = filter?.InterfaceNumbers?.ToArray() ?? Array.Empty<byte>(),
+                        iSerialNumber = info.ISerialNumber,
+                        UsbDeviceType = UsbDeviceType.Linux,
+                        SerialNumber = info.ISerialNumber == 0 ? null : "UNKNOWN"
+                    };
+
+                    // Keep platform backends consistent: only return devices that are ready for I/O.
+                    if (dev.CreateHandle() == 0)
+                    {
+                        devices.Add(dev);
                     }
-
-                    // Walk the configuration descriptor once, collecting every interface and
-                    // its endpoints (bulk, interrupt, control, isochronous) for the device info.
-                    var interfaces = new List<UsbInterfaceInfo>();
-                    byte epIn = 0, epOut = 0;
-                    byte matchedIfcClass = 0, matchedIfcSubClass = 0, matchedIfcProtocol = 0, matchedIfcId = 0;
-                    bool matched = false;
-
-                    int pos = desc[0];
-                    while (pos < n - 1 && !matched)
+                    else
                     {
-                        int len = desc[pos];
-                        if (len < 2 || pos + len > n) break;
-                        byte type = desc[pos + 1];
-
-                        if (type == 0x04 && len >= 9)
-                        {
-                            byte ifcClass = desc[pos + 5];
-                            byte ifcSubClass = desc[pos + 6];
-                            byte ifcProtocol = desc[pos + 7];
-                            byte ifcId = desc[pos + 2];
-                            byte numEpts = desc[pos + 4];
-
-                            var iface = new UsbInterfaceInfo
-                            {
-                                InterfaceNumber = ifcId,
-                                Class = ifcClass,
-                                SubClass = ifcSubClass,
-                                Protocol = ifcProtocol
-                            };
-                            var endpoints = new List<UsbEndpointInfo>();
-
-                            int ept_pos = pos + len;
-                            int checked_epts = 0;
-                            while (ept_pos < n - 1 && checked_epts < numEpts)
-                            {
-                                int ept_len = desc[ept_pos];
-                                if (ept_len < 2 || ept_pos + ept_len > n) break;
-                                byte ept_type = desc[ept_pos + 1];
-
-                                if (ept_type == 0x05 && ept_len >= 7)
-                                {
-                                    byte addr = desc[ept_pos + 2];
-                                    byte attr = desc[ept_pos + 3];
-                                    ushort maxPacket = (ushort)(desc[ept_pos + 4] | (desc[ept_pos + 5] << 8));
-                                    endpoints.Add(new UsbEndpointInfo
-                                    {
-                                        EndpointAddress = addr,
-                                        Attributes = attr,
-                                        MaxPacketSize = maxPacket,
-                                        Interval = desc[ept_pos + 6]
-                                    });
-                                    checked_epts++;
-                                }
-                                ept_pos += ept_len;
-                            }
-                            iface.Endpoints = endpoints;
-                            interfaces.Add(iface);
-
-                            bool matchesFilter = InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter) &&
-                                (!(filter?.InterfaceNumber is byte fn) || ifcId == fn);
-                            if (matchesFilter)
-                            {
-                                // Collect bulk endpoints first (the session I/O path), then
-                                // interrupt endpoints as fallback candidates so devices with
-                                // only interrupt pipes (e.g. HID) can still be opened when the
-                                // filter requests explicit endpoint addresses (interrupt-test).
-                                foreach (var ep in endpoints)
-                                {
-                                    int epType = ep.Attributes & 0x03;
-                                    if (epType != 0x02 && epType != 0x03) continue;
-
-                                    bool isIn = (ep.EndpointAddress & 0x80) != 0;
-                                    if (isIn)
-                                    {
-                                        if (epIn == 0) epIn = ep.EndpointAddress;
-                                        if (filter?.EndpointAddressIn == ep.EndpointAddress) epIn = ep.EndpointAddress;
-                                    }
-                                    else
-                                    {
-                                        if (epOut == 0) epOut = ep.EndpointAddress;
-                                        if (filter?.EndpointAddressOut == ep.EndpointAddress) epOut = ep.EndpointAddress;
-                                    }
-                                }
-
-                                // Honor an explicit endpoint requirement: the interface must
-                                // contain the requested addresses (e.g. Rockchip loader on
-                                // 0x82/0x02), and the requested endpoints win over the first
-                                // bulk pair when both exist.
-                                bool inOk = filter?.EndpointAddressIn is not byte reqIn ||
-                                    endpoints.Any(e => (e.EndpointAddress & 0x80) != 0 && e.EndpointAddress == reqIn);
-                                bool outOk = filter?.EndpointAddressOut is not byte reqOut ||
-                                    endpoints.Any(e => (e.EndpointAddress & 0x80) == 0 && e.EndpointAddress == reqOut);
-                                if (inOk && outOk)
-                                {
-                                    epIn = filter?.EndpointAddressIn ?? epIn;
-                                    epOut = filter?.EndpointAddressOut ?? epOut;
-                                }
-                                else
-                                {
-                                    epIn = 0;
-                                    epOut = 0;
-                                }
-
-                                // Default requires a usable IN+OUT pair. When the filter
-                                // explicitly requests only an IN endpoint (interrupt-test on
-                                // HID devices that expose no OUT pipe), an IN-only match wins.
-                                bool pairOk = epIn != 0 && epOut != 0;
-                                bool inOnlyOk = epIn != 0 &&
-                                    filter?.EndpointAddressIn is byte &&
-                                    filter?.EndpointAddressOut == null;
-                                if (pairOk || inOnlyOk)
-                                {
-                                    matchedIfcClass = ifcClass;
-                                    matchedIfcSubClass = ifcSubClass;
-                                    matchedIfcProtocol = ifcProtocol;
-                                    matchedIfcId = ifcId;
-                                    matched = true;
-                                }
-                            }
-                        }
-                        pos += len;
-                    }
-
-                    if (matched)
-                    {
-                        var dev = new LinuxUsbDevice
-                        {
-                            DevicePath = dev_path,
-                            VendorId = idVendor,
-                            ProductId = idProduct,
-                            InterfaceClass = matchedIfcClass,
-                            InterfaceSubClass = matchedIfcSubClass,
-                            InterfaceProtocol = matchedIfcProtocol,
-                            InterfaceMetadataObserved = true,
-                            Speed = ResolveSpeed(dev_path, bcdUsb),
-                            Interfaces = interfaces,
-                            ep_in = epIn,
-                            ep_out = epOut,
-                            InterfaceId = matchedIfcId,
-                            ClaimedInterfaceIds = filter?.InterfaceNumbers?.ToArray() ?? Array.Empty<byte>(),
-                            iSerialNumber = iSerialNumber,
-                            UsbDeviceType = UsbDeviceType.Linux,
-                            SerialNumber = iSerialNumber == 0 ? null : "UNKNOWN"
-                        };
-
-                        // Keep platform backends consistent: only return devices that are ready for I/O.
-                        if (dev.CreateHandle() == 0)
-                        {
-                            devices.Add(dev);
-                        }
-                        else
-                        {
-                            dev.Dispose();
-                        }
+                        dev.Dispose();
                     }
                 }
                 catch (Exception ex)
@@ -311,7 +204,188 @@ internal static class LinuxUsbFinder
                 }
             }
         }
+        LastMatchedDeviceCount = devices.Count;
         return devices;
+    }
+
+    /// <summary>
+    /// Parses a raw usbfs device + configuration descriptor into device metadata and the
+    /// matched interface/endpoint pair, applying the optional filter. Pure function with no
+    /// I/O — testable without hardware by feeding constructed descriptor bytes.
+    /// <para>将原始 usbfs 设备+配置描述符解析为设备元数据及匹配的接口/端点对，
+    /// 并应用可选过滤器。纯函数、无 I/O——可通过构造描述符字节在无硬件时测试。</para>
+    /// </summary>
+    /// <param name="desc">The raw descriptor bytes read from the device node. <para>从设备节点读取的原始描述符字节。</para></param>
+    /// <param name="length">The number of valid bytes in <paramref name="desc"/>. <para><paramref name="desc"/> 中的有效字节数。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <returns>The parsed metadata when a matching interface was found; otherwise <c>null</c>. <para>找到匹配接口时返回解析元数据；否则返回 <c>null</c>。</para></returns>
+    internal static LinuxUsbDescriptorInfo? TryParseDescriptor(byte[] desc, int length, UsbDeviceFilter? filter)
+    {
+        if (desc == null || length < 18) return null;
+
+        ushort idVendor = (ushort)(desc[8] | (desc[9] << 8));
+        ushort idProduct = (ushort)(desc[10] | (desc[11] << 8));
+        byte iSerialNumber = desc[16];
+        ushort bcdUsb = (ushort)(desc[2] | (desc[3] << 8));
+
+        if (filter?.VendorId is ushort filterVid && idVendor != filterVid) return null;
+        if (filter?.ProductId is ushort filterPid && idProduct != filterPid) return null;
+
+        var interfaces = new List<UsbInterfaceInfo>();
+        byte epIn = 0, epOut = 0;
+        byte matchedIfcClass = 0, matchedIfcSubClass = 0, matchedIfcProtocol = 0, matchedIfcId = 0;
+        bool matched = false;
+
+        int pos = desc[0];
+        while (pos < length - 1 && !matched)
+        {
+            int len = desc[pos];
+            if (len < 2 || pos + len > length) break;
+            byte type = desc[pos + 1];
+
+            if (type == 0x04 && len >= 9)
+            {
+                byte ifcClass = desc[pos + 5];
+                byte ifcSubClass = desc[pos + 6];
+                byte ifcProtocol = desc[pos + 7];
+                byte ifcId = desc[pos + 2];
+                byte numEpts = desc[pos + 4];
+
+                var iface = new UsbInterfaceInfo
+                {
+                    InterfaceNumber = ifcId,
+                    Class = ifcClass,
+                    SubClass = ifcSubClass,
+                    Protocol = ifcProtocol
+                };
+                var endpoints = new List<UsbEndpointInfo>();
+
+                int ept_pos = pos + len;
+                int checked_epts = 0;
+                while (ept_pos < length - 1 && checked_epts < numEpts)
+                {
+                    int ept_len = desc[ept_pos];
+                    if (ept_len < 2 || ept_pos + ept_len > length) break;
+                    byte ept_type = desc[ept_pos + 1];
+
+                    if (ept_type == 0x05 && ept_len >= 7)
+                    {
+                        byte addr = desc[ept_pos + 2];
+                        byte attr = desc[ept_pos + 3];
+                        ushort maxPacket = (ushort)(desc[ept_pos + 4] | (desc[ept_pos + 5] << 8));
+                        endpoints.Add(new UsbEndpointInfo
+                        {
+                            EndpointAddress = addr,
+                            Attributes = attr,
+                            MaxPacketSize = maxPacket,
+                            Interval = desc[ept_pos + 6]
+                        });
+                        checked_epts++;
+                    }
+                    ept_pos += ept_len;
+                }
+                iface.Endpoints = endpoints;
+                interfaces.Add(iface);
+
+                bool matchesFilter = InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter) &&
+                    (!(filter?.InterfaceNumber is byte fn) || ifcId == fn);
+                if (matchesFilter)
+                {
+                    // Collect bulk endpoints first (the session I/O path), then interrupt
+                    // endpoints as fallback candidates so devices with only interrupt pipes
+                    // (e.g. HID) can still be opened when the filter requests explicit
+                    // endpoint addresses (interrupt-test).
+                    foreach (var ep in endpoints)
+                    {
+                        int epType = ep.Attributes & 0x03;
+                        if (epType != 0x02 && epType != 0x03) continue;
+
+                        bool isIn = (ep.EndpointAddress & 0x80) != 0;
+                        if (isIn)
+                        {
+                            if (epIn == 0) epIn = ep.EndpointAddress;
+                            if (filter?.EndpointAddressIn == ep.EndpointAddress) epIn = ep.EndpointAddress;
+                        }
+                        else
+                        {
+                            if (epOut == 0) epOut = ep.EndpointAddress;
+                            if (filter?.EndpointAddressOut == ep.EndpointAddress) epOut = ep.EndpointAddress;
+                        }
+                    }
+
+                    // Honor an explicit endpoint requirement: the interface must contain the
+                    // requested addresses (e.g. Rockchip loader on 0x82/0x02), and the
+                    // requested endpoints win over the first bulk pair when both exist.
+                    bool inOk = filter?.EndpointAddressIn is not byte reqIn ||
+                        endpoints.Any(e => (e.EndpointAddress & 0x80) != 0 && e.EndpointAddress == reqIn);
+                    bool outOk = filter?.EndpointAddressOut is not byte reqOut ||
+                        endpoints.Any(e => (e.EndpointAddress & 0x80) == 0 && e.EndpointAddress == reqOut);
+                    if (inOk && outOk)
+                    {
+                        epIn = filter?.EndpointAddressIn ?? epIn;
+                        epOut = filter?.EndpointAddressOut ?? epOut;
+                    }
+                    else
+                    {
+                        epIn = 0;
+                        epOut = 0;
+                    }
+
+                    // Default requires a usable IN+OUT pair. When the filter explicitly
+                    // requests only an IN endpoint (interrupt-test on HID devices that expose
+                    // no OUT pipe), an IN-only match wins.
+                    bool pairOk = epIn != 0 && epOut != 0;
+                    bool inOnlyOk = epIn != 0 &&
+                        filter?.EndpointAddressIn is byte &&
+                        filter?.EndpointAddressOut == null;
+                    if (pairOk || inOnlyOk)
+                    {
+                        matchedIfcClass = ifcClass;
+                        matchedIfcSubClass = ifcSubClass;
+                        matchedIfcProtocol = ifcProtocol;
+                        matchedIfcId = ifcId;
+                        matched = true;
+                    }
+                }
+            }
+            pos += len;
+        }
+
+        if (!matched) return null;
+
+        return new LinuxUsbDescriptorInfo
+        {
+            VendorId = idVendor,
+            ProductId = idProduct,
+            ISerialNumber = iSerialNumber,
+            BcdUsb = bcdUsb,
+            Interfaces = interfaces,
+            EndpointIn = epIn,
+            EndpointOut = epOut,
+            InterfaceClass = matchedIfcClass,
+            InterfaceSubClass = matchedIfcSubClass,
+            InterfaceProtocol = matchedIfcProtocol,
+            InterfaceId = matchedIfcId
+        };
+    }
+
+    /// <summary>
+    /// Parsed usbfs descriptor metadata: device ids plus the matched interface/endpoint pair.
+    /// <para>解析出的 usbfs 描述符元数据：设备 ID 及匹配的接口/端点对。</para>
+    /// </summary>
+    internal sealed class LinuxUsbDescriptorInfo
+    {
+        public ushort VendorId { get; set; }
+        public ushort ProductId { get; set; }
+        public byte ISerialNumber { get; set; }
+        public ushort BcdUsb { get; set; }
+        public IReadOnlyList<UsbInterfaceInfo> Interfaces { get; set; } = Array.Empty<UsbInterfaceInfo>();
+        public byte EndpointIn { get; set; }
+        public byte EndpointOut { get; set; }
+        public byte InterfaceClass { get; set; }
+        public byte InterfaceSubClass { get; set; }
+        public byte InterfaceProtocol { get; set; }
+        public byte InterfaceId { get; set; }
     }
 
     private static bool InterfaceMatchesFilter(byte interfaceClass, byte interfaceSubClass, byte interfaceProtocol, UsbDeviceFilter? filter)
