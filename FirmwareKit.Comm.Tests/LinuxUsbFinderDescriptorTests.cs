@@ -63,6 +63,63 @@ public sealed class LinuxUsbFinderDescriptorTests
         return buffer.ToArray();
     }
 
+    /// <summary>
+    /// Builds a device descriptor (18 B) followed by one configuration (9 B) and the given
+    /// interfaces, each with its own endpoints — mirrors a composite device (e.g. FT2232H)
+    /// inside a single usbfs read().
+    /// <para>构建设备描述符（18 B）+ 一个配置（9 B）+ 给定接口（各自带端点），
+    /// 模拟复合设备（如 FT2232H）在一次 usbfs read() 中的返回。</para>
+    /// </summary>
+    private static byte[] BuildMultiInterfaceDescriptor(
+        ushort vid,
+        ushort pid,
+        params (byte interfaceNumber, byte interfaceClass, byte interfaceSubClass, byte interfaceProtocol, (byte address, byte attributes)[] endpoints)[] interfaces)
+    {
+        var buffer = new List<byte>
+        {
+            18, 1,                        // bLength, bDescriptorType (device)
+            0x00, 0x02,                   // bcdUSB 2.0
+            0, 0, 0, 64,                  // class/subclass/protocol, bMaxPacketSize0
+            (byte)(vid & 0xFF), (byte)(vid >> 8),       // idVendor LE
+            (byte)(pid & 0xFF), (byte)(pid >> 8),       // idProduct LE
+            0x00, 0x01,                   // bcdDevice
+            0, 0, 0, 1                    // iManufacturer, iProduct, iSerialNumber, bNumConfigurations
+        };
+
+        int configLen = 9;
+        foreach (var ifc in interfaces)
+        {
+            configLen += 9 + ifc.endpoints.Length * 7;
+        }
+        buffer.AddRange(new byte[]
+        {
+            9, 2,                         // bLength, bDescriptorType (configuration)
+            (byte)(configLen & 0xFF), (byte)(configLen >> 8), // wTotalLength LE
+            (byte)interfaces.Length, 1, 0, 0x80, 50 // bNumInterfaces, bConfigurationValue, iConfiguration, bmAttributes, bMaxPower
+        });
+
+        foreach (var ifc in interfaces)
+        {
+            buffer.AddRange(new byte[]
+            {
+                9, 4,                         // bLength, bDescriptorType (interface)
+                ifc.interfaceNumber, 0, (byte)ifc.endpoints.Length, // bInterfaceNumber, bAlternateSetting, bNumEndpoints
+                ifc.interfaceClass, ifc.interfaceSubClass, ifc.interfaceProtocol, 0
+            });
+
+            foreach ((byte address, byte attributes) in ifc.endpoints)
+            {
+                buffer.AddRange(new byte[]
+                {
+                    7, 5, address, attributes, // bLength, bDescriptorType, bEndpointAddress, bmAttributes
+                    0x00, 0x02, 0              // wMaxPacketSize 512 LE, bInterval
+                });
+            }
+        }
+
+        return buffer.ToArray();
+    }
+
     [Fact]
     public void TryParseDescriptor_ParsesVidPidInterfaceAndBulkPair()
     {
@@ -182,5 +239,50 @@ public sealed class LinuxUsbFinderDescriptorTests
             endpoints: new (byte, byte)[] { (0x81, 0x01), (0x01, 0x01) }); // control-type endpoints
 
         Assert.Null(LinuxUsbFinder.TryParseDescriptor(desc, desc.Length, filter: null));
+    }
+
+    [Fact]
+    public void TryParseDescriptor_MultiInterface_ReportsAllInterfaces()
+    {
+        // FT2232H-style composite: interface 0 (0x81/0x02) and interface 1 (0x83/0x04).
+        // The parser must report BOTH interfaces, not just the first one that matches.
+        // <para>FT2232H 风格复合设备：接口 0（0x81/0x02）与接口 1（0x83/0x04）。
+        // 解析器必须上报全部接口，而非仅上报首个命中的接口。</para>
+        byte[] desc = BuildMultiInterfaceDescriptor(
+            0x0403, 0x6010,
+            (0, 0xFF, 0xFF, 0xFF, new (byte, byte)[] { (0x81, 0x02), (0x02, 0x02) }),
+            (1, 0xFF, 0xFF, 0xFF, new (byte, byte)[] { (0x83, 0x02), (0x04, 0x02) }));
+
+        var info = LinuxUsbFinder.TryParseDescriptor(desc, desc.Length, filter: null);
+
+        Assert.NotNull(info);
+        Assert.Equal(2, info!.Interfaces.Count);
+        Assert.Equal((byte)0, info.Interfaces[0].InterfaceNumber);
+        Assert.Equal(2, info.Interfaces[0].Endpoints.Count);
+        Assert.Equal((byte)1, info.Interfaces[1].InterfaceNumber);
+        Assert.Equal(2, info.Interfaces[1].Endpoints.Count);
+        Assert.Equal((byte)0x81, info.EndpointIn);
+        Assert.Equal((byte)0x02, info.EndpointOut);
+    }
+
+    [Fact]
+    public void TryParseDescriptor_MultiInterface_InterfaceNumberFilter_SelectsSecondInterface()
+    {
+        // A filter targeting interface 1 must bind that interface's endpoints while the
+        // full interface list is still reported.
+        // <para>针对接口 1 的过滤器必须绑定该接口的端点，同时仍上报完整接口列表。</para>
+        byte[] desc = BuildMultiInterfaceDescriptor(
+            0x0403, 0x6010,
+            (0, 0xFF, 0xFF, 0xFF, new (byte, byte)[] { (0x81, 0x02), (0x02, 0x02) }),
+            (1, 0xFF, 0xFF, 0xFF, new (byte, byte)[] { (0x83, 0x02), (0x04, 0x02) }));
+
+        var info = LinuxUsbFinder.TryParseDescriptor(desc, desc.Length,
+            new UsbDeviceFilter { InterfaceNumber = 1 });
+
+        Assert.NotNull(info);
+        Assert.Equal(2, info!.Interfaces.Count);
+        Assert.Equal((byte)1, info.InterfaceId);
+        Assert.Equal((byte)0x83, info.EndpointIn);
+        Assert.Equal((byte)0x04, info.EndpointOut);
     }
 }

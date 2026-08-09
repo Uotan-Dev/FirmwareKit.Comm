@@ -232,12 +232,9 @@ internal static class LinuxUsbFinder
         if (filter?.ProductId is ushort filterPid && idProduct != filterPid) return null;
 
         var interfaces = new List<UsbInterfaceInfo>();
-        byte epIn = 0, epOut = 0;
-        byte matchedIfcClass = 0, matchedIfcSubClass = 0, matchedIfcProtocol = 0, matchedIfcId = 0;
-        bool matched = false;
 
         int pos = desc[0];
-        while (pos < length - 1 && !matched)
+        while (pos < length - 1)
         {
             int len = desc[pos];
             if (len < 2 || pos + len > length) break;
@@ -286,69 +283,85 @@ internal static class LinuxUsbFinder
                 }
                 iface.Endpoints = endpoints;
                 interfaces.Add(iface);
-
-                bool matchesFilter = InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter) &&
-                    (!(filter?.InterfaceNumber is byte fn) || ifcId == fn);
-                if (matchesFilter)
-                {
-                    // Collect bulk endpoints first (the session I/O path), then interrupt
-                    // endpoints as fallback candidates so devices with only interrupt pipes
-                    // (e.g. HID) can still be opened when the filter requests explicit
-                    // endpoint addresses (interrupt-test).
-                    foreach (var ep in endpoints)
-                    {
-                        int epType = ep.Attributes & 0x03;
-                        if (epType != 0x02 && epType != 0x03) continue;
-
-                        bool isIn = (ep.EndpointAddress & 0x80) != 0;
-                        if (isIn)
-                        {
-                            if (epIn == 0) epIn = ep.EndpointAddress;
-                            if (filter?.EndpointAddressIn == ep.EndpointAddress) epIn = ep.EndpointAddress;
-                        }
-                        else
-                        {
-                            if (epOut == 0) epOut = ep.EndpointAddress;
-                            if (filter?.EndpointAddressOut == ep.EndpointAddress) epOut = ep.EndpointAddress;
-                        }
-                    }
-
-                    // Honor an explicit endpoint requirement: the interface must contain the
-                    // requested addresses (e.g. Rockchip loader on 0x82/0x02), and the
-                    // requested endpoints win over the first bulk pair when both exist.
-                    bool inOk = filter?.EndpointAddressIn is not byte reqIn ||
-                        endpoints.Any(e => (e.EndpointAddress & 0x80) != 0 && e.EndpointAddress == reqIn);
-                    bool outOk = filter?.EndpointAddressOut is not byte reqOut ||
-                        endpoints.Any(e => (e.EndpointAddress & 0x80) == 0 && e.EndpointAddress == reqOut);
-                    if (inOk && outOk)
-                    {
-                        epIn = filter?.EndpointAddressIn ?? epIn;
-                        epOut = filter?.EndpointAddressOut ?? epOut;
-                    }
-                    else
-                    {
-                        epIn = 0;
-                        epOut = 0;
-                    }
-
-                    // Default requires a usable IN+OUT pair. When the filter explicitly
-                    // requests only an IN endpoint (interrupt-test on HID devices that expose
-                    // no OUT pipe), an IN-only match wins.
-                    bool pairOk = epIn != 0 && epOut != 0;
-                    bool inOnlyOk = epIn != 0 &&
-                        filter?.EndpointAddressIn is byte &&
-                        filter?.EndpointAddressOut == null;
-                    if (pairOk || inOnlyOk)
-                    {
-                        matchedIfcClass = ifcClass;
-                        matchedIfcSubClass = ifcSubClass;
-                        matchedIfcProtocol = ifcProtocol;
-                        matchedIfcId = ifcId;
-                        matched = true;
-                    }
-                }
             }
             pos += len;
+        }
+
+        // Phase 2: match the filter against the complete interface list (in descriptor
+        // order) and bind the matched interface's endpoints.
+        // <para>第二阶段在完整接口列表（按描述符顺序）上匹配过滤器并绑定命中接口的端点。</para>
+        byte epIn = 0, epOut = 0;
+        byte matchedIfcClass = 0, matchedIfcSubClass = 0, matchedIfcProtocol = 0, matchedIfcId = 0;
+        bool matched = false;
+        foreach (var iface in interfaces)
+        {
+            byte ifcClass = iface.Class;
+            byte ifcSubClass = iface.SubClass;
+            byte ifcProtocol = iface.Protocol;
+            byte ifcId = iface.InterfaceNumber;
+            var endpoints = iface.Endpoints;
+
+            bool matchesFilter = InterfaceMatchesFilter(ifcClass, ifcSubClass, ifcProtocol, filter) &&
+                (!(filter?.InterfaceNumber is byte fn) || ifcId == fn);
+            if (!matchesFilter) continue;
+
+            // Collect bulk endpoints first (the session I/O path), then interrupt
+            // endpoints as fallback candidates so devices with only interrupt pipes
+            // (e.g. HID) can still be opened when the filter requests explicit
+            // endpoint addresses (interrupt-test).
+            foreach (var ep in endpoints)
+            {
+                int epType = ep.Attributes & 0x03;
+                if (epType != 0x02 && epType != 0x03) continue;
+
+                bool isIn = (ep.EndpointAddress & 0x80) != 0;
+                if (isIn)
+                {
+                    if (epIn == 0) epIn = ep.EndpointAddress;
+                    if (filter?.EndpointAddressIn == ep.EndpointAddress) epIn = ep.EndpointAddress;
+                }
+                else
+                {
+                    if (epOut == 0) epOut = ep.EndpointAddress;
+                    if (filter?.EndpointAddressOut == ep.EndpointAddress) epOut = ep.EndpointAddress;
+                }
+            }
+
+            // Honor an explicit endpoint requirement: the interface must contain the
+            // requested addresses (e.g. Rockchip loader on 0x82/0x02), and the
+            // requested endpoints win over the first bulk pair when both exist.
+            bool inOk = filter?.EndpointAddressIn is not byte reqIn ||
+                endpoints.Any(e => (e.EndpointAddress & 0x80) != 0 && e.EndpointAddress == reqIn);
+            bool outOk = filter?.EndpointAddressOut is not byte reqOut ||
+                endpoints.Any(e => (e.EndpointAddress & 0x80) == 0 && e.EndpointAddress == reqOut);
+            if (inOk && outOk)
+            {
+                epIn = filter?.EndpointAddressIn ?? epIn;
+                epOut = filter?.EndpointAddressOut ?? epOut;
+            }
+            else
+            {
+                epIn = 0;
+                epOut = 0;
+                continue;
+            }
+
+            // Default requires a usable IN+OUT pair. When the filter explicitly
+            // requests only an IN endpoint (interrupt-test on HID devices that expose
+            // no OUT pipe), an IN-only match wins.
+            bool pairOk = epIn != 0 && epOut != 0;
+            bool inOnlyOk = epIn != 0 &&
+                filter?.EndpointAddressIn is byte &&
+                filter?.EndpointAddressOut == null;
+            if (pairOk || inOnlyOk)
+            {
+                matchedIfcClass = ifcClass;
+                matchedIfcSubClass = ifcSubClass;
+                matchedIfcProtocol = ifcProtocol;
+                matchedIfcId = ifcId;
+                matched = true;
+                break;
+            }
         }
 
         if (!matched) return null;
