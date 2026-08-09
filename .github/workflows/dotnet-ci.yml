@@ -26,9 +26,12 @@ jobs:
     # GitHub-hosted runners expose no physical USB devices. Providing the native libusb
     # runtime on Linux lets the libusb probe succeed and enumerate zero devices, which
     # exercises the "supported but no hardware" path.
+    # The -dev package is required: the runtime package ships only the versioned soname
+    # (libusb-1.0.so.0), while the library's DllImport("libusb-1.0") probe needs the
+    # unversioned symlink (libusb-1.0.so) that only the -dev package provides.
     - name: Install libusb (Ubuntu)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0
+      run: sudo apt-get update && sudo apt-get install -y libusb-1.0-0 libusb-1.0-0-dev
 
     # The libusb backend probe (Marshal.Prelink) degrades gracefully when the native
     # runtime is absent. Windows reuses the repository's committed runtime
@@ -43,9 +46,22 @@ jobs:
         echo "$libDir" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8
         Write-Host "Added $libDir to PATH for libusb probe"
 
-    - name: Install libusb (macOS)
+    # macOS: Homebrew's libusb installs to /opt/homebrew/lib (arm64) or /usr/local/lib
+    # (x64), which is not in .NET's dlopen search path, so the probe would fail. Reuse the
+    # repository's committed per-arch dylib (same artifact fetch-libusb.sh produces) and
+    # expose it via DYLD_LIBRARY_PATH, mirroring the Windows PATH approach.
+    - name: Provision libusb runtime (macOS, repo artifact)
       if: runner.os == 'macOS'
-      run: brew install libusb
+      run: |
+        arch="$(uname -m)"
+        case "$arch" in
+          arm64)  libDir="native/macos-arm64" ;;
+          x86_64) libDir="native/macos-x64" ;;
+          *) echo "::error::unsupported macOS arch: $arch"; exit 1 ;;
+        esac
+        test -f "$libDir/libusb-1.0.dylib" || { echo "::error::missing $libDir/libusb-1.0.dylib"; exit 1; }
+        echo "DYLD_LIBRARY_PATH=$GITHUB_WORKSPACE/$libDir" >> "$GITHUB_ENV"
+        echo "Added $GITHUB_WORKSPACE/$libDir to DYLD_LIBRARY_PATH for libusb probe"
 
     - name: Restore dependencies
       run: dotnet restore
