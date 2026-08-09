@@ -180,21 +180,7 @@ namespace FirmwareKit.Comm.Backend.Windows
             bool Enumerate(uint index, ref Win32API.SpDeviceInterfaceData iface)
                 => Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, ref guid, index, ref iface);
 
-            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys, requireUsbStylePath: false);
-        }
-
-        private static void EnumerateInterfaces(
-            IntPtr devInfo,
-            IntPtr interfaceClassGuid,
-            UsbDeviceFilter? filter,
-            List<UsbDevice> devices,
-            HashSet<string> uniqueKeys,
-            bool requireUsbStylePath)
-        {
-            bool Enumerate(uint index, ref Win32API.SpDeviceInterfaceData iface)
-                => Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, interfaceClassGuid, index, ref iface);
-
-            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys, requireUsbStylePath);
+            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys);
         }
 
         private static void EnumerateInterfacesCore(
@@ -202,8 +188,7 @@ namespace FirmwareKit.Comm.Backend.Windows
             InterfaceEnumerator enumerator,
             UsbDeviceFilter? filter,
             List<UsbDevice> devices,
-            HashSet<string> uniqueKeys,
-            bool requireUsbStylePath)
+            HashSet<string> uniqueKeys)
         {
             uint index = 0;
             Win32API.SpDeviceInterfaceData interfaceData = new Win32API.SpDeviceInterfaceData();
@@ -229,13 +214,6 @@ namespace FirmwareKit.Comm.Backend.Windows
                     {
                         string path = Marshal.PtrToStringUni(new IntPtr(detailBuffer.ToInt64() + pathOffset)) ?? "";
                         string lowerPath = path.ToLower();
-
-                        // The all-classes sweep also returns HID/disk/network interfaces; only
-                        // probe paths that look like a USB device (contain VID_&PID_).
-                        if (requireUsbStylePath && !(lowerPath.Contains("vid_") && lowerPath.Contains("pid_")))
-                        {
-                            continue;
-                        }
 
                         if (!PathMatchesFilter(path, filter))
                         {

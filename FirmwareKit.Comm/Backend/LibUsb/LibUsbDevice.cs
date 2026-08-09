@@ -249,38 +249,6 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             writer = usbDevice.OpenEndpointWriter((WriteEndpointID)outEndpoint);
         }
 
-        if (reader == null || writer == null)
-        {
-            byte[] candidateInEndpoints = new byte[] { 0x81, 0x82, 0x83 };
-            byte[] candidateOutEndpoints = new byte[] { 0x01, 0x02, 0x03 };
-
-            for (int endpointIndex = 0; endpointIndex < candidateInEndpoints.Length; endpointIndex++)
-            {
-                if (reader == null)
-                {
-                    var testReader = usbDevice.OpenEndpointReader((ReadEndpointID)candidateInEndpoints[endpointIndex]);
-                    if (testReader != null)
-                    {
-                        reader = testReader;
-                    }
-                }
-
-                if (writer == null)
-                {
-                    var testWriter = usbDevice.OpenEndpointWriter((WriteEndpointID)candidateOutEndpoints[endpointIndex]);
-                    if (testWriter != null)
-                    {
-                        writer = testWriter;
-                    }
-                }
-
-                if (reader != null && writer != null)
-                {
-                    break;
-                }
-            }
-        }
-
         reader?.ReadFlush();
 
         // A session is usable as long as every direction it was asked to bind actually
