@@ -75,10 +75,12 @@ jobs:
 
     # The enumeration mechanism must have run: on a healthy runner the backend's native
     # enumeration entry point succeeds even with zero devices attached. A silent failure
-    # (SetupDi failed / IOUSBLib copy failed / usbfs root missing) fails the CI.
-    # macOS is special: hosted runners may lack IOUSBLib in the dyld cache, in which case
-    # the finder degrades to copy-devices=False with an empty result (no throw) — that
-    # degraded outcome is also acceptable as long as the diagnostic is emitted.
+    # (SetupDi failed / IOUSBLib copy failed) fails the CI.
+    # Linux: hosted runners may lack the usbfs mount (/dev/bus/usb); only assert
+    # usbfs-root=True when the mount exists, otherwise just require the diagnostic.
+    # macOS: hosted runners may lack IOUSBLib in the dyld cache; the finder degrades to
+    # copy-devices=False with an empty result (no throw) — also acceptable as long as the
+    # diagnostic is emitted.
     - name: Assert enumeration mechanism ran (native)
       run: |
         OUT="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native 2>&1 || true)"
@@ -86,7 +88,14 @@ jobs:
         echo "$OUT" | grep -q "\[enum-diagnostics\]" || { echo "::error::missing [enum-diagnostics] line"; exit 1; }
         case "$RUNNER_OS" in
           Windows) echo "$OUT" | grep -q "setupdi-succeeded=True" || { echo "::error::SetupDi did not succeed on Windows"; exit 1; } ;;
-          Linux)   echo "$OUT" | grep -q "usbfs-root=True" || { echo "::error::usbfs root missing on Linux"; exit 1; } ;;
+          Linux)
+            echo "$OUT" | grep -q "usbfs-root=" || { echo "::error::missing usbfs-root diagnostic on Linux"; exit 1; }
+            if [ -d /dev/bus/usb ]; then
+              echo "$OUT" | grep -q "usbfs-root=True" || { echo "::error::usbfs root present but finder reported False on Linux"; exit 1; }
+            else
+              echo "NOTE	usbfs not mounted on this runner; skipping usbfs-root=True assertion"
+            fi
+            ;;
           macOS)   echo "$OUT" | grep -q "copy-devices=" || { echo "::error::missing copy-devices diagnostic on macOS"; exit 1; } ;;
         esac
 

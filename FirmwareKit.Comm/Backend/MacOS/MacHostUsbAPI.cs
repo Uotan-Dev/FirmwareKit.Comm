@@ -3,98 +3,101 @@ using System.Runtime.InteropServices;
 namespace FirmwareKit.Comm.Backend.MacOS;
 
 /// <summary>
-/// P/Invoke surface for the IOUSBHost (IOUSBLib.framework) user-space C API, available on macOS 10.15+.
+/// P/Invoke surface for the IOUSBHost.framework user-space C API, available on macOS 10.15+.
 /// Replaces the legacy IOKit COM-vtable backend (IOUSBDeviceInterface197 / IOUSBInterfaceInterface197).
 /// Signatures follow IOUSBLib.h from the macOS SDK. Validate against the SDK headers when building on macOS.
+/// <para>IOUSBHost.framework 用户态 C API 的 P/Invoke 表面（macOS 10.15+）。
+/// 取代旧式 IOKit COM-vtable 后端（IOUSBDeviceInterface197 / IOUSBInterfaceInterface197）。
+/// 签名遵循 macOS SDK 的 IOUSBLib.h。</para>
 /// </summary>
 internal static class MacHostUsbAPI
 {
-    public const string IOUSBLib = "/System/Library/Frameworks/IOUSBLib.framework/IOUSBLib";
+    public const string IOUSBHost = "/System/Library/Frameworks/IOUSBHost.framework/IOUSBHost";
     public const string CoreFoundation = "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation";
     public const string Libc = "libc";
 
     // ---- Object discovery ----
     // kern_return_t IOUSBLibCopyDevices(CFMutableDictionaryRef matching, CFArrayRef *devices);
     // A NULL matching dictionary requests all devices.
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBLibCopyDevices(IntPtr matching, out IntPtr devices);
 
     // ---- Device properties ----
     // kern_return_t IOUSBHostDeviceGetID(IOUSBHostDevice device, uint64_t *id);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceGetID(IntPtr device, out ulong id);
 
     // kern_return_t IOUSBHostDeviceGetRegistryEntryID(IOUSBHostDevice device, uint64_t *registryEntryID);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceGetRegistryEntryID(IntPtr device, out ulong registryEntryID);
 
     // kern_return_t IOUSBHostDeviceGetVendorID(IOUSBHostDevice device, uint16_t *vendorID);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceGetVendorID(IntPtr device, out ushort vendorID);
 
     // kern_return_t IOUSBHostDeviceGetProductID(IOUSBHostDevice device, uint16_t *productID);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceGetProductID(IntPtr device, out ushort productID);
 
     // ---- Descriptors ----
     // kern_return_t IOUSBHostDeviceCopyConfigurationDescriptor(IOUSBHostDevice device, IOUSBConfigurationDescriptor **descriptor);
     // Caller owns the returned descriptor memory and must free() it.
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceCopyConfigurationDescriptor(IntPtr device, out IntPtr descriptor);
 
     // ---- Open / close ----
     // kern_return_t IOUSBHostDeviceOpen(IOUSBHostDevice device, uint32_t options, uint32_t *deviceParameter);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceOpen(IntPtr device, uint options, out uint deviceParameter);
 
     // kern_return_t IOUSBHostDeviceClose(IOUSBHostDevice device);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceClose(IntPtr device);
 
     // ---- Control transfers ----
     // kern_return_t IOUSBHostDeviceDeviceRequest(IOUSBHostDevice device, IOUSBDeviceRequest *request, uint32_t completionTimeout);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceDeviceRequest(IntPtr device, ref IOUSBDeviceRequest request, uint completionTimeout);
 
     // ---- Interface access ----
     // kern_return_t IOUSBHostDeviceCreateInterfaceIterator(IOUSBHostDevice device, IOUSBFindInterfaceRequest *request, IOUSBHostInterfaceIterator *iterator);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostDeviceCreateInterfaceIterator(IntPtr device, ref IOUSBFindInterfaceRequest request, out IntPtr iterator);
 
     // IOUSBHostInterface IOUSBHostInterfaceIteratorNext(IOUSBHostInterfaceIterator iterator);
     // Returns a +1 (owned) reference, mirroring IOKit IOIteratorNext semantics.
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern IntPtr IOUSBHostInterfaceIteratorNext(IntPtr iterator);
 
     // kern_return_t IOUSBHostInterfaceOpen(IOUSBHostInterface interface, uint32_t options);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostInterfaceOpen(IntPtr interfacePtr, uint options);
 
     // kern_return_t IOUSBHostInterfaceClose(IOUSBHostInterface interface);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostInterfaceClose(IntPtr interfacePtr);
 
     // kern_return_t IOUSBHostInterfaceCopyPipe(IOUSBHostInterface interface, uint8_t portType, uint8_t pipeID, IOUSBHostPipe *pipe);
     // "Copy" semantics: caller owns the returned pipe reference.
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostInterfaceCopyPipe(IntPtr interfacePtr, byte portType, byte pipeID, out IntPtr pipe);
 
     // ---- Bulk transfers ----
     // kern_return_t IOUSBHostPipeBulkTransfer(IOUSBHostPipe pipe, uint8_t *data, uint32_t dataLength, uint32_t *bytesTransferred, uint32_t completionTimeout);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostPipeBulkTransfer(IntPtr pipe, IntPtr data, uint dataLength, out uint bytesTransferred, uint completionTimeout);
 
     // kern_return_t IOUSBHostPipeWriteBulkData(IOUSBHostPipe pipe, uint8_t *data, uint32_t dataLength, uint32_t *bytesTransferred, uint32_t completionTimeout);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostPipeWriteBulkData(IntPtr pipe, IntPtr data, uint dataLength, out uint bytesTransferred, uint completionTimeout);
 
     // ---- Pipe control ----
     // kern_return_t IOUSBHostPipeAbort(IOUSBHostPipe pipe);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostPipeAbort(IntPtr pipe);
 
     // kern_return_t IOUSBHostPipeClearStall(IOUSBHostPipe pipe);
-    [DllImport(IOUSBLib)]
+    [DllImport(IOUSBHost)]
     public static extern int IOUSBHostPipeClearStall(IntPtr pipe);
 
     // ---- CoreFoundation helpers ----

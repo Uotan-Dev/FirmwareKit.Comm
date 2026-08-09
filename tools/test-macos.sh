@@ -120,10 +120,18 @@ else
     echo "PASS	selftest"
 fi
 
-# --- 6. Monitor hot-plug smoke (3 s, then timeout kills it) ---------------
-timeout 3 dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- monitor --api "$API" --interval 1 >/dev/null 2>&1
+# --- 6. Monitor hot-plug smoke (3 s, then kill it) ------------------------
+# macOS has no GNU coreutils `timeout` command (command not found -> exit 127),
+# so implement the 3 s deadline with background + sleep + kill instead.
+# <para>macOS 没有 GNU coreutils 的 `timeout` 命令（命令未找到 → 退出码 127），
+# 因此用后台 + sleep + kill 实现 3 秒截止。</para>
+dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- monitor --api "$API" --interval 1 >/dev/null 2>&1 &
+MON_PID=$!
+sleep 3
+kill "$MON_PID" 2>/dev/null
+wait "$MON_PID" 2>/dev/null
 RC=$?
-if [ "$RC" -eq 124 ]; then
+if [ "$RC" -eq 143 ]; then # 128+15 SIGTERM: killed by us after the 3 s window
     echo "PASS	monitor (3 s hot-plug smoke)"
     echo "NOTE	manually plug/unplug a device while 'monitor' runs to verify +Added/-Removed events."
 else
@@ -133,7 +141,7 @@ fi
 
 # --- 7. Native backend note ----------------------------------------------
 if [ "$API" = "native" ]; then
-    echo "NOTE	native backend requires macOS 10.15+ (IOUSBHost/IOUSBLib)."
+    echo "NOTE	native backend requires macOS 10.15+ (IOUSBHost.framework)."
 fi
 
 echo "=== result: $FAILURES failure(s) ==="
