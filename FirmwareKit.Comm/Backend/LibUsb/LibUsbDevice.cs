@@ -20,6 +20,14 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     private byte[]? _readChunkBuffer;
     private byte[]? _writeChunkBuffer;
 
+    // P/Invoke to libusb_clear_halt (LibUsbDotNet's NativeMethods is internal).
+    // On Windows winusb this maps to WinUsb_ResetPipe, aborting pending transfers
+    // and resetting the pipe state after a failed read/write. <para>直接 P/Invoke
+    // libusb_clear_halt；Windows winusb 上映射到 WinUsb_ResetPipe，在传输失败后
+    // 中止未决传输并重置管道状态。</para>
+    [DllImport("libusb-1.0", CallingConvention = CallingConvention.Cdecl)]
+    private static extern int libusb_clear_halt(IntPtr devHandle, byte endpoint);
+
     private UsbContext? context;
     private IUsbDevice? usbDevice;
     private UsbEndpointReader? reader;
@@ -151,9 +159,19 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             return -1;
         }
 
+        // On Windows winusb.sys, sending SET_CONFIGURATION (even with the current value)
+        // re-enumerates interfaces and invalidates open handles; AOSP adb never calls
+        // set_configuration because the OS has already configured the device. So only
+        // set it when the device is not already in configuration 1.
+        // <para>Windows winusb.sys 上发送 SET_CONFIGURATION（即使是当前值）会重新枚举
+        // 接口并使已打开句柄失效；AOSP adb 从不调用 set_configuration。因此仅当设备
+        // 尚未处于配置 1 时才设置。</para>
         try
         {
-            usbDevice.SetConfiguration(1);
+            if (usbDevice is LibUsbDotNet.LibUsb.UsbDevice wholeUsbDevice && wholeUsbDevice.Configuration != 1)
+            {
+                usbDevice.SetConfiguration(1);
+            }
         }
         catch (Exception ex)
         {
@@ -300,16 +318,17 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (usbDevice != null)
         {
-            // Explicitly release the claimed interface BEFORE closing the handle.
-            // libusb_close normally releases interfaces, but on Windows winusb.sys
-            // allows only one open handle per interface; leaving the claim in place
-            // (e.g. after a failed session read corrupted the transfer state) keeps the
-            // interface busy, so every later open/enumeration fails until a replug.
-            // Releasing it here restores the driver state so the device stays usable.
-            // <para>在关闭句柄之前显式释放已 claim 的接口。libusb_close 通常会释放接口，
-            // 但在 Windows 上 winusb.sys 每个接口只允许一个打开句柄；若 claim 残留
-            // （例如会话读失败损坏传输状态后），接口会一直保持占用，之后每次打开/枚举
-            // 都会失败，直到重新拔插。在此释放可恢复驱动状态，使设备保持可用。</para>
+            // Clear any halted pipes before releasing the interface; on Windows winusb
+            // a stalled pipe keeps the interface claimed at the driver level, so later
+            // opens/enumeration fail until a replug.
+            // <para>释放接口前清除停滞的管道；Windows winusb 上停滞的管道会使接口在驱动层
+            // 保持占用，导致后续打开/枚举失败直到重新拔插。</para>
+            RestoreEndpointHalt(ReadEndpointId);
+            RestoreEndpointHalt(WriteEndpointId);
+
+            // Release the claimed interface before closing the handle: winusb.sys allows
+            // only one open handle per interface, so a leftover claim blocks later opens.
+            // <para>关闭句柄前显式释放已 claim 的接口：winusb.sys 每接口仅允许一个句柄。</para>
             try
             {
                 if (usbDevice is LibUsbDotNet.LibUsb.UsbDevice wholeUsbDevice)
@@ -455,6 +474,46 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     private static int ToLibusbTimeout(int timeoutMs)
         => timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : timeoutMs;
 
+    /// <summary>
+    /// Best-effort restore of a stalled endpoint pipe after a failed transfer.
+    /// A synchronous transfer error (timeout, stall, pipe error) can leave the
+    /// winusb pipe in a halted state; clearing the halt aborts any pending transfer
+    /// and resets the pipe so the driver releases the interface cleanly on close.
+    /// Without this, a failed session read leaves the interface claimed at the
+    /// driver level and the device disappears from later enumeration until replug.
+    /// <para>传输失败后尽力恢复停滞的端点管道。同步传输错误（超时、stall、管道错误）
+    /// 可能使 winusb 管道处于 halted 状态；清除 halt 会中止任何未决传输并重置管道，
+    /// 使驱动在关闭时干净地释放接口。否则失败的会话读取会让接口在驱动层保持占用，
+    /// 设备会从后续枚举中消失，直到重新拔插。</para>
+    /// </summary>
+    /// <param name="endpoint">The endpoint address to clear; 0 is skipped.
+    /// <para>要清除的端点地址；为 0 时跳过。</para></param>
+    private void RestoreEndpointHalt(byte endpoint)
+    {
+        if (endpoint == 0)
+        {
+            return;
+        }
+
+        try
+        {
+            if (usbDevice is LibUsbDotNet.LibUsb.UsbDevice libusbDevice &&
+                libusbDevice.DeviceHandle is { IsInvalid: false } deviceHandle)
+            {
+                int result = libusb_clear_halt(deviceHandle.DangerousGetHandle(), endpoint);
+                if (result != 0)
+                {
+                    UsbTrace.Log($"LibUsbDevice.RestoreEndpointHalt endpoint 0x{endpoint:X2} returned 0x{result:X}.");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // The device may already be disconnected; restoring the pipe is best-effort.
+            UsbTrace.Log($"LibUsbDevice.RestoreEndpointHalt ignored: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
         if (reader == null)
@@ -474,6 +533,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         if (error == Error.NoDevice)
         {
             return UsbChunkResult.Fatal((int)error);
+        }
+        if (error != Error.Success)
+        {
+            RestoreEndpointHalt(ReadEndpointId);
         }
         if (readLen > 0)
         {
@@ -507,6 +570,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         }
         if (errorCode != 0) // Error.Success is 0; libusb write errors are reported without throwing.
         {
+            RestoreEndpointHalt(WriteEndpointId);
             return UsbChunkResult.Error((int)errorCode);
         }
         if (transferred <= 0)
@@ -564,6 +628,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         {
             throw new UsbDeviceDisconnectedException("USB interrupt read failed: device disconnected (Error.NoDevice).", (int)error);
         }
+        if (error != Error.Success)
+        {
+            RestoreEndpointHalt(endpointAddress);
+        }
         if (readLen <= 0)
         {
             return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
@@ -589,6 +657,10 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         if (error == Error.NoDevice)
         {
             throw new UsbDeviceDisconnectedException("USB interrupt write failed: device disconnected (Error.NoDevice).", (int)error);
+        }
+        if (error != Error.Success)
+        {
+            RestoreEndpointHalt(endpointAddress);
         }
         return transferred <= 0 ? 0 : transferred;
     }
@@ -658,6 +730,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
             if (errorCode != 0)
             {
+                RestoreEndpointHalt(ReadEndpointId);
                 lastError = (int)errorCode;
                 outcome = UsbTransferOutcome.FatalError;
             }
@@ -777,6 +850,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
 
             if (errorCode != 0)
             {
+                RestoreEndpointHalt(WriteEndpointId);
                 UsbTrace.LogFormatted($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
                 lastError = (int)errorCode;
                 outcome = UsbTransferOutcome.FatalError;
