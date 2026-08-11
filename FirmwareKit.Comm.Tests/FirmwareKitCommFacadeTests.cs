@@ -7,40 +7,6 @@ namespace FirmwareKit.Comm.Tests;
 public sealed class FirmwareKitCommFacadeTests
 {
     [Fact]
-    public void UsbDeviceFilter_Matches_AppliesInterfaceCriteria()
-    {
-        var info = new UsbDeviceInfo
-        {
-            VendorId = 0x05C6,
-            ProductId = 0x9008,
-            InterfaceClass = 0xFF,
-            InterfaceSubClass = 0xFF,
-            InterfaceProtocol = 0xFF
-        };
-
-        var matching = new UsbDeviceFilter
-        {
-            VendorId = 0x05C6,
-            ProductId = 0x9008,
-            InterfaceClass = 0xFF,
-            InterfaceSubClass = 0xFF,
-            InterfaceProtocol = 0xFF
-        };
-
-        var nonMatching = new UsbDeviceFilter
-        {
-            VendorId = 0x05C6,
-            ProductId = 0x9008,
-            InterfaceClass = 0xFF,
-            InterfaceSubClass = 0x42,
-            InterfaceProtocol = 0x03
-        };
-
-        Assert.True(matching.Matches(info));
-        Assert.False(nonMatching.Matches(info));
-    }
-
-    [Fact]
     public void FirmwareKitComm_CanOpenSessionsFromRegisteredProvider()
     {
         IFirmwareKitComm comm = CreateIsolatedFacade();

@@ -155,6 +155,16 @@ public sealed class UsbDeviceInfoFactoryAndProjectionTests
 
         protected override bool IsOpen => HandleOpen;
 
+        public override int CreateHandle()
+        {
+            // Simulate a real backend: a device that cannot be opened (busy, interface
+            // claimed elsewhere) returns a non-zero error and leaves the handle closed.
+            // <para>模拟真实后端：无法打开的设备（繁忙、接口被其他位置声明）返回非零
+            // 错误且保持句柄关闭。</para>
+            if (!HandleOpen) return 1;
+            return 0;
+        }
+
         protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
             => UsbChunkResult.Success(0);
 
@@ -166,8 +176,6 @@ public sealed class UsbDeviceInfoFactoryAndProjectionTests
         public override long Write(byte[] data, int length) => length;
 
         public override int GetSerialNumber() => 0;
-
-        public override int CreateHandle() => 0;
 
         public override void Reset() { }
 
