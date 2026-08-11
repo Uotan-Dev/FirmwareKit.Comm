@@ -44,7 +44,7 @@ Backend matrix:
 | `native` (usbfs) | Linux | usbfs ioctl / URB | True async via URB + poll; multi-interface claim supported |
 | `native` (IOUSBLib) | macOS | IOUSBHost.framework | Requires macOS 10.15+; pipe-level reset |
 | `native` (HarmonyOS) | HarmonyOS | USBManager DDK | Opt-in via `FIRMWAREKIT_USB_ENABLE_HARMONY=1`; requires `OH_Usb_Init()` to succeed |
-| `libusb` | all | LibUsbDotNet | Needs the native libusb runtime (bundled per-RID in the package); degrades gracefully when absent |
+| `libusb` | all | LibUsbDotNet | Native async transfers; needs the native libusb runtime (bundled per-RID in the package); degrades gracefully when absent |
 
 HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be detected reliably with file probes. On macOS below 10.15, use the `libusb` backend.
 
@@ -62,6 +62,8 @@ HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be de
 | Windows legacy / Linux usbfs / libusb / macOS / HarmonyOS | 5 000 ms |
 
 Pass an explicit `timeoutMs` (or `UsbTransferPolicies.InfiniteTimeoutMs` = -1 for an unbounded wait) when the operation must not depend on the backend default.
+
+The async extension overloads that omit the timeout (`ReadAsync(length)`, `ReadIntoAsync(...)`, `ReadPacketAsync(...)`, `WriteAsync(...)`, `WriteZlpAsync()`, `ControlTransferAsync(...)`, `ReadInterruptAsync(...)`, `WriteInterruptAsync(...)`) use the session's `DefaultTimeoutMs`.
 
 On the Linux usbfs backend, interrupt-endpoint reads/writes (`ReadInterrupt`/`WriteInterrupt`) wait on `poll()` from a thread-pool thread; with `InfiniteTimeoutMs` and an unresponsive device the waiting thread is held until the device responds or disconnects.
 
@@ -99,7 +101,7 @@ For device-level resets, use `WaitForUsbDeviceDisappearAsync` / `WaitForUsbDevic
 
 ## Async I/O Semantics
 
-True asynchronous (non-blocking) I/O is implemented natively by **WinUSB** (overlapped I/O) and **Linux usbfs** (URB + poll). All other backends — macOS IOUSBHost, libusb fallback paths, HarmonyOS DDK, and the `AsAsync()` adapter — execute the underlying synchronous transfer on a thread-pool thread (`UsbAsyncExecution.Run`).
+True asynchronous (non-blocking) I/O is implemented natively by **WinUSB** (overlapped I/O), **Linux usbfs** (URB + poll) and **libusb** (LibUsbDotNet async transfers). All other backends — macOS IOUSBHost, HarmonyOS DDK, and the `AsAsync()` adapter — execute the underlying synchronous transfer on a thread-pool thread (`UsbAsyncExecution.Run`).
 
 Check `UsbApiCapabilities.SupportsNativeAsyncIo` (or `UsbBackendCapability.SupportsNativeAsyncIo` per backend) to know whether `ReadAsync`/`WriteAsync` are truly non-blocking or just offloaded. Protocol layers that must not block the caller's thread should treat `SupportsNativeAsyncIo == false` backends as synchronous-with-offload.
 

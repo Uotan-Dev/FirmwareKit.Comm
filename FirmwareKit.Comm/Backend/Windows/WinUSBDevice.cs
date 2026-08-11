@@ -478,36 +478,89 @@ internal class WinUSBDevice : UsbDevice
         }
     }
 
-    public override Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    protected override async Task<UsbChunkResult> ReadChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
     {
         if (WinUSBHandle.IsInvalid)
         {
-            return Task.FromException<int>(new UsbDeviceHandleClosedException("Device handle is closed."));
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
-        if (length <= 0) return Task.FromResult(0);
-        ValidateBufferRange(buffer, offset, length);
-        return ReadIntoOverlappedAsync(buffer, offset, length, timeoutMs, cancellationToken);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        try
+        {
+            uint transferred = await OverlappedTransferAsync(buffer, length, ReadBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            return transferred > 0
+                ? UsbChunkResult.Success((int)transferred)
+                : UsbChunkResult.Timeout(ERROR_SEM_TIMEOUT);
+        }
+        catch (Win32Exception ex)
+        {
+            if (IsDisconnectionError(ex.NativeErrorCode))
+            {
+                return UsbChunkResult.Fatal(ex.NativeErrorCode);
+            }
+
+            return UsbChunkResult.Error(ex.NativeErrorCode);
+        }
     }
 
-    private async Task<int> ReadIntoOverlappedAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
+    protected override async Task<UsbChunkResult> WriteChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
     {
+        if (WinUSBHandle.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        try
+        {
+            uint transferred = await OverlappedTransferAsync(buffer, length, WriteBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            return transferred > 0
+                ? UsbChunkResult.Success((int)transferred)
+                : UsbChunkResult.Timeout(ERROR_SEM_TIMEOUT);
+        }
+        catch (Win32Exception ex)
+        {
+            if (IsDisconnectionError(ex.NativeErrorCode))
+            {
+                return UsbChunkResult.Fatal(ex.NativeErrorCode);
+            }
+
+            return UsbChunkResult.Error(ex.NativeErrorCode);
+        }
+    }
+
+    public override async Task WriteZlpAsync(int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (WinUSBHandle.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        await OverlappedTransferAsync(IntPtr.Zero, 0, WriteBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+    }
+
+    public override async Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (WinUSBHandle.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
+        ValidateBufferRange(buffer, offset, length);
+
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
         GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
         try
         {
-            int total = 0;
-            int remaining = length;
-            while (remaining > 0)
+            IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset);
+            uint transferred = await OverlappedTransferAsync(ptr, length, endpointAddress, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            if (transferred == 0)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                int lenToRead = Math.Min(remaining, MaxChunkSize);
-                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + total);
-                uint transferred = await OverlappedTransferAsync(ptr, lenToRead, ReadBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-                total += (int)transferred;
-                remaining -= (int)transferred;
-                if (transferred < lenToRead) break; // short packet or timeout
+                return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
             }
-            return total;
+            return new UsbReadResult((int)transferred, isTimeout: false, isShortPacket: transferred < length);
         }
         finally
         {
@@ -515,36 +568,22 @@ internal class WinUSBDevice : UsbDevice
         }
     }
 
-    public override Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    public override async Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         if (WinUSBHandle.IsInvalid)
         {
-            return Task.FromException<long>(new UsbDeviceHandleClosedException("Device handle is closed."));
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
-        ValidateWriteData(data, length);
-        if (length == 0) return Task.FromResult(0L);
-        return WriteOverlappedAsync(data, length, timeoutMs, cancellationToken);
-    }
+        ValidateWriteData(data, offset, length);
+        if (length == 0) return 0;
 
-    private async Task<long> WriteOverlappedAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken)
-    {
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
         GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
         try
         {
-            int total = 0;
-            int remaining = length;
-            while (remaining > 0)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                int lenToSend = Math.Min(remaining, MaxChunkSize);
-                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + total);
-                uint transferred = await OverlappedTransferAsync(ptr, lenToSend, WriteBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-                total += (int)transferred;
-                remaining -= (int)transferred;
-                if (transferred < lenToSend) break;
-            }
-            return total;
+            IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset);
+            uint transferred = await OverlappedTransferAsync(ptr, length, endpointAddress, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+            return transferred;
         }
         finally
         {

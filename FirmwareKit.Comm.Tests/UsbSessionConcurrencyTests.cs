@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Backend;
 using FirmwareKit.Comm.Core;
@@ -282,10 +283,38 @@ public sealed class UsbSessionConcurrencyTests
         protected override bool IsOpen => true;
 
         protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
-            => throw new NotSupportedException();
+        {
+            Interlocked.Increment(ref ReadEntered);
+            _releaseReads.Wait();
+            for (int i = 0; i < length; i++)
+            {
+                Marshal.WriteByte(buffer, i, 0);
+            }
+            return UsbChunkResult.Success(length);
+        }
 
         protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
-            => throw new NotSupportedException();
+        {
+            Interlocked.Increment(ref WriteEntered);
+            return UsbChunkResult.Success(length);
+        }
+
+        protected override Task<UsbChunkResult> ReadChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref ReadEntered);
+            _releaseReads.Wait();
+            for (int i = 0; i < length; i++)
+            {
+                Marshal.WriteByte(buffer, i, 0);
+            }
+            return Task.FromResult(UsbChunkResult.Success(length));
+        }
+
+        protected override Task<UsbChunkResult> WriteChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref WriteEntered);
+            return Task.FromResult(UsbChunkResult.Success(length));
+        }
 
         public override byte[] Read(int length)
         {

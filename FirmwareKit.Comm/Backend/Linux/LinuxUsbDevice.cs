@@ -462,60 +462,94 @@ internal class LinuxUsbDevice : UsbDevice
         return transferred;
     }
 
-    public override Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    protected override async Task<UsbChunkResult> ReadChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
     {
         if (_fd.IsInvalid)
         {
-            return Task.FromException<int>(new UsbDeviceHandleClosedException("Device handle is closed."));
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
-        if (length <= 0) return Task.FromResult(0);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
+        // <para>usbfs 将 0 视为"无超时"；将 -1 哨兵映射为 0。</para>
+        if (effectiveTimeoutMs == UsbTransferPolicies.InfiniteTimeoutMs)
+        {
+            effectiveTimeoutMs = 0;
+        }
+
+        uint transferred = await SubmitUrbAsync(ep_in, buffer, length, effectiveTimeoutMs, cancellationToken, USBDEVFS_URB_TYPE_BULK).ConfigureAwait(false);
+        return transferred > 0
+            ? UsbChunkResult.Success((int)transferred)
+            : UsbChunkResult.Timeout(ETIMEDOUT);
+    }
+
+    protected override async Task<UsbChunkResult> WriteChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
+    {
+        if (_fd.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
+        if (effectiveTimeoutMs == UsbTransferPolicies.InfiniteTimeoutMs)
+        {
+            effectiveTimeoutMs = 0;
+        }
+
+        uint transferred = await SubmitUrbAsync(ep_out, buffer, length, effectiveTimeoutMs, cancellationToken, USBDEVFS_URB_TYPE_BULK).ConfigureAwait(false);
+        return transferred > 0
+            ? UsbChunkResult.Success((int)transferred)
+            : UsbChunkResult.Timeout(ETIMEDOUT);
+    }
+
+    public override async Task<UsbReadResult> ReadInterruptAsync(byte endpointAddress, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    {
+        if (_fd.IsInvalid)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
         ValidateBufferRange(buffer, offset, length);
-        return ReadIntoUrbAsync(buffer, offset, length, timeoutMs, cancellationToken);
-    }
 
-    private async Task<int> ReadIntoUrbAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken)
-    {
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        int total = 0;
-        int remaining = length;
-        while (remaining > 0)
+        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int lenToRead = Math.Min(remaining, MaxChunkSize);
-            uint transferred = await SubmitUrbAsync(ep_in, buffer, offset + total, lenToRead, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-            total += (int)transferred;
-            remaining -= (int)transferred;
-            if (transferred < lenToRead) break; // short packet or timeout
+            IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset);
+            uint transferred = await SubmitUrbAsync(endpointAddress, ptr, length, effectiveTimeoutMs, cancellationToken, USBDEVFS_URB_TYPE_INTERRUPT).ConfigureAwait(false);
+            if (transferred == 0)
+            {
+                return new UsbReadResult(0, isTimeout: true, isShortPacket: false);
+            }
+            return new UsbReadResult((int)transferred, isTimeout: false, isShortPacket: transferred < length);
         }
-        return total;
+        finally
+        {
+            handle.Free();
+        }
     }
 
-    public override Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    public override async Task<long> WriteInterruptAsync(byte endpointAddress, byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
         if (_fd.IsInvalid)
         {
-            return Task.FromException<long>(new UsbDeviceHandleClosedException("Device handle is closed."));
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
-        ValidateWriteData(data, length);
-        if (length == 0) return Task.FromResult(0L);
-        return WriteUrbAsync(data, length, timeoutMs, cancellationToken);
-    }
+        ValidateWriteData(data, offset, length);
+        if (length == 0) return 0;
 
-    private async Task<long> WriteUrbAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken)
-    {
         int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        int total = 0;
-        int remaining = length;
-        while (remaining > 0)
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            int lenToSend = Math.Min(remaining, MaxChunkSize);
-            uint transferred = await SubmitUrbAsync(ep_out, data, total, lenToSend, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-            total += (int)transferred;
-            remaining -= (int)transferred;
-            if (transferred < lenToSend) break;
+            IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset);
+            uint transferred = await SubmitUrbAsync(endpointAddress, ptr, length, effectiveTimeoutMs, cancellationToken, USBDEVFS_URB_TYPE_INTERRUPT).ConfigureAwait(false);
+            return transferred;
         }
-        return total;
+        finally
+        {
+            handle.Free();
+        }
     }
 
     /// <summary>
@@ -531,12 +565,33 @@ internal class LinuxUsbDevice : UsbDevice
     private async Task<uint> SubmitUrbAsync(byte endpoint, byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken, byte urbType)
     {
         GCHandle bufferHandle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            IntPtr ptr = new IntPtr(bufferHandle.AddrOfPinnedObject().ToInt64() + offset);
+            return await SubmitUrbAsync(endpoint, ptr, length, timeoutMs, cancellationToken, urbType).ConfigureAwait(false);
+        }
+        finally
+        {
+            bufferHandle.Free();
+        }
+    }
+
+    /// <summary>
+    /// Submits a URB against an already-pinned buffer pointer and reaps its completion.
+    /// <para>针对已固定的缓冲区指针提交 URB 并回收其完成结果。</para>
+    /// Used by both the byte[] interrupt entry points and the chunk-level async overrides,
+    /// where the caller already owns the pinned buffer (the base-class loop pins it).
+    /// <para>供 byte[] 中断入口与分块级异步覆盖共用——调用方已持有固定缓冲区
+    /// （基类循环负责固定）。</para>
+    /// </summary>
+    private async Task<uint> SubmitUrbAsync(byte endpoint, IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken, byte urbType)
+    {
         var urb = new usbdevfs_urb
         {
             type = urbType,
             endpoint = endpoint,
             flags = 0, // keep short reads completing normally (do not set SHORT_NOT_OK)
-            buffer = new IntPtr(bufferHandle.AddrOfPinnedObject().ToInt64() + offset),
+            buffer = buffer,
             buffer_length = length,
             usercontext = IntPtr.Zero
         };
@@ -604,7 +659,6 @@ internal class LinuxUsbDevice : UsbDevice
         finally
         {
             urbHandle.Free();
-            bufferHandle.Free();
         }
     }
 

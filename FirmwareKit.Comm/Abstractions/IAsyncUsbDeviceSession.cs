@@ -3,14 +3,45 @@ namespace FirmwareKit.Comm.Abstractions;
 /// <summary>
 /// Represents an opened USB device session with asynchronous I/O methods.
 /// <para>表示支持异步 I/O 的已打开 USB 设备会话。</para>
+/// This is the asynchronous counterpart to <see cref="IUsbDeviceSession"/>. A session
+/// obtained from the communication layer implements both interfaces; a synchronous session
+/// can be adapted to this view via <see cref="UsbDeviceSessionAsyncExtensions.AsAsync"/>.
+/// Backends that expose native asynchronous I/O (WinUSB overlapped, Linux usbfs URBs,
+/// libusb transfers) implement these methods without blocking a thread-pool thread;
+/// backends without a native async path fall back to running the synchronous call on the
+/// thread pool.
+/// <para>这是 <see cref="IUsbDeviceSession"/> 的异步对应物。从通信层获取的会话同时实现两个接口；
+/// 同步会话可通过 <see cref="UsbDeviceSessionAsyncExtensions.AsAsync"/> 适配为此视图。
+/// 暴露原生异步 I/O 的后端（WinUSB 重叠 I/O、Linux usbfs URB、libusb 传输）实现这些方法时
+/// 不会阻塞线程池线程；无原生异步路径的后端回退到在线程池上执行同步调用。</para>
 /// </summary>
-public interface IAsyncUsbDeviceSession
+public interface IAsyncUsbDeviceSession : IDisposable
 {
     /// <summary>
     /// Gets the default timeout used by this session, if the caller omits one.
     /// <para>获取该会话在调用方未显式指定超时时使用的默认超时。</para>
     /// </summary>
     int DefaultTimeoutMs { get; }
+
+    /// <summary>
+    /// Gets the device metadata.
+    /// <para>获取设备元数据。</para>
+    /// </summary>
+    UsbDeviceInfo DeviceInfo { get; }
+
+    /// <summary>
+    /// Gets the bulk IN endpoint address bound to this session (bit 7 set), or 0 when the
+    /// backend does not expose endpoint-level binding.
+    /// <para>获取绑定到本会话的批量 IN 端点地址（bit 7 置位），后端不暴露端点绑定时为 0。</para>
+    /// </summary>
+    byte EndpointIn { get; }
+
+    /// <summary>
+    /// Gets the bulk OUT endpoint address bound to this session (bit 7 clear), or 0 when the
+    /// backend does not expose endpoint-level binding.
+    /// <para>获取绑定到本会话的批量 OUT 端点地址（bit 7 清零），后端不暴露端点绑定时为 0。</para>
+    /// </summary>
+    byte EndpointOut { get; }
 
     /// <summary>
     /// Reads up to the specified number of bytes asynchronously.

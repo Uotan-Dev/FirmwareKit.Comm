@@ -44,7 +44,7 @@ FirmwareKit.Comm 聚焦跨平台 USB 传输原语：
 | `native`（usbfs） | Linux | usbfs ioctl / URB | 通过 URB + poll 真异步；支持多接口声明 |
 | `native`（IOUSBLib） | macOS | IOUSBHost.framework | 需要 macOS 10.15+；管道级重置 |
 | `native`（HarmonyOS） | HarmonyOS | USBManager DDK | 通过 `FIRMWAREKIT_USB_ENABLE_HARMONY=1` 开启；需 `OH_Usb_Init()` 成功 |
-| `libusb` | 全平台 | LibUsbDotNet | 需要原生 libusb 运行时（包内按 RID 附带）；缺失时优雅降级 |
+| `libusb` | 全平台 | LibUsbDotNet | 原生异步传输；需要原生 libusb 运行时（包内按 RID 附带）；缺失时优雅降级 |
 
 HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识别）；需显式开启。macOS 10.15 以下请使用 `libusb` 后端。
 
@@ -62,6 +62,8 @@ HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识
 | Windows legacy / Linux usbfs / libusb / macOS / HarmonyOS | 5 000 ms |
 
 当操作不能依赖后端默认值时，请显式传 `timeoutMs`（或 `UsbTransferPolicies.InfiniteTimeoutMs` = -1 表示无限等待）。
+
+省略超时的异步扩展重载（`ReadAsync(length)`、`ReadIntoAsync(...)`、`ReadPacketAsync(...)`、`WriteAsync(...)`、`WriteZlpAsync()`、`ControlTransferAsync(...)`、`ReadInterruptAsync(...)`、`WriteInterruptAsync(...)`）使用会话的 `DefaultTimeoutMs`。
 
 Linux usbfs 后端的端点读/写（`ReadInterrupt`/`WriteInterrupt`）在线程池线程上等待 `poll()`；使用 `InfiniteTimeoutMs` 且设备无响应时，等待线程会一直占用直到设备响应或断开。
 
@@ -99,7 +101,7 @@ if (block.Length % 512 == 0)
 
 ## 异步 I/O 语义
 
-真正的异步（非阻塞）I/O 由 **WinUSB**（重叠 I/O）与 **Linux usbfs**（URB + poll）原生实现。其余后端——macOS IOUSBHost、libusb 回退路径、HarmonyOS DDK 以及 `AsAsync()` 适配器——在线程池线程上执行底层同步传输（`UsbAsyncExecution.Run`）。
+真正的异步（非阻塞）I/O 由 **WinUSB**（重叠 I/O）、**Linux usbfs**（URB + poll）与 **libusb**（LibUsbDotNet 异步传输）原生实现。其余后端——macOS IOUSBHost、HarmonyOS DDK 以及 `AsAsync()` 适配器——在线程池线程上执行底层同步传输（`UsbAsyncExecution.Run`）。
 
 通过 `UsbApiCapabilities.SupportsNativeAsyncIo`（或逐后端 `UsbBackendCapability.SupportsNativeAsyncIo`）判断 `ReadAsync`/`WriteAsync` 是真正非阻塞还是仅卸载。不允许阻塞调用方线程的协议层，应将 `SupportsNativeAsyncIo == false` 的后端视为"同步 + 卸载"。
 

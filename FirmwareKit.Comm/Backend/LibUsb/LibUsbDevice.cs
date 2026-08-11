@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using FirmwareKit.Comm.Abstractions;
 using FirmwareKit.Comm.Diagnostics;
@@ -665,247 +664,75 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         return transferred <= 0 ? 0 : transferred;
     }
 
-    public override async Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
+    protected override async Task<UsbChunkResult> ReadChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
     {
-        if (length <= 0)
-        {
-            return Array.Empty<byte>();
-        }
-
-        cancellationToken.ThrowIfCancellationRequested();
-
-        var buffer = new byte[length]
-        ;
-        int count = await ReadIntoAsync(buffer, 0, length, timeoutMs, cancellationToken).ConfigureAwait(false);
-        if (count <= 0)
-        {
-            return Array.Empty<byte>();
-        }
-
-        if (count == length)
-        {
-            return buffer;
-        }
-
-        var result = new byte[count];
-        Buffer.BlockCopy(buffer, 0, result, 0, count);
-        return result;
-    }
-
-    public override async Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
-    {
-        var stopwatch = Stopwatch.StartNew();
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-
         if (reader == null)
         {
-            return 0;
+            // IN-only session bound without an OUT pipe is valid for interrupt reads;
+            // bulk reads in a direction that never opened must not NRE.
+            // <para>未绑定 IN 管道的 IN-only 会话对中断读有效；未打开方向的批量读不能 NRE。</para>
+            throw new NotSupportedException("The session has no bound IN endpoint for bulk reads (interrupt-only device?).");
         }
 
-        if (length <= 0)
-        {
-            return 0;
-        }
-
-        ValidateBufferRange(buffer, offset, length);
         cancellationToken.ThrowIfCancellationRequested();
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        const int maxLenToRead = UsbTransferPolicies.MaxChunkSize;
-        int lenRemaining = length;
-        int count = 0;
-
-        while (lenRemaining > 0)
+        if (_readChunkBuffer == null || _readChunkBuffer.Length < length)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            int lenToRead = Math.Min(lenRemaining, maxLenToRead);
-            var (errorCode, read_len) = await reader.ReadAsync(buffer, offset + count, lenToRead, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
-
-            if (errorCode == Error.NoDevice)
-            {
-                throw new UsbDeviceDisconnectedException("USB read failed: device disconnected (Error.NoDevice).", (int)errorCode);
-            }
-
-            if (errorCode != 0)
-            {
-                RestoreEndpointHalt(ReadEndpointId);
-                lastError = (int)errorCode;
-                outcome = UsbTransferOutcome.FatalError;
-            }
-
-            if (read_len <= 0)
-            {
-                if (outcome == UsbTransferOutcome.Success)
-                {
-                    outcome = UsbTransferOutcome.Timeout;
-                }
-
-                break;
-            }
-
-            count += read_len;
-            lenRemaining -= read_len;
-
-            if (read_len < lenToRead)
-            {
-                if (outcome == UsbTransferOutcome.Success)
-                {
-                    outcome = UsbTransferOutcome.ShortTransfer;
-                }
-
-                break;
-            }
+            _readChunkBuffer = new byte[length];
         }
 
-        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        byte[] chunkBuffer = _readChunkBuffer;
+        var (error, readLen) = await reader.ReadAsync(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs)).ConfigureAwait(false);
+        if (error == Error.NoDevice)
         {
-            outcome = UsbTransferOutcome.ShortTransfer;
+            return UsbChunkResult.Fatal((int)error);
         }
-
-        UsbTrace.EmitTransfer(new UsbTransferEvent
+        if (error != Error.Success)
         {
-            Backend = "libusb",
-            DevicePath = DevicePath,
-            Operation = UsbTransferOperation.Read,
-            RequestedBytes = length,
-            TransferredBytes = count,
-            TimeoutMs = effectiveTimeoutMs,
-            RetryCount = 0,
-            NativeErrorCode = lastError,
-            ElapsedMs = stopwatch.ElapsedMilliseconds,
-            Outcome = outcome
-        });
-
-        return count;
+            RestoreEndpointHalt(ReadEndpointId);
+        }
+        if (readLen > 0)
+        {
+            Marshal.Copy(chunkBuffer, 0, buffer, readLen);
+        }
+        return readLen <= 0 ? UsbChunkResult.Timeout((int)error) : UsbChunkResult.Success(readLen);
     }
 
-    public override async Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    protected override async Task<UsbChunkResult> WriteChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
     {
-        var stopwatch = Stopwatch.StartNew();
-        int? lastError = null;
-        var outcome = UsbTransferOutcome.Success;
-
         if (writer == null)
         {
-            UsbTrace.Log("LibUsbDevice: writer is null");
-            UsbTrace.EmitTransfer(new UsbTransferEvent
-            {
-                Backend = "libusb",
-                DevicePath = DevicePath,
-                Operation = UsbTransferOperation.Write,
-                RequestedBytes = length,
-                TransferredBytes = 0,
-                TimeoutMs = timeoutMs > 0 ? timeoutMs : PlatformDefaultTimeoutMs,
-                RetryCount = 0,
-                NativeErrorCode = null,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Outcome = UsbTransferOutcome.NotReady
-            });
-            return 0;
+            // OUT-only session bound without an IN pipe is valid for interrupt writes;
+            // bulk writes in a direction that never opened must not NRE.
+            // <para>未绑定 OUT 管道的 OUT-only 会话对中断写有效；未打开方向的批量写不能 NRE。</para>
+            throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
         }
 
-        ValidateWriteData(data, length);
         cancellationToken.ThrowIfCancellationRequested();
 
-        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, PlatformDefaultTimeoutMs);
-        const int maxLenToSend = UsbTransferPolicies.MaxChunkSize;
-        int lenRemaining = length;
-        int count = 0;
-
-        UsbTrace.LogFormatted($"LibUsbDevice: Write attempt - length: {length}");
-
-        if (length == 0)
+        if (_writeChunkBuffer == null || _writeChunkBuffer.Length < length)
         {
-            var (errorCode, transferred) = await writer.WriteAsync(data, 0, 0, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
-            UsbTrace.LogFormatted($"LibUsbDevice: Zero-length write - transferred: {transferred}, errorCode: {errorCode}");
-            UsbTrace.EmitTransfer(new UsbTransferEvent
-            {
-                Backend = "libusb",
-                DevicePath = DevicePath,
-                Operation = UsbTransferOperation.Write,
-                RequestedBytes = 0,
-                TransferredBytes = transferred,
-                TimeoutMs = effectiveTimeoutMs,
-                RetryCount = 0,
-                NativeErrorCode = (int)errorCode,
-                ElapsedMs = stopwatch.ElapsedMilliseconds,
-                Outcome = errorCode == 0 ? UsbTransferOutcome.Success : UsbTransferOutcome.FatalError
-            });
-            return transferred;
+            _writeChunkBuffer = new byte[length];
         }
 
-        while (lenRemaining > 0)
+        byte[] chunkBuffer = _writeChunkBuffer;
+        Marshal.Copy(buffer, chunkBuffer, 0, length);
+
+        var (errorCode, transferred) = await writer.WriteAsync(chunkBuffer, 0, length, ToLibusbTimeout(timeoutMs)).ConfigureAwait(false);
+        if (errorCode == Error.NoDevice)
         {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            int lenToSend = Math.Min(lenRemaining, maxLenToSend);
-            var (errorCode, transferred) = await writer.WriteAsync(data, count, lenToSend, ToLibusbTimeout(effectiveTimeoutMs)).ConfigureAwait(false);
-
-            if (errorCode == Error.NoDevice)
-            {
-                throw new UsbDeviceDisconnectedException("USB write failed: device disconnected (Error.NoDevice).", (int)errorCode);
-            }
-
-            if (errorCode != 0)
-            {
-                RestoreEndpointHalt(WriteEndpointId);
-                UsbTrace.LogFormatted($"LibUsbDevice: Write error! errorCode: {errorCode}, transferred: {transferred}");
-                lastError = (int)errorCode;
-                outcome = UsbTransferOutcome.FatalError;
-            }
-
-            if (transferred <= 0)
-            {
-                UsbTrace.LogFormatted($"LibUsbDevice: Write returned non-positive transferred: {transferred}, errorCode: {errorCode}");
-                if (outcome == UsbTransferOutcome.Success)
-                {
-                    outcome = UsbTransferOutcome.Timeout;
-                    lastError = (int)errorCode;
-                }
-
-                break;
-            }
-
-            count += transferred;
-            lenRemaining -= transferred;
-
-            if (transferred < lenToSend)
-            {
-                UsbTrace.LogFormatted($"LibUsbDevice: Short write - transferred {transferred} < requested {lenToSend}");
-                if (outcome == UsbTransferOutcome.Success)
-                {
-                    outcome = UsbTransferOutcome.ShortTransfer;
-                }
-
-                break;
-            }
+            return UsbChunkResult.Fatal((int)errorCode);
         }
-
-        UsbTrace.LogFormatted($"LibUsbDevice: Write finished - total count: {count}");
-        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        if (errorCode != 0) // Error.Success is 0; libusb write errors are reported without throwing.
         {
-            outcome = UsbTransferOutcome.ShortTransfer;
+            RestoreEndpointHalt(WriteEndpointId);
+            return UsbChunkResult.Error((int)errorCode);
         }
-
-        UsbTrace.EmitTransfer(new UsbTransferEvent
+        if (transferred <= 0)
         {
-            Backend = "libusb",
-            DevicePath = DevicePath,
-            Operation = UsbTransferOperation.Write,
-            RequestedBytes = length,
-            TransferredBytes = count,
-            TimeoutMs = effectiveTimeoutMs,
-            RetryCount = 0,
-            NativeErrorCode = lastError,
-            ElapsedMs = stopwatch.ElapsedMilliseconds,
-            Outcome = outcome
-        });
-
-        // Match the sync Write contract: report transferred bytes, 0 on failure.
-        // (-1 was previously returned on failure and could be misread as a huge count.)
-        return count;
+            return UsbChunkResult.Timeout((int)errorCode);
+        }
+        return UsbChunkResult.Success(transferred);
     }
 
     public override async Task<int> ControlTransferAsync(FirmwareKit.Comm.Abstractions.UsbSetupPacket setupPacket, byte[]? buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
@@ -967,6 +794,5 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         return transferred;
     }
 }
-
 
 

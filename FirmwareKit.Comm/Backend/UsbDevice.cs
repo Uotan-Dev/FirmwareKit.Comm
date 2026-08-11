@@ -141,6 +141,38 @@ internal abstract class UsbDevice : IDisposable
     protected abstract UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs);
 
     /// <summary>
+    /// Asynchronously performs a single chunked bulk read.
+    /// <para>异步执行单次分块批量读取。</para>
+    /// Backends with a native asynchronous transfer path (WinUSB overlapped, Linux usbfs
+    /// URBs, libusb transfers) override this to avoid blocking a thread-pool thread; the
+    /// default implementation runs <see cref="ReadChunk"/> on the thread pool.
+    /// <para>具有原生异步传输路径的后端（WinUSB 重叠 I/O、Linux usbfs URB、libusb 传输）
+    /// 覆盖此方法以避免阻塞线程池线程；默认实现在线程池上运行 <see cref="ReadChunk"/>。</para>
+    /// </summary>
+    /// <param name="buffer">The pinned destination buffer pointer. <para>已固定的目标缓冲区指针。</para></param>
+    /// <param name="length">The number of bytes to read. <para>要读取的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that resolves to the chunk transfer result. <para>分块传输结果任务。</para></returns>
+    protected virtual Task<UsbChunkResult> ReadChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
+        => FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => ReadChunk(buffer, length, timeoutMs), cancellationToken);
+
+    /// <summary>
+    /// Asynchronously performs a single chunked bulk write.
+    /// <para>异步执行单次分块批量写入。</para>
+    /// Backends with a native asynchronous transfer path override this; the default
+    /// implementation runs <see cref="WriteChunk"/> on the thread pool.
+    /// <para>具有原生异步传输路径的后端覆盖此方法；默认实现在线程池上运行 <see cref="WriteChunk"/>。</para>
+    /// </summary>
+    /// <param name="buffer">The pinned source buffer pointer. <para>已固定的源缓冲区指针。</para></param>
+    /// <param name="length">The number of bytes to write. <para>要写入的字节数。</para></param>
+    /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
+    /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
+    /// <returns>A task that resolves to the chunk transfer result. <para>分块传输结果任务。</para></returns>
+    protected virtual Task<UsbChunkResult> WriteChunkAsync(IntPtr buffer, int length, int timeoutMs, CancellationToken cancellationToken)
+        => FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => WriteChunk(buffer, length, timeoutMs), cancellationToken);
+
+    /// <summary>
     /// Creates the exception thrown when a read fails with a fatal native error.
     /// <para>创建在读取遇到致命原生错误时抛出的异常。</para>
     /// </summary>
@@ -536,9 +568,31 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that represents the asynchronous read operation. <para>表示异步读取操作的任务。</para></returns>
-    public virtual Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
+    public virtual async Task<byte[]> ReadAsync(int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Read(length, timeoutMs), cancellationToken);
+        if (length < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length));
+        }
+
+        if (length > UsbTransferPolicies.MaxReadLength)
+        {
+            throw new ArgumentOutOfRangeException(nameof(length), $"length exceeds the safety cap of {UsbTransferPolicies.MaxReadLength} bytes; clamp device-provided frame lengths.");
+        }
+
+        if (length == 0)
+        {
+            return Array.Empty<byte>();
+        }
+
+        byte[] buffer = new byte[length];
+        int count = await ReadIntoAsync(buffer, 0, length, timeoutMs, cancellationToken).ConfigureAwait(false);
+        if (count == length) return buffer;
+        if (count == 0) return Array.Empty<byte>();
+
+        byte[] realData = new byte[count];
+        Buffer.BlockCopy(buffer, 0, realData, 0, count);
+        return realData;
     }
 
     /// <summary>
@@ -551,9 +605,10 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="timeoutMs">The timeout in milliseconds. <para>超时时间（毫秒）。</para></param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that represents the asynchronous read operation with the number of bytes read. <para>表示异步读取操作并返回已读取字节数的任务。</para></returns>
-    public virtual Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
+    public virtual async Task<int> ReadIntoAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
     {
-        return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => ReadInto(buffer, offset, length, timeoutMs), cancellationToken);
+        UsbReadResult result = await ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken).ConfigureAwait(false);
+        return result.Count;
     }
 
     /// <summary>
@@ -567,9 +622,7 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
     public virtual Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
-    {
-        return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => ReadPacket(buffer, offset, length, timeoutMs), cancellationToken);
-    }
+        => ReadPacketAsync(buffer, offset, length, timeoutMs, progress: null, cancellationToken);
 
     /// <summary>
     /// Asynchronously reads bytes into the specified buffer and reports the transfer outcome,
@@ -583,11 +636,81 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that resolves to the read result. <para>返回读取结果的任务。</para></returns>
-    public virtual Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    public virtual async Task<UsbReadResult> ReadPacketAsync(byte[] buffer, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
     {
-        return progress == null
-            ? ReadPacketAsync(buffer, offset, length, timeoutMs, cancellationToken)
-            : FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => ReadPacket(buffer, offset, length, timeoutMs, progress), cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+        int retryCount = 0;
+
+        if (!IsOpen)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        if (length <= 0) return new UsbReadResult(0, false, false);
+        ValidateBufferRange(buffer, offset, length);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+        int lenRemaining = length;
+        int count = 0;
+
+        GCHandle handle = GCHandle.Alloc(buffer, GCHandleType.Pinned);
+        try
+        {
+            while (lenRemaining > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int lenToRead = Math.Min(lenRemaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count);
+
+                var chunk = await ReadChunkAsync(ptr, lenToRead, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+                retryCount += chunk.RetryCount;
+
+                if (chunk.Status == UsbChunkStatus.Timeout)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Timeout;
+                    break;
+                }
+
+                if (chunk.Status == UsbChunkStatus.FatalError)
+                {
+                    lastError = chunk.NativeError;
+                    EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError, CapturePayload(buffer, offset, count));
+                    throw CreateReadFatalException(chunk.NativeError);
+                }
+
+                if (chunk.Status == UsbChunkStatus.Error)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Error;
+                    break;
+                }
+
+                int transferred = chunk.Transferred;
+                count += transferred;
+                lenRemaining -= transferred;
+                progress?.Report(count);
+
+                if (transferred < lenToRead) break;
+            }
+        }
+        finally
+        {
+            handle.Free();
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        EmitTransfer(UsbTransferOperation.Read, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome, CapturePayload(buffer, offset, count));
+        return new UsbReadResult(
+            count,
+            isTimeout: outcome == UsbTransferOutcome.Timeout,
+            isShortPacket: outcome == UsbTransferOutcome.ShortTransfer);
     }
 
     /// <summary>
@@ -735,9 +858,7 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that represents the asynchronous write operation with the number of bytes written. <para>表示异步写入操作并返回已写入字节数的任务。</para></returns>
     public virtual Task<long> WriteAsync(byte[] data, int length, int timeoutMs, CancellationToken cancellationToken = default)
-    {
-        return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Write(data, length, timeoutMs), cancellationToken);
-    }
+        => WriteAsync(data, 0, length, timeoutMs, cancellationToken);
 
     /// <summary>
     /// Asynchronously writes data to the device starting at the specified offset.
@@ -750,9 +871,7 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that represents the asynchronous write operation with the number of bytes written. <para>表示异步写入操作并返回已写入字节数的任务。</para></returns>
     public virtual Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, CancellationToken cancellationToken = default)
-    {
-        return FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Write(data, offset, length, timeoutMs), cancellationToken);
-    }
+        => WriteAsync(data, offset, length, timeoutMs, progress: null, cancellationToken);
 
     /// <summary>
     /// Asynchronously writes data to the device starting at the specified offset, reporting
@@ -766,11 +885,84 @@ internal abstract class UsbDevice : IDisposable
     /// <param name="progress">Receives the cumulative transferred byte count after each chunk. <para>每块完成后接收累计传输字节数。</para></param>
     /// <param name="cancellationToken">A token to monitor for cancellation requests. <para>用于监视取消请求的令牌。</para></param>
     /// <returns>A task that represents the asynchronous write operation with the number of bytes written. <para>表示异步写入操作并返回已写入字节数的任务。</para></returns>
-    public virtual Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
+    public virtual async Task<long> WriteAsync(byte[] data, int offset, int length, int timeoutMs, IProgress<long>? progress, CancellationToken cancellationToken = default)
     {
-        return progress == null
-            ? WriteAsync(data, offset, length, timeoutMs, cancellationToken)
-            : FirmwareKit.Comm.Abstractions.UsbAsyncExecution.Run(() => Write(data, offset, length, timeoutMs, progress), cancellationToken);
+        var stopwatch = Stopwatch.StartNew();
+        int? lastError = null;
+        var outcome = UsbTransferOutcome.Success;
+        int retryCount = 0;
+
+        if (!IsOpen)
+        {
+            throw new UsbDeviceHandleClosedException("Device handle is closed.");
+        }
+        ValidateWriteData(data, offset, length);
+
+        int effectiveTimeoutMs = UsbTransferPolicies.NormalizeTimeout(timeoutMs, DefaultTimeoutMs);
+
+        if (length == 0)
+        {
+            EmitTransfer(UsbTransferOperation.Write, 0, 0, effectiveTimeoutMs, 0, null, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.Success);
+            return 0;
+        }
+
+        int lenRemaining = length;
+        int count = 0;
+
+        GCHandle handle = GCHandle.Alloc(data, GCHandleType.Pinned);
+        try
+        {
+            while (lenRemaining > 0)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                int lenToSend = Math.Min(lenRemaining, MaxChunkSize);
+                IntPtr ptr = new IntPtr(handle.AddrOfPinnedObject().ToInt64() + offset + count);
+
+                var chunk = await WriteChunkAsync(ptr, lenToSend, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
+                retryCount += chunk.RetryCount;
+
+                if (chunk.Status == UsbChunkStatus.Timeout)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Timeout;
+                    break;
+                }
+
+                if (chunk.Status == UsbChunkStatus.FatalError)
+                {
+                    lastError = chunk.NativeError;
+                    EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, UsbTransferOutcome.FatalError, CapturePayload(data, offset, count));
+                    throw CreateWriteFatalException(chunk.NativeError);
+                }
+
+                if (chunk.Status == UsbChunkStatus.Error)
+                {
+                    lastError = chunk.NativeError;
+                    outcome = UsbTransferOutcome.Error;
+                    break;
+                }
+
+                int transferred = chunk.Transferred;
+                count += transferred;
+                lenRemaining -= transferred;
+                progress?.Report(count);
+
+                if (transferred < lenToSend) break;
+            }
+        }
+        finally
+        {
+            handle.Free();
+        }
+
+        if (outcome == UsbTransferOutcome.Success && count > 0 && count < length)
+        {
+            outcome = UsbTransferOutcome.ShortTransfer;
+        }
+
+        EmitTransfer(UsbTransferOperation.Write, length, count, effectiveTimeoutMs, retryCount, lastError, stopwatch.ElapsedMilliseconds, outcome, CapturePayload(data, offset, count));
+        return count;
     }
 
     /// <summary>
