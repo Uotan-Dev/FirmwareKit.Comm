@@ -58,13 +58,15 @@ namespace FirmwareKit.Comm.Backend.Windows
             // do not write a DeviceInterfaceGUIDs value under their node's Device Parameters
             // even though the interface registration exists under
             // HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses. Build a reverse map
-            // (device instance -> interface GUIDs) once per enumeration and fall back to it
-            // when the node-level value is missing.
+            // (device instance -> interface GUIDs) LAZILY, only when a node actually lacks
+            // the node-level value: most devices carry their GUIDs directly, so the full
+            // DeviceClasses registry walk is skipped in the common case.
             // <para>部分 winusb 驱动的接口（如 winusb.sys 上的标准 ADB 接口）不会在节点
             // Device Parameters 下写入 DeviceInterfaceGUIDs 值，但接口注册实际存在于
-            // HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses。每次枚举构建一次反向映射
-            // （设备实例 -> 接口 GUID），当节点级值为空时回退使用。</para>
-            var deviceClassGuids = BuildDeviceClassGuidMap();
+            // HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses。反向映射（设备实例 ->
+            // 接口 GUID）按需惰性构建——仅当节点确实缺少节点级值时构建；大多数设备自带
+            // GUID，常见情况下可完全跳过 DeviceClasses 注册表遍历。</para>
+            Func<Dictionary<string, List<Guid>>> lazyDeviceClassGuids = BuildDeviceClassGuidMap;
 
             try
             {
@@ -88,7 +90,7 @@ namespace FirmwareKit.Comm.Backend.Windows
 
                     LastScannedNodeCount++;
                     UsbTrace.Log($"WinUSBFinder: node [{instanceId}]");
-                    foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId, deviceClassGuids))
+                    foreach (Guid guid in ReadDeviceInterfaceGuids(instanceId, lazyDeviceClassGuids))
                     {
                         if (!seenGuids.Add(guid))
                         {
@@ -135,14 +137,14 @@ namespace FirmwareKit.Comm.Backend.Windows
         /// </summary>
         private static IEnumerable<Guid> ReadDeviceInterfaceGuids(
             string instanceId,
-            IReadOnlyDictionary<string, List<Guid>> deviceClassGuids)
+            Func<Dictionary<string, List<Guid>>> deviceClassGuidsFactory)
         {
             var result = new List<Guid>();
             string subKey = @"SYSTEM\CurrentControlSet\Enum\" + instanceId + @"\Device Parameters";
             IntPtr key;
             if (Win32API.RegOpenKeyExW(Win32API.HKEY_LOCAL_MACHINE, subKey, 0, Win32API.KEY_READ, out key) != 0)
             {
-                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
+                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuidsFactory);
             }
 
             try
@@ -152,7 +154,7 @@ namespace FirmwareKit.Comm.Backend.Windows
                 if (Win32API.RegQueryValueExW(key, "DeviceInterfaceGUIDs", IntPtr.Zero, out type, IntPtr.Zero, ref size) != 0 ||
                     size == 0)
                 {
-                    return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
+                    return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuidsFactory);
                 }
 
                 IntPtr buffer = Marshal.AllocHGlobal((int)size);
@@ -184,7 +186,7 @@ namespace FirmwareKit.Comm.Backend.Windows
 
             if (result.Count == 0)
             {
-                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuids);
+                return FallbackToDeviceClassGuids(result, instanceId, deviceClassGuidsFactory);
             }
 
             return result;
@@ -303,8 +305,15 @@ namespace FirmwareKit.Comm.Backend.Windows
         private static IReadOnlyList<Guid> FallbackToDeviceClassGuids(
             List<Guid> result,
             string instanceId,
-            IReadOnlyDictionary<string, List<Guid>> deviceClassGuids)
+            Func<Dictionary<string, List<Guid>>> deviceClassGuidsFactory)
         {
+            // Build the DeviceClasses reverse map only on first actual need (a node
+            // without node-level DeviceInterfaceGUIDs); most nodes carry their GUIDs
+            // directly, so the full registry walk is skipped in the common case.
+            // <para>仅在首次真正需要时构建 DeviceClasses 反向映射（节点缺少节点级
+            // DeviceInterfaceGUIDs 时）；大多数节点自带 GUID，常见情况下跳过整个
+            // 注册表遍历。</para>
+            IReadOnlyDictionary<string, List<Guid>> deviceClassGuids = deviceClassGuidsFactory();
             if (deviceClassGuids.TryGetValue(instanceId.ToLowerInvariant(), out List<Guid>? fallback))
             {
                 foreach (Guid guid in fallback)

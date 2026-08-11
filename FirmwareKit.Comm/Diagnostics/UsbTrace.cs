@@ -26,6 +26,15 @@ public static class UsbTrace
     public static event Action<UsbTransferEvent>? TransferObserved;
 
     /// <summary>
+    /// Gets whether any structured transfer subscriber is registered. Callers use this
+    /// to skip allocating the <see cref="UsbTransferEvent"/> entirely when diagnostics
+    /// are disabled (the hot transfer path otherwise constructs one per transfer).
+    /// <para>获取是否注册了任何结构化传输订阅者。调用方据此在诊断关闭时完全跳过
+    /// <see cref="UsbTransferEvent"/> 的分配（否则热传输路径每次传输都会构造一个）。</para>
+    /// </summary>
+    public static bool HasTransferSubscribers => TransferObserved != null;
+
+    /// <summary>
     /// Gets or sets whether raw USB frames are captured into transfer events (opt-in).
     /// Enabled via the <c>FIRMWAREKIT_USB_CAPTURE_FRAMES=1</c> environment variable.
     /// <para>获取或设置是否将原始 USB 帧捕获到传输事件中（可选开启）。

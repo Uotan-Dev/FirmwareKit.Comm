@@ -331,7 +331,6 @@ internal class LinuxUsbDevice : UsbDevice
         {
             ep = ep_in,
             len = (uint)length,
-            // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
             timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
             data = buffer
         };
@@ -365,7 +364,6 @@ internal class LinuxUsbDevice : UsbDevice
         {
             ep = ep_out,
             len = (uint)length,
-            // usbfs treats 0 as "no timeout"; map the -1 sentinel accordingly.
             timeout = timeoutMs == UsbTransferPolicies.InfiniteTimeoutMs ? 0 : (uint)timeoutMs,
             data = buffer
         };

@@ -517,8 +517,6 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (reader == null)
         {
-            // IN-only session bound without an OUT pipe is valid for interrupt reads;
-            // bulk reads in a direction that never opened must not NRE.
             throw new NotSupportedException("The session has no bound IN endpoint for bulk reads (interrupt-only device?).");
         }
 
@@ -548,8 +546,6 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
     {
         if (writer == null)
         {
-            // OUT-only session bound without an IN pipe is valid for interrupt writes;
-            // bulk writes in a direction that never opened must not NRE.
             throw new NotSupportedException("The session has no bound OUT endpoint for bulk writes (interrupt-only device?).");
         }
 
@@ -567,7 +563,7 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
         {
             return UsbChunkResult.Fatal((int)errorCode);
         }
-        if (errorCode != 0) // Error.Success is 0; libusb write errors are reported without throwing.
+        if (errorCode != 0)
         {
             RestoreEndpointHalt(WriteEndpointId);
             return UsbChunkResult.Error((int)errorCode);

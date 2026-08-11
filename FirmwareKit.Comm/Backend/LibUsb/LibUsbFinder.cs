@@ -198,6 +198,14 @@ internal static class LibUsbFinder
         using (var context = new UsbContext())
         using (var deviceList = context.List())
         {
+            // NOTE: LibUsbDotNet's UsbContext is NOT thread-safe; a Parallel.For over
+            // device descriptor reads caused the CLI to hang (features/pull tests
+            // timed out at 30 s). Descriptor reads stay serial — enumeration latency
+            // is dominated by libusb's own List()/descriptor cache, not our loop.
+            // <para>注意：LibUsbDotNet 的 UsbContext 不是线程安全的；对设备描述符
+            // 读取使用 Parallel.For 会导致 CLI 挂起（features/pull 测试 30 秒超时）。
+            // 描述符读取保持串行——枚举延迟主要由 libusb 自身的 List()/描述符缓存
+            // 决定，而非我们的循环。</para>
             foreach (var device in deviceList)
             {
                 var libUsbDevice = device as LibUsbDotNet.LibUsb.UsbDevice;
@@ -205,96 +213,105 @@ internal static class LibUsbFinder
                 if (filter?.VendorId is ushort filterVid && (ushort)device.VendorId != filterVid) continue;
                 if (filter?.ProductId is ushort filterPid && (ushort)device.ProductId != filterPid) continue;
 
-                if (!TryGetBulkInterface(
-                    libUsbDevice,
-                    filter,
-                    out bool descriptorReadFailed,
-                    out byte interfaceId,
-                    out byte readEndpoint,
-                    out byte writeEndpoint,
-                    out byte interfaceClass,
-                    out byte interfaceSubClass,
-                    out byte interfaceProtocol,
-                    out IReadOnlyList<UsbInterfaceInfo> interfaces))
-                {
-                    if (!descriptorReadFailed)
-                    {
-                        // Normal case: the device simply has no interface matching the
-                        // filter — skip it, keep scanning.
-                        // <para>正常情况：设备只是没有匹配过滤器的接口——跳过并继续扫描。</para>
-                        continue;
-                    }
-
-                    // Descriptor read failed (e.g. driver state corrupted after a failed
-                    // session read). Keep the device visible with metadata-only (VID/PID/
-                    // path) instead of silently dropping it from enumeration; sessions
-                    // over a non-open device are skipped later by ToSessions.
-                    // <para>描述符读取失败（例如会话读失败后驱动状态损坏）。以仅元数据
-                    // （VID/PID/路径）保留设备可见，而不是将其静默地从枚举中丢弃；
-                    // 基于未打开设备的会话稍后由 ToSessions 跳过。</para>
-                    byte degradedBus = libUsbDevice?.BusNumber ?? 0;
-                    byte degradedAddress = libUsbDevice?.Address ?? 0;
-                    var degraded = new LibUsbDevice
-                    {
-                        Vid = (ushort)device.VendorId,
-                        Pid = (ushort)device.ProductId,
-                        BusNumber = degradedBus,
-                        DeviceAddress = degradedAddress,
-                        InterfaceMetadataObserved = false,
-                        Speed = MapSpeed(libUsbDevice?.Speed ?? Speed.Unknown),
-                        DevicePath = $"Bus {degradedBus} Device {degradedAddress}: {device.VendorId:X4}:{device.ProductId:X4}",
-                        UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
-                    };
-
-                    UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} descriptor read failed - reported with metadata only.");
-                    if (degraded.CreateHandle() != 0)
-                    {
-                        UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} also unopenable - kept as metadata-only.");
-                    }
-
-                    devices.Add(degraded);
-                    continue;
-                }
-
-                byte busNumber = libUsbDevice?.BusNumber ?? 0;
-                byte address = libUsbDevice?.Address ?? 0;
-
-                var usbDevice = new LibUsbDevice
-                {
-                    Vid = (ushort)device.VendorId,
-                    Pid = (ushort)device.ProductId,
-                    BusNumber = busNumber,
-                    DeviceAddress = address,
-                    InterfaceId = interfaceId,
-                    ReadEndpointId = readEndpoint,
-                    WriteEndpointId = writeEndpoint,
-                    InterfaceClass = interfaceClass,
-                    InterfaceSubClass = interfaceSubClass,
-                    InterfaceProtocol = interfaceProtocol,
-                    InterfaceMetadataObserved = true,
-                    Interfaces = interfaces,
-                    Speed = MapSpeed(libUsbDevice?.Speed ?? Speed.Unknown),
-                    DevicePath = $"Bus {busNumber} Device {address}: {device.VendorId:X4}:{device.ProductId:X4}",
-                    UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
-                };
-
-                // Keep the device even when the handle cannot be opened (e.g. the interface
-                // is claimed by another session or process). Enumeration must reflect the
-                // current device state: the metadata was already collected above, and a busy
-                // device must not silently disappear from the list. Sessions over a
-                // non-open device are skipped later by UsbProviderProjection.ToSessions.
-                // <para>即使句柄无法打开（例如接口已被其他会话或进程声明）也保留该设备。
-                // 枚举必须反映当前设备状态：元数据已在上方收集，被占用的设备不应静默地从
-                // 列表中消失。基于未打开设备的会话稍后由 UsbProviderProjection.ToSessions 跳过。</para>
-                if (usbDevice.CreateHandle() != 0)
-                {
-                    UsbTrace.Log($"LibUsbFinder: device {device.VendorId:X4}:{device.ProductId:X4} busy or unopenable - reported with metadata only.");
-                }
-
-                devices.Add(usbDevice);
+                var built = BuildDevice(libUsbDevice, filter);
+                if (built != null) devices.Add(built);
             }
         }
         return devices;
+    }
+
+    /// <summary>
+    /// Builds a backend device (or metadata-only entry) for a single libusb device,
+    /// reading its configuration descriptors. Thread-safe: no shared mutable state.
+    /// <para>为单个 libusb 设备构建后端设备（或仅元数据条目），读取其配置描述符。
+    /// 线程安全：无共享可变状态。</para>
+    /// </summary>
+    private static global::FirmwareKit.Comm.Backend.UsbDevice? BuildDevice(
+        LibUsbDotNet.LibUsb.UsbDevice libUsbDevice,
+        UsbDeviceFilter? filter)
+    {
+        if (!TryGetBulkInterface(
+            libUsbDevice,
+            filter,
+            out bool descriptorReadFailed,
+            out byte interfaceId,
+            out byte readEndpoint,
+            out byte writeEndpoint,
+            out byte interfaceClass,
+            out byte interfaceSubClass,
+            out byte interfaceProtocol,
+            out IReadOnlyList<UsbInterfaceInfo> interfaces))
+        {
+            if (!descriptorReadFailed)
+            {
+                // Normal case: the device simply has no interface matching the
+                // filter — skip it, keep scanning.
+                // <para>正常情况：设备只是没有匹配过滤器的接口——跳过并继续扫描。</para>
+                return null;
+            }
+
+            // Descriptor read failed (e.g. driver state corrupted after a failed
+            // session read). Keep the device visible with metadata-only (VID/PID/
+            // path) instead of silently dropping it from enumeration; sessions
+            // over a non-open device are skipped later by ToSessions.
+            // <para>描述符读取失败（例如会话读失败后驱动状态损坏）。以仅元数据
+            // （VID/PID/路径）保留设备可见，而不是将其静默地从枚举中丢弃；
+            // 基于未打开设备的会话稍后由 ToSessions 跳过。</para>
+            byte degradedBus = libUsbDevice.BusNumber;
+            byte degradedAddress = libUsbDevice.Address;
+            var degraded = new LibUsbDevice
+            {
+                Vid = (ushort)libUsbDevice.VendorId,
+                Pid = (ushort)libUsbDevice.ProductId,
+                BusNumber = degradedBus,
+                DeviceAddress = degradedAddress,
+                InterfaceMetadataObserved = false,
+                Speed = MapSpeed(libUsbDevice.Speed),
+                DevicePath = $"Bus {degradedBus} Device {degradedAddress}: {libUsbDevice.VendorId:X4}:{libUsbDevice.ProductId:X4}",
+                UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
+            };
+
+            UsbTrace.Log($"LibUsbFinder: device {libUsbDevice.VendorId:X4}:{libUsbDevice.ProductId:X4} descriptor read failed - reported with metadata only.");
+            return degraded;
+        }
+
+        byte busNumber = libUsbDevice.BusNumber;
+        byte address = libUsbDevice.Address;
+
+        var usbDevice = new LibUsbDevice
+        {
+            Vid = (ushort)libUsbDevice.VendorId,
+            Pid = (ushort)libUsbDevice.ProductId,
+            BusNumber = busNumber,
+            DeviceAddress = address,
+            InterfaceId = interfaceId,
+            ReadEndpointId = readEndpoint,
+            WriteEndpointId = writeEndpoint,
+            InterfaceClass = interfaceClass,
+            InterfaceSubClass = interfaceSubClass,
+            InterfaceProtocol = interfaceProtocol,
+            InterfaceMetadataObserved = true,
+            Interfaces = interfaces,
+            Speed = MapSpeed(libUsbDevice.Speed),
+            DevicePath = $"Bus {busNumber} Device {address}: {libUsbDevice.VendorId:X4}:{libUsbDevice.ProductId:X4}",
+            UsbDeviceType = global::FirmwareKit.Comm.Backend.UsbDeviceType.LibUSB
+        };
+
+        // Keep the device even when the handle cannot be opened (e.g. the interface
+        // is claimed by another session or process). Enumeration must reflect the
+        // current device state: the metadata was already collected above, and a busy
+        // device must not silently disappear from the list.
+        // <para>即使句柄无法打开（例如接口已被其他会话或进程声明）也保留该设备。
+        // 枚举必须反映当前设备状态：元数据已在上方收集，被占用的设备不应静默地从
+        // 列表中消失。</para>
+        // Note: we do NOT open the handle here. Enumeration is metadata discovery;
+        // opening is deferred to session creation (UsbProviderProjection.ToSessions
+        // opens on demand). Opening during enumeration would be wasted work for the
+        // info-only path (ToInfos projects then disposes the device).
+        // <para>注意：此处不打开句柄。枚举是元数据发现；打开延迟到会话创建
+        // （UsbProviderProjection.ToSessions 按需打开）。枚举阶段打开对仅需信息的
+        // 路径（ToInfos 投影后即释放设备）是白费工作。</para>
+        return usbDevice;
     }
 
     /// <summary>

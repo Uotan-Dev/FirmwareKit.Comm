@@ -422,6 +422,8 @@ internal class HarmonyOSUsbDevice : UsbDevice
 
     private void EmitControlTransferTrace(UsbTransferOperation operation, int requested, int transferred, int timeoutMs, long elapsedMs, UsbTransferOutcome outcome)
     {
+        if (!UsbTrace.HasTransferSubscribers) return;
+
         UsbTrace.EmitTransfer(new UsbTransferEvent
         {
             Backend = "harmony-ddk",

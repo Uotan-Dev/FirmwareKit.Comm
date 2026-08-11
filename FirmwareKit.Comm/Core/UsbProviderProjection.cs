@@ -27,11 +27,14 @@ internal static class UsbProviderProjection
         var sessions = new List<IUsbDeviceSession>(devices.Count);
         foreach (var device in devices)
         {
-            // A device reported with metadata only (e.g. the interface is claimed by
-            // another session or process) cannot back a usable session - skip it.
-            // <para>仅以元数据形式报告的设备（例如接口已被其他会话或进程声明）无法支撑
-            // 可用会话——跳过。</para>
-            if (!device.IsHandleOpen)
+            // Enumeration does not open handles (metadata discovery); open on demand
+            // here so the session path pays the open cost only when sessions are
+            // actually requested. A device that cannot be opened (e.g. interface
+            // claimed by another session or process) is skipped.
+            // <para>枚举不打开句柄（元数据发现）；此处按需打开，使会话路径仅在真正
+            // 需要会话时承担打开成本。无法打开的设备（例如接口已被其他会话或进程
+            // 声明）被跳过。</para>
+            if (!device.IsHandleOpen && device.CreateHandle() != 0)
             {
                 device.Dispose();
                 continue;

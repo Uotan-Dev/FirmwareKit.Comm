@@ -674,7 +674,7 @@ internal class WinUSBDevice : UsbDevice
                     _ = CancelIoEx(WinUSBHandle.DangerousGetHandle(), ovHandle.AddrOfPinnedObject());
                     if (evt.WaitOne(OverlappedAbortAckTimeoutMs))
                     {
-                        return 0; // abort acknowledged; finally frees the OVERLAPPED safely
+                        return 0;
                     }
 
                     // Same UAF guard as above: do not free a kernel-referenced OVERLAPPED.
