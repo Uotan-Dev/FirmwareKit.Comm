@@ -82,15 +82,35 @@ internal sealed class NativeUsbApiProvider : UsbApiProviderBase
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            // IOUSBHost (IOUSBLib) backend, requires macOS 10.15+ AND the
+            // IOUSBHost.framework main binary being loadable. On current macOS
+            // releases that binary is absent (only a BridgeSupport stub remains),
+            // so MacHostUsbFinder.FindDevice throws DllNotFoundException — which
+            // MacHostUsbFinder SILENTLY swallows and returns an empty list (leaving
+            // LastCopyDevicesSucceeded = false). Detect that degraded state and
+            // fall back to the IOKit classic API (IOServiceMatching +
+            // IORegistryEntryCreateCFProperty), which is loadable on every macOS.
+            // <para>IOUSBHost（IOUSBLib）后端，需 macOS 10.15+ 且 IOUSBHost.framework
+            // 主二进制可加载。当前 macOS 发行版中该二进制缺失（仅剩 BridgeSupport 桩），
+            // 故 MacHostUsbFinder.FindDevice 抛 DllNotFoundException——而
+            // MacHostUsbFinder 静默吞之并返空列表（置 LastCopyDevicesSucceeded = false）。
+            // 检测该降级态并回退到 IOKit 经典 API（IOServiceMatching +
+            // IORegistryEntryCreateCFProperty），该 API 在每个 macOS 上均可加载。</para>
+            List<UsbDevice> hostResult = MacHostUsbFinder.FindDevice(filter);
+            if (MacHostUsbFinder.LastCopyDevicesSucceeded)
+            {
+                return hostResult;
+            }
+
+            UsbTrace.Log("IOUSBHost backend degraded (LastCopyDevicesSucceeded=false); falling back to IOKit classic API.");
             try
             {
-                // IOUSBHost (IOUSBLib) backend, requires macOS 10.15+.
-                return MacHostUsbFinder.FindDevice(filter);
+                return IOKitUsbFinder.FindDevice(filter);
             }
-            catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException)
+            catch (Exception iokitEx) when (iokitEx is DllNotFoundException or EntryPointNotFoundException)
             {
-                UsbTrace.Log($"IOUSBHost backend unavailable (requires macOS 10.15+): {ex.Message}");
-                return new List<UsbDevice>();
+                UsbTrace.Log($"IOKit classic backend also unavailable: {iokitEx.Message}");
+                return hostResult;
             }
         }
 
