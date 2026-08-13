@@ -8,6 +8,18 @@ namespace FirmwareKit.Comm.Backend.LibUsb;
 
 internal static class LibUsbFinder
 {
+    // The libusb-1.0 native library preload + DllImportResolver registration is
+    // handled by <see cref="LibUsbNativeLoader"/>, a LibUsbDotNet-free class whose
+    // ModuleInitializer runs before any [DllImport("libusb-1.0")] is resolved.
+    // Keeping the loader out of LibUsbFinder avoids forcing LibUsbDotNet.dll to
+    // load during resolver registration (which would trigger its NativeMethods
+    // static constructor before the resolver is installed).
+    // <para>libusb-1.0 原生库预加载与 DllImportResolver 注册由
+    // <see cref="LibUsbNativeLoader"/> 处理——一个不引用 LibUsbDotNet 的类，其
+    // ModuleInitializer 在任何 [DllImport("libusb-1.0")] 解析前运行。将加载器置于
+    // LibUsbFinder 之外，可避免在注册解析器期间强制加载 LibUsbDotNet.dll，从而避免
+    // 其 NativeMethods 静态构造先于解析器安装而触发。</para>
+
     // LibUsbDotNet 3.0.224 no longer bundles the native libusb runtime. Creating a
     // UsbContext when the native library is absent leaves a half-initialized context
     // whose finalizer NullReferenceExceptions (known upstream issue). Probe for the

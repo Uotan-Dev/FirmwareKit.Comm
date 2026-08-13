@@ -61,10 +61,22 @@
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="10.0.301" PrivateAssets="All" />
   </ItemGroup>
 
-  <!-- Debug-only: bridges UsbTrace to Microsoft.Extensions.Logging (UsbLoggerBridge).
-       Release builds stay zero-dependency for the custom logging abstraction. -->
-  <ItemGroup Condition="'$(Configuration)' == 'Debug'">
-    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" />
+  <!-- Microsoft.Extensions.Logging.Abstractions is referenced unconditionally so
+       it participates in restore under EVERY configuration. The bridge consumer
+       (UsbLoggerBridge.cs) is itself #if DEBUG-gated: Release builds never compile
+       it, so the released library keeps its zero-dependency logging abstraction at
+       runtime. Referencing the package unconditionally fixes solution builds where
+       the restore configuration (Release) differs from the project build
+       configuration (Debug) — otherwise the Debug-only file compiles without the
+       assembly and fails with CS0234. PrivateAssets=all keeps it out of consumers.
+       <para>无条件引用 Microsoft.Extensions.Logging.Abstractions，使其在每种配置下
+       都参与还原。桥接消费方（UsbLoggerBridge.cs）本身以 #if DEBUG 门控：Release
+       构建从不编译它，故发布库在运行时保持零依赖日志抽象。无条件引用包修复了
+       解决方案构建中还原配置（Release）与项目构建配置（Debug）不一致的情况——
+       否则 Debug-only 文件会在缺少程序集时编译并报 CS0234。PrivateAssets=all
+       使其不流入消费者。</para> -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.10" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>
