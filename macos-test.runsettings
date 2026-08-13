@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<RunSettings>
+  <RunConfiguration>
+    <!--
+      macOS: testhost runs without the shell's DYLD_FALLBACK_LIBRARY_PATH, so
+      LibUsbDotNet's [DllImport("libusb-1.0")] cannot resolve Homebrew's libusb
+      and the test host crashes with exit code 3 (DllNotFoundException in
+      LibUsbDotNet.NativeMethods). Inject the Homebrew lib dir here so the
+      test process can enumerate libusb-1.0.
+      <para>macOS：testhost 不携带 shell 的 DYLD_FALLBACK_LIBRARY_PATH，故
+      LibUsbDotNet 的 [DllImport("libusb-1.0")] 无法解析 Homebrew 的 libusb，
+      测试宿主以退出码 3 崩溃（LibUsbDotNet.NativeMethods 中
+      DllNotFoundException）。在此注入 Homebrew lib 目录，使测试进程可枚举
+      libusb-1.0。</para>
+    -->
+    <EnvironmentVariables>
+      <DYLD_FALLBACK_LIBRARY_PATH>/opt/homebrew/lib</DYLD_FALLBACK_LIBRARY_PATH>
+    </EnvironmentVariables>
+  </RunConfiguration>
+</RunSettings>

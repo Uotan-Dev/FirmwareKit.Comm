@@ -1,4 +1,5 @@
 using FirmwareKit.Comm.Abstractions;
+using FirmwareKit.Comm.Configuration;
 using FirmwareKit.Comm.Providers;
 
 namespace FirmwareKit.Comm.Core;
@@ -83,16 +84,59 @@ public sealed class UsbApiRegistry
     }
 
     /// <summary>
-    /// Creates the default registry with native, libusb and harmony providers.
-    /// <para>创建包含 native、libusb 与 harmony 提供器的默认注册表。</para>
+    /// Creates the default registry with native, libusb and harmony providers,
+    /// registered in the order prescribed by <see cref="UsbBackendConfiguration"/>
+    /// for the current platform (macOS prefers libusb, Windows prefers native,
+    /// and the native backend is a fallback / enumeration-only path elsewhere).
+    /// <para>创建包含 native、libusb 与 harmony 提供器的默认注册表，并按
+    /// <see cref="UsbBackendConfiguration"/> 为当前平台规定的顺序注册
+    /// （macOS 优先 libusb，Windows 优先原生，其余平台原生后端仅作回退/枚举）。</para>
     /// </summary>
     /// <returns>The default registry. <para>默认注册表实例。</para></returns>
     public static UsbApiRegistry CreateDefault()
     {
         var registry = new UsbApiRegistry();
-        registry.Register(NativeUsbApiProvider.ApiNameConst, () => new NativeUsbApiProvider());
-        registry.Register(LibUsbApiProvider.ApiNameConst, () => new LibUsbApiProvider());
-        registry.Register(HarmonyOSUsbApiProvider.ApiNameConst, () => new HarmonyOSUsbApiProvider());
+
+        var priority = UsbBackendConfiguration.ForCurrentPlatform.ResolveAvailableBackends();
+        var registered = new HashSet<UsbApiKind>();
+
+        foreach (UsbApiKind kind in priority)
+        {
+            switch (kind)
+            {
+                case UsbApiKind.Native:
+                    registry.Register(NativeUsbApiProvider.ApiNameConst, () => new NativeUsbApiProvider());
+                    registered.Add(UsbApiKind.Native);
+                    break;
+                case UsbApiKind.LibUsbDotNet:
+                    registry.Register(LibUsbApiProvider.ApiNameConst, () => new LibUsbApiProvider());
+                    registered.Add(UsbApiKind.LibUsbDotNet);
+                    break;
+                case UsbApiKind.HarmonyOS:
+                    registry.Register(HarmonyOSUsbApiProvider.ApiNameConst, () => new HarmonyOSUsbApiProvider());
+                    registered.Add(UsbApiKind.HarmonyOS);
+                    break;
+            }
+        }
+
+        // Ensure every known backend is registered even when not listed in the
+        // platform configuration (e.g. opt-in HarmonyOS), so explicit API-kind
+        // selection still works.
+        // <para>确保每个已知后端都被注册，即使未列入平台配置（如显式开启的
+        // HarmonyOS），使显式按 API 类型选择仍可用。</para>
+        if (!registered.Contains(UsbApiKind.Native))
+        {
+            registry.Register(NativeUsbApiProvider.ApiNameConst, () => new NativeUsbApiProvider());
+        }
+        if (!registered.Contains(UsbApiKind.LibUsbDotNet))
+        {
+            registry.Register(LibUsbApiProvider.ApiNameConst, () => new LibUsbApiProvider());
+        }
+        if (!registered.Contains(UsbApiKind.HarmonyOS))
+        {
+            registry.Register(HarmonyOSUsbApiProvider.ApiNameConst, () => new HarmonyOSUsbApiProvider());
+        }
+
         return registry;
     }
 

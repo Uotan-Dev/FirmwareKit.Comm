@@ -4,6 +4,7 @@ using FirmwareKit.Comm.Backend.LibUsb;
 using FirmwareKit.Comm.Backend.Linux;
 using FirmwareKit.Comm.Backend.MacOS;
 using FirmwareKit.Comm.Backend.Windows;
+using FirmwareKit.Comm.Configuration;
 using FirmwareKit.Comm.Diagnostics;
 using FirmwareKit.Comm.Providers;
 
@@ -525,7 +526,38 @@ public sealed class UsbCommunicationLayer
     {
         if (apiKind == UsbApiKind.Auto)
         {
-            return _registry.CreateAll();
+            // Order providers by the platform backend configuration (aligned with
+            // Google adb's is_libusb_enabled): on macOS libusb is the default and
+            // the native IOKit backend is a fallback / enumeration-only path; on
+            // Windows native is the default. Providers not listed in the config
+            // (e.g. a custom registration) are appended in registration order.
+            // <para>按平台后端配置排序 provider（与谷歌 adb 的 is_libusb_enabled
+            // 对齐）：macOS 默认 libusb，原生 IOKit 后端仅作回退/枚举；Windows 默认
+            // 原生。未列入配置的 provider（如自定义注册）按注册顺序追加。</para>
+            var priority = UsbBackendConfiguration.ForCurrentPlatform.ResolveAvailableBackends();
+            var all = _registry.CreateAll();
+            var ordered = new List<IUsbApiProvider>(all.Count);
+
+            foreach (UsbApiKind kind in priority)
+            {
+                foreach (var p in all)
+                {
+                    if (p.ApiKind == kind && !ordered.Contains(p))
+                    {
+                        ordered.Add(p);
+                    }
+                }
+            }
+
+            foreach (var p in all)
+            {
+                if (!ordered.Contains(p))
+                {
+                    ordered.Add(p);
+                }
+            }
+
+            return ordered;
         }
 
         var apiName = apiKind switch
