@@ -42,11 +42,11 @@ Backend matrix:
 | `native` (WinUSB) | Windows | WinUSB API | Overlapped (true async) I/O; requires a WinUSB-bound interface (Zadig etc.) |
 | `native` (legacy) | Windows | DeviceIoControl | Fallback for legacy USB drivers; no ZLP, no native async |
 | `native` (usbfs) | Linux | usbfs ioctl / URB | True async via URB + poll; multi-interface claim supported |
-| `native` (IOUSBLib) | macOS | IOUSBHost.framework | Requires macOS 10.15+; pipe-level reset |
+| `native` (IOKit) | macOS | IOKit.framework classic API | Works on every macOS; device open follows adb (interface-level only); IOUSBHost fallback retained |
 | `native` (HarmonyOS) | HarmonyOS | USBManager DDK | Opt-in via `FIRMWAREKIT_USB_ENABLE_HARMONY=1`; requires `OH_Usb_Init()` to succeed |
-| `libusb` | all | LibUsbDotNet | Native async transfers; needs the native libusb runtime (bundled per-RID in the package); degrades gracefully when absent |
+| `libusb` | all | LibUsbDotNet | Native async transfers; needs the native libusb runtime (bundled per-RID in the package, or pass an explicit path via `UsbCommunicationLayer.SetLibusbLibraryPath`); degrades gracefully when absent |
 
-HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be detected reliably with file probes. On macOS below 10.15, use the `libusb` backend.
+HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be detected reliably with file probes. On macOS the IOKit native backend works on every release; use the `libusb` backend when the native path is not desired.
 
 ## Transfer Timeout Semantics
 
@@ -92,7 +92,7 @@ if (block.Length % 512 == 0)
 |---------|-------------|---------------------|---------------------------|
 | Windows WinUSB | `WinUsb_ResetPipe` (pipe-level) | still usable | `false` |
 | Windows legacy | no-op | still usable | `false` |
-| macOS IOUSBHost | pipe abort + clear stall | still usable | `false` |
+| macOS IOKit (native) | pipe abort + clear stall | still usable | `false` |
 | Linux usbfs | `USBDEVFS_RESET` (device reset) | **invalid — re-enumerate and re-open** | `true` |
 | libusb | `libusb_reset_device` (device reset) | **invalid — re-enumerate and re-open** | `true` |
 | HarmonyOS DDK | re-init DDK session + re-claim | **invalid — re-open** | `true` |
@@ -101,7 +101,7 @@ For device-level resets, use `WaitForUsbDeviceDisappearAsync` / `WaitForUsbDevic
 
 ## Async I/O Semantics
 
-True asynchronous (non-blocking) I/O is implemented natively by **WinUSB** (overlapped I/O), **Linux usbfs** (URB + poll) and **libusb** (LibUsbDotNet async transfers). All other backends — macOS IOUSBHost, HarmonyOS DDK, and the `AsAsync()` adapter — execute the underlying synchronous transfer on a thread-pool thread (`UsbAsyncExecution.Run`).
+True asynchronous (non-blocking) I/O is implemented natively by **WinUSB** (overlapped I/O), **Linux usbfs** (URB + poll) and **libusb** (LibUsbDotNet async transfers). All other backends — macOS IOKit, HarmonyOS DDK, and the `AsAsync()` adapter — execute the underlying synchronous transfer on a thread-pool thread (`UsbAsyncExecution.Run`).
 
 Check `UsbApiCapabilities.SupportsNativeAsyncIo` (or `UsbBackendCapability.SupportsNativeAsyncIo` per backend) to know whether `ReadAsync`/`WriteAsync` are truly non-blocking or just offloaded. Protocol layers that must not block the caller's thread should treat `SupportsNativeAsyncIo == false` backends as synchronous-with-offload.
 
@@ -113,7 +113,7 @@ When no device is attached (hosted CI runners), an empty enumeration can mean ei
 |---------|----------------------|------------|----------|
 | Linux usbfs | `LastUsbfsRootExists` (usbfs mounted?) | `LastScannedNodes` | `LastMatchedDeviceCount`, `PermissionDeniedCount`, `BusyCount` |
 | Windows | `LastSetupDiSucceeded` (SetupDi handle opened?) | `LastScannedNodeCount` | `LastMatchedDeviceCount` |
-| macOS | `LastCopyDevicesSucceeded` (IOUSBLib copy returned?) | `LastScannedDeviceCount` | `LastMatchedDeviceCount` |
+| macOS | `LastCopyDevicesSucceeded` (IOKit `IOServiceGetMatchingServices` returned?) | `LastScannedDeviceCount` | `LastMatchedDeviceCount` |
 | libusb | `IsRuntimeAvailable(out reason)` | device list | device list |
 
 The CLI prints `[enum-diagnostics] <summary>` on every `all-devices` run; CI asserts on it instead of only checking "exit 0". The library also ships unit tests that feed constructed USB descriptor bytes into the pure parser (`LinuxUsbFinder.TryParseDescriptor`) to verify enumeration correctness without hardware.

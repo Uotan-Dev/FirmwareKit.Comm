@@ -10,7 +10,7 @@
 ## 特性
 
 - **统一会话 API**：一个抽象同时提供同步（`IUsbDeviceSession`）与异步（`IAsyncUsbDeviceSession`）读写/控制传输，并支持按方向串行化，便于全双工协议线程。
-- **四类原生后端 + libusb**：Windows WinUSB（及 legacy 驱动）、Linux usbfs、macOS IOUSBHost.framework、HarmonyOS USBManager DDK 与 LibUsbDotNet。
+- **四类原生后端 + libusb**：Windows WinUSB（及 legacy 驱动）、Linux usbfs、macOS IOKit.framework 经典 API、HarmonyOS USBManager DDK 与 LibUsbDotNet。
 - **设备发现与过滤**：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath`、接口类/子类/协议、接口编号（列表）以及显式端点地址过滤。
 - **数据包语义**：`ReadPacket` / `ReadPacketAsync` 返回 `UsbReadResult`，区分短包（USB 消息边界）与超时——正是 fastboot/EDL/bootrom 分帧所需。`ReadExact` / `ReadExactAsync` 在总期限内精确读取定长字节。
 - **零长度包（ZLP）控制**：`WriteZlp` / `WriteZlpAsync` 终止载荷长度恰为端点最大包大小整数倍的传输。
@@ -42,11 +42,11 @@ FirmwareKit.Comm 聚焦跨平台 USB 传输原语：
 | `native`（WinUSB） | Windows | WinUSB API | 重叠（真异步）I/O；需要 WinUSB 绑定的接口（Zadig 等） |
 | `native`（legacy） | Windows | DeviceIoControl | 旧式驱动回退；不支持 ZLP、无原生异步 |
 | `native`（usbfs） | Linux | usbfs ioctl / URB | 通过 URB + poll 真异步；支持多接口声明 |
-| `native`（IOUSBLib） | macOS | IOUSBHost.framework | 需要 macOS 10.15+；管道级重置 |
-| `native`（HarmonyOS） | HarmonyOS | USBManager DDK | 通过 `FIRMWAREKIT_USB_ENABLE_HARMONY=1` 开启；需 `OH_Usb_Init()` 成功 |
-| `libusb` | 全平台 | LibUsbDotNet | 原生异步传输；需要原生 libusb 运行时（包内按 RID 附带）；缺失时优雅降级 |
+| `native`（IOKit） | macOS | IOKit.framework 经典 API | 每个 macOS 发行版均可用；设备打开遵循 adb（仅接口级）；保留 IOUSBHost 回退 |
+| `native`（HarmonyOS） | HarmonyOS | USBManager DDK | 需通过 `FIRMWAREKIT_USB_ENABLE_HARMONY=1` 显式开启；要求 `OH_Usb_Init()` 成功 |
+| `libusb` | 全平台 | LibUsbDotNet | 原生异步传输；需要原生 libusb 运行时（包内按 RID 附带，或经 `UsbCommunicationLayer.SetLibusbLibraryPath` 传入显式路径）；缺失时优雅降级 |
 
-HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识别）；需显式开启。macOS 10.15 以下请使用 `libusb` 后端。
+HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识别）；需显式开启。macOS 上 IOKit 原生后端在每个发行版均可用；不需要原生路径时使用 `libusb` 后端。
 
 ## 传输超时语义
 
@@ -92,7 +92,7 @@ if (block.Length % 512 == 0)
 |------|-----------|-------------|---------------------------|
 | Windows WinUSB | `WinUsb_ResetPipe`（管道级） | 仍可用 | `false` |
 | Windows legacy | 无操作 | 仍可用 | `false` |
-| macOS IOUSBHost | 管道中止 + 清除 stall | 仍可用 | `false` |
+| macOS IOKit（原生） | 管道中止 + 清除 stall | 仍可用 | `false` |
 | Linux usbfs | `USBDEVFS_RESET`（设备级） | **失效——需重新枚举并重开** | `true` |
 | libusb | `libusb_reset_device`（设备级） | **失效——需重新枚举并重开** | `true` |
 | HarmonyOS DDK | 重新初始化 DDK 会话并重新声明 | **失效——需重开** | `true` |
@@ -101,7 +101,7 @@ if (block.Length % 512 == 0)
 
 ## 异步 I/O 语义
 
-真正的异步（非阻塞）I/O 由 **WinUSB**（重叠 I/O）、**Linux usbfs**（URB + poll）与 **libusb**（LibUsbDotNet 异步传输）原生实现。其余后端——macOS IOUSBHost、HarmonyOS DDK 以及 `AsAsync()` 适配器——在线程池线程上执行底层同步传输（`UsbAsyncExecution.Run`）。
+真正的异步（非阻塞）I/O 由 **WinUSB**（重叠 I/O）、**Linux usbfs**（URB + poll）与 **libusb**（LibUsbDotNet 异步传输）原生实现。其余后端——macOS IOKit、HarmonyOS DDK 以及 `AsAsync()` 适配器——在线程池线程上执行底层同步传输（`UsbAsyncExecution.Run`）。
 
 通过 `UsbApiCapabilities.SupportsNativeAsyncIo`（或逐后端 `UsbBackendCapability.SupportsNativeAsyncIo`）判断 `ReadAsync`/`WriteAsync` 是真正非阻塞还是仅卸载。不允许阻塞调用方线程的协议层，应将 `SupportsNativeAsyncIo == false` 的后端视为"同步 + 卸载"。
 
@@ -113,7 +113,7 @@ if (block.Length % 512 == 0)
 |------|---------|---------|--------|
 | Linux usbfs | `LastUsbfsRootExists`（usbfs 是否挂载） | `LastScannedNodes` | `LastMatchedDeviceCount`、`PermissionDeniedCount`、`BusyCount` |
 | Windows | `LastSetupDiSucceeded`（SetupDi 句柄是否打开） | `LastScannedNodeCount` | `LastMatchedDeviceCount` |
-| macOS | `LastCopyDevicesSucceeded`（IOUSBLib copy 是否返回） | `LastScannedDeviceCount` | `LastMatchedDeviceCount` |
+| macOS | `LastCopyDevicesSucceeded`（IOKit `IOServiceGetMatchingServices` 是否返回） | `LastScannedDeviceCount` | `LastMatchedDeviceCount` |
 | libusb | `IsRuntimeAvailable(out reason)` | 设备列表 | 设备列表 |
 
 CLI 每次 `all-devices` 都会打印 `[enum-diagnostics] <摘要>`；CI 在其上断言，而非只检查"exit 0"。库还附带单元测试：将构造的 USB 描述符字节喂给纯解析器（`LinuxUsbFinder.TryParseDescriptor`），在无硬件条件下验证枚举正确性。
