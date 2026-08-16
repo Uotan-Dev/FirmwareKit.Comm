@@ -592,11 +592,11 @@ public sealed class UsbCommunicationLayer
 
     /// <summary>
     /// Returns a compact diagnostic summary of the last enumeration on the current platform,
-    /// exposing the per-backend observability state (SetupDi succeeded, IOUSBLib copy
+    /// exposing the per-backend observability state (SetupDi succeeded, IOKit matching
     /// succeeded, usbfs root present, scanned node counts) so device-less CI can assert that
     /// the enumeration mechanism actually ran instead of silently returning empty.
     /// <para>返回当前平台上次枚举的紧凑诊断摘要，暴露各后端可观测状态
-    /// （SetupDi 成功、IOUSBLib copy 成功、usbfs 根存在、扫描节点数），
+    /// （SetupDi 成功、IOKit 匹配成功、usbfs 根存在、扫描节点数），
     /// 使无设备 CI 能断言枚举机制确实运行，而非静默返回空。</para>
     /// </summary>
     /// <returns>A <c>key=value; ...</c> diagnostic string. <para><c>key=value; ...</c> 形式的诊断字符串。</para></returns>
@@ -614,10 +614,9 @@ public sealed class UsbCommunicationLayer
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            // The IOKit classic API is the primary macOS backend; the IOUSBHost
-            // path is only a fallback and is reported separately.
-            // <para>IOKit 经典 API 是 macOS 首选后端；IOUSBHost 路径仅为回退，单独报告。</para>
-            return $"iokit-copy={IOKitUsbFinder.LastCopyDevicesSucceeded}; scanned={IOKitUsbFinder.LastScannedDeviceCount}; matched={IOKitUsbFinder.LastMatchedDeviceCount}; iousbhost-copy={MacHostUsbFinder.LastCopyDevicesSucceeded}";
+            // The IOKit classic API is the only macOS backend.
+            // <para>IOKit 经典 API 是唯一的 macOS 后端。</para>
+            return $"iokit-copy={IOKitUsbFinder.LastCopyDevicesSucceeded}; scanned={IOKitUsbFinder.LastScannedDeviceCount}; matched={IOKitUsbFinder.LastMatchedDeviceCount}";
         }
 
         return "unsupported-platform";

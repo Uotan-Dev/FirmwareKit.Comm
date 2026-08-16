@@ -134,8 +134,8 @@ internal static class IOKitUsbFinder
 
                     UsbTrace.Log($"IOKitUsbFinder: dev rid={registryEntryId} vid={vid:X4} pid={pid:X4} serial='{serial}' ifClass={ifcClass}");
 
-                    // Apply the filter the same way MacHostUsbFinder does.
-                    // <para>与 MacHostUsbFinder 相同地应用过滤器。</para>
+                    // Apply the device filter (vendor/product/interface codes).
+                    // <para>应用设备过滤器（厂商/产品/接口码）。</para>
                     if (filter?.VendorId is ushort filterVid && vid != filterVid) continue;
                     if (filter?.ProductId is ushort filterPid && pid != filterPid) continue;
                     if (filter?.InterfaceClass is byte filterClass && ifcClass != filterClass) continue;
