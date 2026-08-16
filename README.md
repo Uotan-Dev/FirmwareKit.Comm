@@ -5,14 +5,14 @@
 
 English | [简体中文](README.zh-CN.md)
 
-A cross-platform USB communication library for FirmwareKit. It provides a unified USB abstraction over native platform backends (Windows / Linux / macOS / HarmonyOS) and LibUsbDotNet, with device discovery, filtering, session management, and structured transfer diagnostics. **Transport primitives only** — protocol layers (Sahara, Firehose, Fastboot, and so on) are out of scope and are implemented by callers on top of the unified session interfaces.
+A cross-platform USB communication library for FirmwareKit. It provides a unified USB abstraction over native platform backends (Windows / Linux / macOS / HarmonyOS) and LibUsbDotNet, with device discovery, filtering, session management, and structured transfer diagnostics. **Transport primitives only** — vendor-specific protocol layers are out of scope and are implemented by callers on top of the unified session interfaces.
 
 ## Features
 
 - **Unified session API**: synchronous (`IUsbDeviceSession`) and asynchronous (`IAsyncUsbDeviceSession`) read/write/control-transfer over one abstraction, with per-direction serialization for full-duplex protocol threads.
-- **Four native backends + libusb**: Windows WinUSB (and legacy driver), Linux usbfs, macOS IOUSBHost.framework, HarmonyOS USBManager DDK, and LibUsbDotNet.
+- **Four native backends + libusb**: Windows WinUSB (and legacy driver), Linux usbfs, macOS IOKit.framework classic API, HarmonyOS USBManager DDK, and LibUsbDotNet.
 - **Device discovery & filtering**: by `VendorId`, `ProductId`, `SerialNumber`, `DevicePath`, interface class/subclass/protocol, interface number(s), and explicit endpoint addresses.
-- **Packet semantics**: `ReadPacket` / `ReadPacketAsync` return a `UsbReadResult` that distinguishes a short packet (USB message boundary) from a timeout — what fastboot/EDL/bootrom framing needs. `ReadExact` / `ReadExactAsync` read a fixed length within a total deadline.
+- **Packet semantics**: `ReadPacket` / `ReadPacketAsync` return a `UsbReadResult` that distinguishes a short packet (USB message boundary) from a timeout — what packet-framed bootloader protocols need. `ReadExact` / `ReadExactAsync` read a fixed length within a total deadline.
 - **Zero-length packet (ZLP) control**: `WriteZlp` / `WriteZlpAsync` terminate transfers whose payload is an exact multiple of the endpoint max packet size.
 - **Progress reporting**: `ReadPacketAsync` / `WriteAsync` overloads accept `IProgress<long>` and report cumulative bytes after each chunk (flashing large images).
 - **Safety guardrails**: a read-length cap (`UsbTransferPolicies.MaxReadLength`) prevents OOM from untrusted protocol lengths; session disposal is idempotent; `ReadInto(Span<byte>)` is available on net8.0+.
@@ -42,7 +42,7 @@ Backend matrix:
 | `native` (WinUSB) | Windows | WinUSB API | Overlapped (true async) I/O; requires a WinUSB-bound interface (Zadig etc.) |
 | `native` (legacy) | Windows | DeviceIoControl | Fallback for legacy USB drivers; no ZLP, no native async |
 | `native` (usbfs) | Linux | usbfs ioctl / URB | True async via URB + poll; multi-interface claim supported |
-| `native` (IOKit) | macOS | IOKit.framework classic API | Works on every macOS; device open follows adb (interface-level only); IOUSBHost fallback retained |
+| `native` (IOKit) | macOS | IOKit.framework classic API | Works on every macOS; device open follows the reference implementation (interface-level only) |
 | `native` (HarmonyOS) | HarmonyOS | USBManager DDK | Opt-in via `FIRMWAREKIT_USB_ENABLE_HARMONY=1`; requires `OH_Usb_Init()` to succeed |
 | `libusb` | all | LibUsbDotNet | Native async transfers; needs the native libusb runtime (bundled per-RID in the package, or pass an explicit path via `UsbCommunicationLayer.SetLibusbLibraryPath`); degrades gracefully when absent |
 
@@ -51,7 +51,7 @@ HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be de
 ## Transfer Timeout Semantics
 
 - The timeout passed to `Read` / `Write` (and their `ReadInto` variants) applies **per chunk**, not to the whole operation: a transfer larger than the backend chunk size is split into multiple chunks, so the total time can reach `chunkCount × timeoutMs`.
-- When an exact number of bytes must be read within a total budget (e.g. fixed-size fastboot/EDL responses), use `ReadExact(length, timeoutMs)` / `ReadExactAsync` — they loop over short reads with a total deadline and return the bytes actually received on timeout.
+- When an exact number of bytes must be read within a total budget (e.g. fixed-size bootloader responses), use `ReadExact(length, timeoutMs)` / `ReadExactAsync` — they loop over short reads with a total deadline and return the bytes actually received on timeout.
 - Short reads/writes stop the transfer and return the partial byte count; a disconnected device throws `UsbDeviceDisconnectedException` (distinct from ordinary `IOException`/`UsbTransferException`).
 
 **Default timeouts differ per backend.** Omit `timeoutMs` only when the default is acceptable for your use case:
@@ -71,7 +71,7 @@ Retries for recoverable errors are configurable process-wide via `UsbTransferPol
 
 ## Zero-Length Packet (ZLP) Handling
 
-Bulk transfers whose payload length is an **exact multiple** of the endpoint's max packet size (typically 512 or 1024 bytes) must be terminated with a zero-length packet so the device knows the transfer ended. This matters for protocol downloads (adb push, fastboot `download:`, EDL firehose) and for bootrom loaders.
+Bulk transfers whose payload length is an **exact multiple** of the endpoint's max packet size (typically 512 or 1024 bytes) must be terminated with a zero-length packet so the device knows the transfer ended. This matters for protocol downloads (pushing payloads over the bulk pipes) and for bootloader loaders.
 
 - Check whether a ZLP is needed: `payloadLength % maxPacketSize == 0` (read `MaxPacketSize` from the device's `Interfaces[i].Endpoints` metadata).
 - After such a write, call `session.WriteZlp(timeoutMs)` (or `WriteZlpAsync`) to send the terminating zero-length packet.
@@ -162,8 +162,8 @@ foreach (var d in devices)
     Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} if={ifClass}/{ifSubClass}/{ifProto} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
 }
 
-// Optional: filter by USB interface class (for example Qualcomm EDL often uses 0xFF/0xFF/0xFF)
-var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
+// Optional: filter by USB interface class (for example vendor bootloader interfaces often use 0xFF/0xFF/0xFF)
+var bootloaderLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
 {
     VendorId = 0x05C6,
     InterfaceClass = 0xFF,
@@ -217,7 +217,7 @@ if (session != null)
     var asyncResponse = await asyncSession.ReadAsync(512, 3000);
     Console.WriteLine($"async response bytes: {asyncResponse.Length}");
 
-    // Packet-aware read: short packet vs timeout (fastboot/EDL message boundary)
+    // Packet-aware read: short packet vs timeout (packet message boundary)
     var buf = new byte[512];
     var result = session.ReadPacket(buf, 0, buf.Length, 3000);
     Console.WriteLine($"packet bytes={result.Count} timeout={result.IsTimeout} short={result.IsShortPacket}");

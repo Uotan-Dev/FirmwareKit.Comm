@@ -5,14 +5,14 @@
 
 [English](README.md) | 简体中文
 
-跨平台的 USB 通信库，为 FirmwareKit 提供统一的 USB 抽象层。它在系统原生后端（Windows / Linux / macOS / HarmonyOS）与 LibUsbDotNet 之上提供统一的设备发现、过滤、会话管理以及结构化传输诊断能力。**仅提供传输原语**——协议层（Sahara、Firehose、Fastboot 等）不在范围内，由调用方基于统一会话接口自行实现。
+跨平台的 USB 通信库，为 FirmwareKit 提供统一的 USB 抽象层。它在系统原生后端（Windows / Linux / macOS / HarmonyOS）与 LibUsbDotNet 之上提供统一的设备发现、过滤、会话管理以及结构化传输诊断能力。**仅提供传输原语**——厂商专属协议层不在范围内，由调用方基于统一会话接口自行实现。
 
 ## 特性
 
 - **统一会话 API**：一个抽象同时提供同步（`IUsbDeviceSession`）与异步（`IAsyncUsbDeviceSession`）读写/控制传输，并支持按方向串行化，便于全双工协议线程。
 - **四类原生后端 + libusb**：Windows WinUSB（及 legacy 驱动）、Linux usbfs、macOS IOKit.framework 经典 API、HarmonyOS USBManager DDK 与 LibUsbDotNet。
 - **设备发现与过滤**：按 `VendorId`、`ProductId`、`SerialNumber`、`DevicePath`、接口类/子类/协议、接口编号（列表）以及显式端点地址过滤。
-- **数据包语义**：`ReadPacket` / `ReadPacketAsync` 返回 `UsbReadResult`，区分短包（USB 消息边界）与超时——正是 fastboot/EDL/bootrom 分帧所需。`ReadExact` / `ReadExactAsync` 在总期限内精确读取定长字节。
+- **数据包语义**：`ReadPacket` / `ReadPacketAsync` 返回 `UsbReadResult`，区分短包（USB 消息边界）与超时——正是面向数据包的引导加载器协议分帧所需。`ReadExact` / `ReadExactAsync` 在总期限内精确读取定长字节。
 - **零长度包（ZLP）控制**：`WriteZlp` / `WriteZlpAsync` 终止载荷长度恰为端点最大包大小整数倍的传输。
 - **进度回调**：`ReadPacketAsync` / `WriteAsync` 重载接受 `IProgress<long>`，在每块完成后报告累计字节数（适用于刷写大镜像）。
 - **安全护栏**：读取长度上限（`UsbTransferPolicies.MaxReadLength`）防止不可信协议长度引发 OOM；会话释放幂等；net8.0+ 提供 `ReadInto(Span<byte>)`。
@@ -42,7 +42,7 @@ FirmwareKit.Comm 聚焦跨平台 USB 传输原语：
 | `native`（WinUSB） | Windows | WinUSB API | 重叠（真异步）I/O；需要 WinUSB 绑定的接口（Zadig 等） |
 | `native`（legacy） | Windows | DeviceIoControl | 旧式驱动回退；不支持 ZLP、无原生异步 |
 | `native`（usbfs） | Linux | usbfs ioctl / URB | 通过 URB + poll 真异步；支持多接口声明 |
-| `native`（IOKit） | macOS | IOKit.framework 经典 API | 每个 macOS 发行版均可用；设备打开遵循 adb（仅接口级）；保留 IOUSBHost 回退 |
+| `native`（IOKit） | macOS | IOKit.framework 经典 API | 每个 macOS 发行版均可用；设备打开遵循参考实现（仅接口级） |
 | `native`（HarmonyOS） | HarmonyOS | USBManager DDK | 需通过 `FIRMWAREKIT_USB_ENABLE_HARMONY=1` 显式开启；要求 `OH_Usb_Init()` 成功 |
 | `libusb` | 全平台 | LibUsbDotNet | 原生异步传输；需要原生 libusb 运行时（包内按 RID 附带，或经 `UsbCommunicationLayer.SetLibusbLibraryPath` 传入显式路径）；缺失时优雅降级 |
 
@@ -51,7 +51,7 @@ HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识
 ## 传输超时语义
 
 - 传给 `Read` / `Write`（及 `ReadInto` 变体）的超时**按块生效**而非整个操作：超过后端块大小的传输会被拆分，总耗时可达 `块数 × timeoutMs`。
-- 需要在总期限内精确读取定长字节（例如 fastboot/EDL 定长响应）时，使用 `ReadExact(length, timeoutMs)` / `ReadExactAsync`——它们在总期限内循环短读，超时时返回实际收到的字节。
+- 需要在总期限内精确读取定长字节（例如定长引导加载器响应）时，使用 `ReadExact(length, timeoutMs)` / `ReadExactAsync`——它们在总期限内循环短读，超时时返回实际收到的字节。
 - 短读/短写会停止传输并返回部分字节数；设备断开抛出 `UsbDeviceDisconnectedException`（区别于普通 `IOException`/`UsbTransferException`）。
 
 **各后端默认超时不同**。仅在默认值可接受时才省略 `timeoutMs`：
@@ -71,7 +71,7 @@ Linux usbfs 后端的端点读/写（`ReadInterrupt`/`WriteInterrupt`）在线�
 
 ## 零长度包（ZLP）处理
 
-载荷长度**恰好为端点最大包大小（通常 512 或 1024 字节）的整数倍**的批量传输，必须以零长度包结束，设备才能判断传输结束。协议下载（adb push、fastboot `download:`、EDL firehose）与 bootrom loader 尤其需要。
+载荷长度**恰好为端点最大包大小（通常 512 或 1024 字节）的整数倍**的批量传输，必须以零长度包结束，设备才能判断传输结束。协议下载（经批量管道推送载荷）与引导加载器尤其需要。
 
 - 判断是否需要 ZLP：`payloadLength % maxPacketSize == 0`（从设备 `Interfaces[i].Endpoints` 元数据读取 `MaxPacketSize`）。
 - 此类写入之后调用 `session.WriteZlp(timeoutMs)`（或 `WriteZlpAsync`）发送终止零长度包。
@@ -162,8 +162,8 @@ foreach (var d in devices)
     Console.WriteLine($"api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} if={ifClass}/{ifSubClass}/{ifProto} serial={d.SerialNumber ?? "<null>"} path={d.DevicePath}");
 }
 
-// 可选：按 USB 接口类过滤（例如 Qualcomm EDL 常用 0xFF/0xFF/0xFF）
-var edlLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
+// 可选：按 USB 接口类过滤（例如厂商引导加载器接口常用 0xFF/0xFF/0xFF）
+var bootloaderLikeDevices = comm.EnumerateUsbDevices(UsbApiKind.Auto, new UsbDeviceFilter
 {
     VendorId = 0x05C6,
     InterfaceClass = 0xFF,
@@ -217,7 +217,7 @@ if (session != null)
     var asyncResponse = await asyncSession.ReadAsync(512, 3000);
     Console.WriteLine($"async response bytes: {asyncResponse.Length}");
 
-    // 包感知读取：区分短包与超时（fastboot/EDL 消息边界）
+    // 包感知读取：区分短包与超时（包消息边界）
     var buf = new byte[512];
     var result = session.ReadPacket(buf, 0, buf.Length, 3000);
     Console.WriteLine($"packet bytes={result.Count} timeout={result.IsTimeout} short={result.IsShortPacket}");
