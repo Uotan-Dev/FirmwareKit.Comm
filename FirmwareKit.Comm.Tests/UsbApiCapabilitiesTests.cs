@@ -40,7 +40,7 @@ public sealed class UsbApiCapabilitiesTests
             SupportsNativeAsyncIo = false,
             SupportsNativeHotPlugMonitoring = true,
             RequiresExternalRuntime = false,
-            Notes = "winusb/usbfs/IOUSBLib"
+            Notes = "winusb/usbfs/iokit"
         };
 
         Assert.Equal("native", caps.ApiName);
@@ -53,7 +53,7 @@ public sealed class UsbApiCapabilitiesTests
         Assert.False(caps.SupportsNativeAsyncIo);
         Assert.True(caps.SupportsNativeHotPlugMonitoring);
         Assert.False(caps.RequiresExternalRuntime);
-        Assert.Equal("winusb/usbfs/IOUSBLib", caps.Notes);
+        Assert.Equal("winusb/usbfs/iokit", caps.Notes);
     }
 
     [Fact]

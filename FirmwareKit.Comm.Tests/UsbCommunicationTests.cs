@@ -112,7 +112,7 @@ public sealed class UsbCommunicationLayerIntegrationTests
         Assert.Contains(native.Backends!, b => b.BackendName == "winusb" && b.SupportsNativeAsyncIo);
         Assert.Contains(native.Backends!, b => b.BackendName == "linux-usbfs" && b.SupportsNativeAsyncIo);
         Assert.Contains(native.Backends!, b => b.BackendName == "winusb-legacy" && !b.SupportsNativeAsyncIo);
-        Assert.Contains(native.Backends!, b => b.BackendName == "macos-iousbhost" && !b.SupportsNativeAsyncIo);
+        Assert.Contains(native.Backends!, b => b.BackendName == "macos-iokit" && !b.SupportsNativeAsyncIo);
         Assert.Contains(native.Backends!, b => b.BackendName == "harmony-ddk" && !b.SupportsNativeAsyncIo);
     }
 

@@ -41,11 +41,10 @@ public sealed class ProvidersCapabilitiesTests
     {
         var backends = new NativeUsbApiProvider().GetCapabilities().Backends!;
 
-        Assert.Equal(6, backends.Count);
+        Assert.Equal(5, backends.Count);
         Assert.Contains(backends, b => b.BackendName == "winusb");
         Assert.Contains(backends, b => b.BackendName == "linux-usbfs");
         Assert.Contains(backends, b => b.BackendName == "macos-iokit");
-        Assert.Contains(backends, b => b.BackendName == "macos-iousbhost");
         Assert.Contains(backends, b => b.BackendName == "harmony-ddk");
         Assert.Contains(backends, b => b.BackendName == "winusb-legacy" && !b.SupportsNativeAsyncIo);
     }
