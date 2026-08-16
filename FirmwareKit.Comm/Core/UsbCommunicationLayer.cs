@@ -18,6 +18,28 @@ public sealed class UsbCommunicationLayer
     private readonly UsbApiRegistry _registry;
 
     /// <summary>
+    /// Configures the absolute path to the native libusb runtime for the libusb
+    /// backend (e.g. <c>/opt/homebrew/lib/libusb-1.0.dylib</c> on macOS or a
+    /// vendored <c>libusb-1.0.dll</c> on Windows). Must be called BEFORE the first
+    /// enumeration or session open. The library is pre-loaded by absolute path so
+    /// the bare SONAME <c>libusb-1.0</c> resolves without relying on the loader's
+    /// default search path (no process restart / execve involved).
+    /// <para>为 libusb 后端配置原生 libusb 运行时的绝对路径（例如 macOS 上
+    /// <c>/opt/homebrew/lib/libusb-1.0.dylib</c>，或 Windows 上随附的
+    /// <c>libusb-1.0.dll</c>）。必须在首次枚举或打开会话之前调用。库按绝对路径
+    /// 预加载，使裸 SONAME <c>libusb-1.0</c> 无需依赖加载器默认搜索路径即可解析
+    /// （不涉及进程重启 / execve）。</para>
+    /// </summary>
+    /// <param name="libraryPath">Absolute path to the native libusb runtime.
+    /// <para>原生 libusb 运行时的绝对路径。</para></param>
+    /// <exception cref="System.IO.FileNotFoundException">The path does not exist.
+    /// <para>路径不存在。</para></exception>
+    public static void SetLibusbLibraryPath(string libraryPath)
+    {
+        LibUsbNativeLoader.SetLibraryPath(libraryPath);
+    }
+
+    /// <summary>
     /// Initializes a new communication layer.
     /// <para>初始化新的通信层。</para>
     /// </summary>
@@ -592,7 +614,10 @@ public sealed class UsbCommunicationLayer
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            return $"copy-devices={MacHostUsbFinder.LastCopyDevicesSucceeded}; scanned={MacHostUsbFinder.LastScannedDeviceCount}; matched={MacHostUsbFinder.LastMatchedDeviceCount}";
+            // The IOKit classic API is the primary macOS backend; the IOUSBHost
+            // path is only a fallback and is reported separately.
+            // <para>IOKit 经典 API 是 macOS 首选后端；IOUSBHost 路径仅为回退，单独报告。</para>
+            return $"iokit-copy={IOKitUsbFinder.LastCopyDevicesSucceeded}; scanned={IOKitUsbFinder.LastScannedDeviceCount}; matched={IOKitUsbFinder.LastMatchedDeviceCount}; iousbhost-copy={MacHostUsbFinder.LastCopyDevicesSucceeded}";
         }
 
         return "unsupported-platform";

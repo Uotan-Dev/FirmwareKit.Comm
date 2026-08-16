@@ -12,6 +12,22 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     private readonly UsbCommunicationLayer _usb;
 
     /// <summary>
+    /// Configures the absolute path to the native libusb runtime for the libusb
+    /// backend. Must be called BEFORE the first enumeration or session open; the
+    /// library is pre-loaded by absolute path so the bare SONAME <c>libusb-1.0</c>
+    /// resolves without relying on the loader's default search path (no process
+    /// restart involved). See <see cref="UsbCommunicationLayer.SetLibusbLibraryPath"/>.
+    /// <para>为 libusb 后端配置原生 libusb 运行时的绝对路径。必须在首次枚举或打开
+    /// 会话之前调用；库按绝对路径预加载，使裸 SONAME <c>libusb-1.0</c> 无需依赖
+    /// 加载器默认搜索路径即可解析（不涉及进程重启）。参见
+    /// <see cref="UsbCommunicationLayer.SetLibusbLibraryPath"/>。</para>
+    /// </summary>
+    /// <param name="libraryPath">Absolute path to the native libusb runtime.
+    /// <para>原生 libusb 运行时的绝对路径。</para></param>
+    public static void SetLibusbLibraryPath(string libraryPath)
+        => UsbCommunicationLayer.SetLibusbLibraryPath(libraryPath);
+
+    /// <summary>
     /// Initializes a new facade with the default USB communication layer.
     /// <para>使用默认 USB 通信层初始化门面。</para>
     /// </summary>
