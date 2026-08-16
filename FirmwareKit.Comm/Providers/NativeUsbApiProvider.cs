@@ -62,6 +62,7 @@ internal sealed class NativeUsbApiProvider : UsbApiProviderBase
                 new UsbBackendCapability { BackendName = "winusb", SupportsNativeAsyncIo = true, ResetReenumeratesDevice = false },
                 new UsbBackendCapability { BackendName = "winusb-legacy", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = false },
                 new UsbBackendCapability { BackendName = "linux-usbfs", SupportsNativeAsyncIo = true, ResetReenumeratesDevice = true },
+                new UsbBackendCapability { BackendName = "macos-iokit", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = false },
                 new UsbBackendCapability { BackendName = "macos-iousbhost", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = false },
                 new UsbBackendCapability { BackendName = "harmony-ddk", SupportsNativeAsyncIo = false, ResetReenumeratesDevice = true }
             }
@@ -82,6 +83,28 @@ internal sealed class NativeUsbApiProvider : UsbApiProviderBase
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
+            // The IOKit classic API (IOServiceMatching + IOCreatePlugInInterfaceForService,
+            // aligned with Google adb/fastboot usb_osx.cc) is the primary macOS backend:
+            // it lives in IOKit.framework and is loadable on every macOS release. The
+            // IOUSBHost (IOUSBLib) backend is retained only as a fallback for hosts where
+            // it is still loadable (macOS 10.15+ with the framework binary present); on
+            // current macOS its main binary is absent (only a BridgeSupport stub remains),
+            // so every [DllImport(IOUSBHost)] throws DllNotFoundException.
+            // <para>IOKit 经典 API（IOServiceMatching + IOCreatePlugInInterfaceForService，
+            // 与谷歌 adb/fastboot usb_osx.cc 对齐）是 macOS 首选后端：它位于
+            // IOKit.framework，在每个 macOS 发行版上均可加载。IOUSBHost（IOUSBLib）
+            // 后端仅保留为仍可加载主机（macOS 10.15+ 且框架二进制存在）的回退；当前
+            // macOS 上其主二进制缺失（仅剩 BridgeSupport 桩），故每个
+            // [DllImport(IOUSBHost)] 都抛 DllNotFoundException。</para>
+            try
+            {
+                return IOKitUsbFinder.FindDevice(filter);
+            }
+            catch (Exception iokitEx) when (iokitEx is DllNotFoundException or EntryPointNotFoundException)
+            {
+                UsbTrace.Log($"IOKit classic backend unavailable: {iokitEx.Message}");
+            }
+
             try
             {
                 // IOUSBHost (IOUSBLib) backend, requires macOS 10.15+.
