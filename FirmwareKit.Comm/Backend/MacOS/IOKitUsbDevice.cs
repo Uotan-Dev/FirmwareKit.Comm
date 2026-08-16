@@ -441,12 +441,17 @@ internal class IOKitUsbDevice : UsbDevice
     }
 
     // Opens one IOUSBInterface service: creates its plug-in, queries the
-    // IOUSBInterfaceInterface COM-vtable, opens the interface, discovers the
-    // bulk IN/OUT pipe references via GetPipeProperties, and clears stall on
-    // both pipes. Returns true when a usable interface was claimed.
+    // IOUSBInterfaceInterface COM-vtable, opens the interface, discovers pipe
+    // references via GetPipeProperties, and clears stall on the chosen pipes.
+    // Bulk IN/OUT is preferred; when the interface exposes no bulk pair (e.g.
+    // HID keyboards/digitizers), interrupt IN/OUT is used as a fallback, exactly
+    // like the libusb backend's bulk-then-interrupt selection. Returns true when
+    // a usable interface was claimed.
     // <para>打开一个 IOUSBInterface 服务：创建其插件、查询 IOUSBInterfaceInterface
-    // COM-vtable、打开接口、经 GetPipeProperties 发现批量 IN/OUT 管道引用，并在两条
-    // 管道上清除 stall。声明到可用接口时返回 true。</para>
+    // COM-vtable、打开接口、经 GetPipeProperties 发现管道引用，并在选定管道上清除
+    // stall。优先使用批量 IN/OUT；当接口无批量对（例如 HID 键盘/数字化仪）时回退到
+    // 中断 IN/OUT，与 libusb 后端的 bulk→interrupt 选择一致。声明到可用接口时
+    // 返回 true。</para>
     private bool TryOpenInterface(IntPtr ifcService)
     {
         int kr = IOKitUsbAPI.IOCreatePlugInInterfaceForService(
@@ -484,29 +489,45 @@ internal class IOKitUsbDevice : UsbDevice
 
                 byte bulkIn = 0;
                 byte bulkOut = 0;
+                byte interruptIn = 0;
+                byte interruptOut = 0;
                 for (byte i = 1; i <= numEpts; i++)
                 {
                     if (getPipeProps(ifcIntf, i, out byte direction, out _, out byte transferType, out _, out _) == IOKitUsbAPI.S_OK)
                     {
-                        if (transferType == 0x02) // Bulk
+                        if (direction == 1) // kUSBIn
                         {
-                            if (direction == 1) bulkIn = i; // kUSBIn
-                            else if (direction == 0) bulkOut = i; // kUSBOut
+                            if (transferType == 0x02 && bulkIn == 0) bulkIn = i;          // Bulk
+                            else if (transferType == 0x03 && interruptIn == 0) interruptIn = i; // Interrupt
+                        }
+                        else if (direction == 0) // kUSBOut
+                        {
+                            if (transferType == 0x02 && bulkOut == 0) bulkOut = i;          // Bulk
+                            else if (transferType == 0x03 && interruptOut == 0) interruptOut = i; // Interrupt
                         }
                     }
                 }
 
-                if (bulkIn == 0 || bulkOut == 0)
+                // Prefer the bulk pair; fall back to interrupt pipes for HID-style
+                // interfaces that have no bulk endpoints (libusb parity).
+                // <para>优先使用批量对；无批量端点时回退到中断管道（HID 类接口，
+                // 与 libusb 对齐）。</para>
+                byte pipeIn = bulkIn != 0 ? bulkIn : interruptIn;
+                byte pipeOut = bulkOut != 0 ? bulkOut : interruptOut;
+                if (pipeIn == 0)
                 {
                     return false;
                 }
 
                 var clearStall = IOKitUsbAPI.GetDelegate<IOKitUsbAPI.ClearPipeStallDelegate>(ifcIntf, IOKitUsbAPI.Offset_ClearPipeStall);
-                _ = clearStall(ifcIntf, bulkIn);
-                _ = clearStall(ifcIntf, bulkOut);
+                _ = clearStall(ifcIntf, pipeIn);
+                if (pipeOut != 0)
+                {
+                    _ = clearStall(ifcIntf, pipeOut);
+                }
 
-                _bulkIn = bulkIn;
-                _bulkOut = bulkOut;
+                _bulkIn = pipeIn;
+                _bulkOut = pipeOut;
                 _interfaceInterface = ifcIntf;
                 return true;
             }
