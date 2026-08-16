@@ -439,8 +439,23 @@ static void ExecuteSelftest(UsbCommunicationLayer layer, string[] args)
             Console.WriteLine($"  api={d.ApiName} vid=0x{d.VendorId:X4} pid=0x{d.ProductId:X4} speed={d.Speed} if=0x{d.InterfaceClass:X2}/0x{d.InterfaceSubClass:X2}/0x{d.InterfaceProtocol:X2} serial={d.SerialNumber ?? "<null>"}");
         }
 
-        // 2) Open session
-        using var session = layer.OpenDeviceSession(apiKind, filter);
+        // 2) Open session. Guarded: a backend failure (e.g. IOKit vtable call
+        //    failing on macOS) must surface as a FAIL line instead of crashing
+        //    the process and leaving no diagnostics.
+        // <para>打开会话。加守卫：后端失败（如 macOS 上 IOKit vtable 调用失败）必须
+        // 以 FAIL 行呈现，而不是崩溃进程且不留下任何诊断。</para>
+        IUsbDeviceSession? session;
+        try
+        {
+            session = layer.OpenDeviceSession(apiKind, filter);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"FAIL open session: {ex.GetType().Name}: {ex.Message}");
+            failures++;
+            continue;
+        }
+
         if (session == null)
         {
             Console.WriteLine("FAIL open session: no session could be opened (device busy? permissions?).");

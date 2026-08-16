@@ -349,16 +349,7 @@ internal static class IOKitUsbAPI
     public delegate int GetPipePropertiesDelegate(IntPtr self, byte pipeRef, out byte direction, out byte number, out byte transferType, out ushort maxPacketSize, out byte interval);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public delegate int GetInterfaceClassDelegate(IntPtr self, out byte interfaceClass);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public delegate int GetInterfaceSubClassDelegate(IntPtr self, out byte interfaceSubClass);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public delegate int GetInterfaceProtocolDelegate(IntPtr self, out byte interfaceProtocol);
-
-    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-    public delegate int ClearPipeStallDelegate(IntPtr self, byte pipeRef);
+    public delegate int ClearPipeStallBothEndsDelegate(IntPtr self, byte pipeRef);
 
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate int ReadPipeTODelegate(IntPtr self, byte pipeRef, IntPtr data, ref uint size, uint noDataTimeout, uint completionTimeout);
@@ -366,69 +357,67 @@ internal static class IOKitUsbAPI
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate int WritePipeTODelegate(IntPtr self, byte pipeRef, IntPtr data, uint size, uint noDataTimeout, uint completionTimeout);
 
-    // VTable offsets (0-based function-pointer slots), matching the standard
-    // IUnknown layout used by Google adb / fastboot (usb_osx.cc): every IOKit
-    // COM object starts with QueryInterface/AddRef/Release at slots 0/1/2.
-    // <para>VTable 偏移（0 基函数指针槽位），与谷歌 adb/fastboot（usb_osx.cc）使用
-    // 的标准 IUnknown 布局一致：每个 IOKit COM 对象以 QueryInterface/AddRef/Release
-    // 占据槽位 0/1/2 开始。</para>
+    // VTable offsets, matching the layout verified on current macOS by the
+    // pre-rewrite backend (and SharpFastboot's macOS implementation). The
+    // plug-in objects obtained from IOCreatePlugInInterfaceForService expose a
+    // vtable whose slot 0 is NOT QueryInterface — the IUnknown methods sit at
+    // offsets 1/3 (there is a leading pseudo-vtable slot), and the device /
+    // interface methods follow at the offsets below. These values were
+    // validated on real macOS hardware (USBDeviceOpen is reached and returns
+    // kIOReturnNoSpace rather than crashing), so they MUST NOT be "normalized"
+    // to a standard IUnknown 0/1/2 layout — doing so dereferences the wrong
+    // slot and SIGSEGVs the process.
+    // <para>vtable 偏移与重写前后端（及 SharpFastboot 的 macOS 实现）在当前 macOS
+    // 上验证过的布局一致。IOCreatePlugInInterfaceForService 得到的插件对象暴露的
+    // vtable 中槽位 0 并非 QueryInterface——IUnknown 方法位于偏移 1/3（前有一个
+    // 伪 vtable 槽），设备/接口方法位于下列偏移。这些值已在真实 macOS 硬件上验证
+    // （USBDeviceOpen 真实到达并返回 kIOReturnNoSpace 而非崩溃），因此绝不能
+    // "规范化"为标准 IUnknown 0/1/2 布局——那样会解引用错误槽位并使进程 SIGSEGV。</para>
 
-    // VTable offsets for IOCFPlugInInterface (IUnknown prefix).
-    public const int Offset_Plugin_QueryInterface = 0;
-    public const int Offset_Plugin_AddRef = 1;
-    public const int Offset_Plugin_Release = 2;
+    // VTable offsets for IOCFPlugInInterface.
+    public const int Offset_Plugin_QueryInterface = 1;
+    public const int Offset_Plugin_Release = 3;
 
     // VTable offsets for common IUnknown (shared by interface & device COM objects).
-    public const int Offset_IUnknown_QueryInterface = 0;
-    public const int Offset_IUnknown_AddRef = 1;
-    public const int Offset_IUnknown_Release = 2;
+    public const int Offset_IUnknown_QueryInterface = 1;
+    public const int Offset_IUnknown_Release = 3;
 
-    // VTable offsets for IOUSBDeviceInterface (IOUSBLib.h, IUnknown prefix).
-    public const int Offset_DeviceRequest = 3;
-    public const int Offset_USBDeviceOpen = 4;
-    public const int Offset_USBDeviceClose = 5;
-    public const int Offset_USBDeviceReset = 7;
-    public const int Offset_USBGetDeviceVendor = 9;
-    public const int Offset_USBGetDeviceProduct = 10;
-    public const int Offset_USBGetConfiguration = 20;
-    public const int Offset_USBSetConfiguration = 21;
-    public const int Offset_USBGetSerialNumberStringIndex = 22;
-    public const int Offset_USBDeviceCreateInterfaceIterator = 24;
+    // VTable offsets for IOUSBDeviceInterface.
+    public const int Offset_DeviceRequest = 7;
+    public const int Offset_USBDeviceOpen = 14;
+    public const int Offset_USBDeviceClose = 15;
+    public const int Offset_USBGetDeviceVendor = 16;
+    public const int Offset_USBGetDeviceProduct = 17;
+    public const int Offset_USBGetSerialNumberStringIndex = 21;
+    public const int Offset_USBGetConfiguration = 24;
+    public const int Offset_USBSetConfiguration = 25;
+    public const int Offset_USBDeviceCreateInterfaceIterator = 26;
+    public const int Offset_USBDeviceReset = 27;
 
-    // VTable offsets for IOUSBInterfaceInterface (190+, IUnknown prefix).
-    public const int Offset_GetInterfaceClass = 4;
-    public const int Offset_GetInterfaceSubClass = 5;
-    public const int Offset_GetInterfaceProtocol = 6;
+    // VTable offsets for IOUSBInterfaceInterface (190+).
     public const int Offset_USBInterfaceOpen = 8;
     public const int Offset_USBInterfaceClose = 9;
-    public const int Offset_GetNumEndpoints = 10;
-    public const int Offset_GetPipeProperties = 11;
-    public const int Offset_ClearPipeStall = 16;
-    public const int Offset_ReadPipe = 17;
-    public const int Offset_WritePipe = 18;
-    public const int Offset_ReadPipeTO = 19;
-    public const int Offset_WritePipeTO = 20;
-    public const int Offset_ControlRequestTO = 26;
+    public const int Offset_GetNumEndpoints = 17;
+    public const int Offset_GetPipeProperties = 18;
+    public const int Offset_ClearPipeStallBothEnds = 25;
+    public const int Offset_ReadPipe = 26;
+    public const int Offset_WritePipe = 27;
+    public const int Offset_ReadPipeTO = 28;
+    public const int Offset_WritePipeTO = 29;
 
-    // Reads an IOKit plug-in interface method pointer at `offset` (0-based slot)
-    // and wraps it into the requested delegate type. IOKit's classic interfaces
-    // (IOCFPlugInInterface / IOUSBDeviceInterface / IOUSBInterfaceInterface) are
-    // plain C structs whose fields ARE the function pointers — there is NO COM
-    // vtable indirection (unlike a true IUnknown vtable). `self` therefore points
-    // directly at the first function pointer (QueryInterface at slot 0), exactly
-    // as adb/fastboot call `(*iface)->Method(iface, ...)` in usb_osx.cc. Reading
-    // a "vtable" pointer here (as the pre-rewrite code did) dereferences machine
-    // code and crashes/returns garbage.
-    // <para>读取 IOKit 插件接口在 `offset`（0 基槽位）处的方法指针并包装为请求的委托
-    // 类型。IOKit 经典接口（IOCFPlugInInterface / IOUSBDeviceInterface /
-    // IOUSBInterfaceInterface）是普通 C 结构体，其字段本身就是函数指针——没有 COM
-    // vtable 间接层（与真正的 IUnknown vtable 不同）。`self` 因此直接指向第一个函数
-    // 指针（槽位 0 为 QueryInterface），正如 adb/fastboot 在 usb_osx.cc 中以
-    // `(*iface)->Method(iface, ...)` 调用。此处若（像重写前的代码那样）先读取
-    // "vtable" 指针，会解引用机器码并崩溃或返回垃圾值。</para>
+    // Reads a vtable method pointer at `offset` (0-based slot) and wraps it into
+    // the requested delegate type. The vtable itself is the first pointer pointed
+    // to by `self`; each slot is one IntPtr wide. This double indirection is the
+    // shape validated on macOS by the pre-rewrite backend — do not change it to a
+    // single indirection based on the IOKit C headers alone.
+    // <para>读取 `self` 指向的 vtable 在 `offset`（0 基槽位）处的方法指针并包装为
+    // 请求的委托类型。vtable 本身是 `self` 指向的首个指针；每槽一个 IntPtr 宽。
+    // 此双重解引用是重写前后端在 macOS 上验证过的调用形——请勿仅依据 IOKit C 头
+    // 文件将其改为单层解引用。</para>
     public static T GetDelegate<T>(IntPtr self, int offset) where T : class
     {
-        IntPtr methodPtr = Marshal.ReadIntPtr(self, offset * IntPtr.Size);
+        IntPtr vtable = Marshal.ReadIntPtr(self);
+        IntPtr methodPtr = Marshal.ReadIntPtr(vtable, offset * IntPtr.Size);
         return (T)(object)Marshal.GetDelegateForFunctionPointer(methodPtr, typeof(T));
     }
 

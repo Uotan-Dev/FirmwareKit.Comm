@@ -519,7 +519,7 @@ internal class IOKitUsbDevice : UsbDevice
                     return false;
                 }
 
-                var clearStall = IOKitUsbAPI.GetDelegate<IOKitUsbAPI.ClearPipeStallDelegate>(ifcIntf, IOKitUsbAPI.Offset_ClearPipeStall);
+                var clearStall = IOKitUsbAPI.GetDelegate<IOKitUsbAPI.ClearPipeStallBothEndsDelegate>(ifcIntf, IOKitUsbAPI.Offset_ClearPipeStallBothEnds);
                 _ = clearStall(ifcIntf, pipeIn);
                 if (pipeOut != 0)
                 {
