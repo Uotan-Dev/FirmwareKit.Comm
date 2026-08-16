@@ -614,9 +614,14 @@ public sealed class UsbCommunicationLayer
 
         if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
         {
-            // The IOKit classic API is the only macOS backend.
-            // <para>IOKit 经典 API 是唯一的 macOS 后端。</para>
-            return $"iokit-copy={IOKitUsbFinder.LastCopyDevicesSucceeded}; scanned={IOKitUsbFinder.LastScannedDeviceCount}; matched={IOKitUsbFinder.LastMatchedDeviceCount}";
+            // The IOKit classic API is the only macOS backend. The key stays
+            // "copy-devices" (matching the pre-IOUSBHost-removal contract) so CI
+            // assertions keep working; the value now reports the IOKit finder's
+            // IOServiceGetMatchingServices outcome.
+            // <para>IOKit 经典 API 是唯一的 macOS 后端。键名保持 "copy-devices"
+            // （与移除 IOUSBHost 前的契约一致），使 CI 断言继续可用；其值现在报告
+            // IOKit finder 的 IOServiceGetMatchingServices 结果。</para>
+            return $"copy-devices={IOKitUsbFinder.LastCopyDevicesSucceeded}; scanned={IOKitUsbFinder.LastScannedDeviceCount}; matched={IOKitUsbFinder.LastMatchedDeviceCount}";
         }
 
         return "unsupported-platform";
