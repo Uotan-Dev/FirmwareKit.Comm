@@ -1,6 +1,32 @@
 using FirmwareKit.Comm.Backend.Linux;
+using Xunit;
 
 namespace FirmwareKit.Comm.IntegrationTests;
+
+/// <summary>
+/// Marks the <see cref="LinuxUsbFinderDiagnosticsTests"/> collection as serialized.
+/// <para>将 <see cref="LinuxUsbFinderDiagnosticsTests"/> 集合标记为串行执行。</para>
+/// </summary>
+/// <remarks>
+/// These tests assert on <see cref="LinuxUsbFinder"/>'s shared static diagnostic state
+/// (LastUsbfsRootExists / LastScannedNodes / LastMatchedDeviceCount). xUnit v3 runs test
+/// methods within a class concurrently by default, and concurrent <c>FindDevice</c>
+/// calls overwrite each other's diagnostics — the flaky root cause of the Ubuntu CI
+/// failure where <c>FindDevice_EmptyUsbfsRoot</c> observed
+/// <c>LastUsbfsRootExists=false</c> written by a parallel <c>UsbfsRootMissing</c> test.
+/// <para>这些测试断言 <see cref="LinuxUsbFinder"/> 的共享静态诊断状态。xUnit v3 默认并行
+/// 运行同类测试方法，并发的 <c>FindDevice</c> 调用会互相覆盖诊断——Ubuntu CI 失败的偶发根因：
+/// <c>FindDevice_EmptyUsbfsRoot</c> 观察到被并行 <c>UsbfsRootMissing</c> 测试写入的
+/// <c>LastUsbfsRootExists=false</c>。</para>
+/// <c>DisableParallelization = true</c> forces the three methods in this class to
+/// run sequentially, so each <c>FindDevice</c> call observes only its own diagnostics.
+/// <para><c>DisableParallelization = true</c> 强制本类三个方法顺序执行，使每个
+/// <c>FindDevice</c> 调用仅观察到自身的诊断。</para>
+/// </remarks>
+[CollectionDefinition("LinuxUsbFinder diagnostics (shared static state)", DisableParallelization = true)]
+public sealed class LinuxUsbFinderDiagnosticsCollectionDefinition
+{
+}
 
 /// <summary>
 /// Verifies the observable enumeration diagnostics (LinuxUsbFinder.LastUsbfsRootExists /
@@ -10,6 +36,17 @@ namespace FirmwareKit.Comm.IntegrationTests;
 /// LastScannedNodes / LastMatchedDeviceCount），使无设备 CI 能区分
 /// "枚举机制未运行"与"机制运行但未发现设备"。</para>
 /// </summary>
+/// <remarks>
+/// The <c>[Collection]</c> attribute binds this class to the serialized collection
+/// defined above. Both attributes are required: <c>[Collection]</c> without
+/// <c>[CollectionDefinition(DisableParallelization = true)]</c> only disables
+/// cross-class parallelism, not the within-class method parallelism that causes the
+/// flaky failure.
+/// <para><c>[Collection]</c> 特性将本类绑定到上方定义的串行集合。两个特性都需要：仅有
+/// <c>[Collection]</c> 而无 <c>[CollectionDefinition(DisableParallelization = true)]</c>
+/// 只禁用跨类并行，不禁用导致偶发失败的同类方法并行。</para>
+/// </remarks>
+[Collection("LinuxUsbFinder diagnostics (shared static state)")]
 public sealed class LinuxUsbFinderDiagnosticsTests
 {
     [Fact]

@@ -1,5 +1,27 @@
 name: .NET CI/CD
 
+# Device-less CI contract (GitHub-hosted runners expose NO physical USB devices):
+#   HARD-GATE (must pass on every runner):
+#     1. dotnet restore / build                   — solution builds
+#     2. dotnet test                              — unit + integration tests pass
+#     3. apis                                     — ≥1 backend registers
+#     4. all-devices --json (native + libusb)     — enumeration exits 0; 0 devices is valid
+#     5. repeated enumeration stability           — two consecutive passes match
+#     6. enumeration mechanism ran                — [enum-diagnostics] line present
+#     7. monitor 3 s hot-plug smoke               — runs the full 3 s window
+#   SOFT-PATH (never fails CI — needs attached hardware):
+#     selftest                                    — open session + GET_DESCRIPTOR + ReadExact
+#
+# The tools/test-*.sh / test-windows.ps1 scripts enforce the same contract end-to-end
+# (build → tests → enumeration → monitor) and SKIP selftest when no matching device is
+# attached. The smoke-script step below runs them per-platform; selftest SKIP/NOTE is
+# the expected device-less outcome.
+# <para>无设备 CI 契约（GitHub 托管 runner 不暴露物理 USB 设备）：
+# 硬门（每个 runner 必须通过）：restore/build、dotnet test、apis、all-devices、重复枚举稳定性、
+# 枚举机制运行、monitor 3 秒冒烟。
+# 软路径（永不失败 CI——需附加硬件）：selftest。
+# test-*.sh / test-windows.ps1 脚本端到端执行同一契约，selftest 在无设备时 SKIP/NOTE。</para>
+
 on:
   push:
     branches: [ "main" ]
@@ -63,35 +85,36 @@ jobs:
         echo "DYLD_LIBRARY_PATH=$GITHUB_WORKSPACE/$libDir" >> "$GITHUB_ENV"
         echo "Added $GITHUB_WORKSPACE/$libDir to DYLD_LIBRARY_PATH for libusb probe"
 
+    # --- Stage 1: Build -----------------------------------------------------
     - name: Restore dependencies
       run: dotnet restore
 
     - name: Build
       run: dotnet build --no-restore -c Release
 
+    # --- Stage 2: Unit + integration tests (hard gate) ----------------------
     - name: Test
       run: dotnet test --no-build -c Release --verbosity normal
 
-    # --- Behavior observation (no physical USB devices on hosted runners) ---
-    # Expected observations per platform:
-    #   windows-latest : native routes to winusb/winusb-legacy; enumeration is empty, exit 0.
-    #   ubuntu-latest  : native routes to linux-usbfs; libusb probe succeeds (runtime
-    #                    installed above) and lists zero devices; empty, exit 0.
-    #   macos-latest   : native routes to macos-iousbhost; IOUSBLib loads, so the P/Invoke
-    #                    entry points resolve (a bad signature would be logged as
-    #                    "IOUSBHost backend unavailable"); enumeration is empty, exit 0.
-    # In all cases the CLI must exit 0 with a "No USB devices were discovered" message,
-    # and the [enum-diagnostics] line must prove the enumeration mechanism actually ran
-    # (SetupDi/IOUSBLib/usbfs root succeeded) rather than silently failing.
-    - name: Observe backend APIs
-      run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- apis
+    # --- Stage 3: Backend API registration (hard gate) ----------------------
+    # Every platform must register at least one backend API. An empty `apis` result
+    # means the platform's native provider failed to initialize — a hard regression.
+    # <para>每个平台必须注册至少一个后端 API。`apis` 结果为空意味着平台原生提供器
+    # 初始化失败——硬回归。</para>
+    - name: Backend APIs registered
+      shell: bash
+      run: |
+        APIS="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- apis 2>&1)"
+        echo "$APIS"
+        if [ -z "$APIS" ]; then
+          echo "::error::no backend APIs registered on $RUNNER_OS"
+          exit 1
+        fi
 
-    - name: Observe device enumeration (native)
-      run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native
-
-    # The enumeration mechanism must have run: on a healthy runner the backend's native
-    # enumeration entry point succeeds even with zero devices attached. A silent failure
-    # (SetupDi failed / IOUSBLib copy failed) fails the CI.
+    # --- Stage 4: Enumeration mechanism ran (hard gate) ---------------------
+    # On a healthy runner the backend's native enumeration entry point succeeds even
+    # with zero devices attached. A silent failure (SetupDi failed / IOUSBLib copy
+    # failed) fails the CI.
     # Linux: hosted runners may lack the usbfs mount (/dev/bus/usb); only assert
     # usbfs-root=True when the mount exists, otherwise just require the diagnostic.
     # macOS: hosted runners may lack IOUSBLib in the dyld cache; the finder degrades to
@@ -116,14 +139,55 @@ jobs:
           macOS)   echo "$OUT" | grep -q "copy-devices=" || { echo "::error::missing copy-devices diagnostic on macOS"; exit 1; } ;;
         esac
 
+    # --- Stage 5: Enumeration stability (hard gate) -------------------------
+    # Regression guard: the device set must be identical across two consecutive
+    # enumeration passes. A device vanishing after the first pass is the feedback
+    # issue this guard exists to catch.
+    # <para>回归守护：连续两轮枚举的设备集合必须一致。首轮后设备消失正是本守护
+    # 要捕获的反馈问题。</para>
+    - name: Repeated enumeration stability (native)
+      shell: bash
+      run: |
+        P1="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"
+        RC1=$?
+        P2="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"
+        RC2=$?
+        if [ "$RC1" -ne 0 ] || [ "$RC2" -ne 0 ]; then
+          echo "::error::enumeration pass exited non-zero (pass1=$RC1 pass2=$RC2)"
+          exit 1
+        fi
+        S1="$(echo "$P1" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        S2="$(echo "$P2" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        if [ "$S1" != "$S2" ]; then
+          echo "::error::enumeration device set changed between passes"
+          echo "pass1: $S1"
+          echo "pass2: $S2"
+          exit 1
+        fi
+        echo "PASS repeated enumeration stable"
+
+    # --- Stage 6: libusb backend probe (hard gate, no hardware) -------------
+    # The libusb backend probe (Marshal.Prelink) degrades gracefully when the native
+    # runtime is absent. Running it on hosted runners exercises the supported-but-
+    # no-hardware path; a non-zero exit here is a regression.
+    # <para>libusb 后端探针在缺失原生运行库时优雅降级。在托管 runner 上运行以演练
+    # "支持但无硬件"路径；此处非零退出即回归。</para>
     - name: Observe device enumeration (libusb)
       run: dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api libusb
 
-    # --- Device-less smoke via the real-device scripts ----------------------
-    # The tools/test-*.sh / test-windows.ps1 scripts are designed to run without
-    # hardware: build/tests/apis/all-devices PASS, selftest reports SKIP (no matching
-    # device, exit 0), monitor runs a 3 s hot-plug smoke. Running them on the hosted
-    # runners exercises the full end-to-end script path used for real-device QA.
+    # --- Stage 7: Smoke script (device-less, per-platform) ------------------
+    # The tools/test-*.sh / test-windows.ps1 scripts run the full end-to-end path
+    # used for real-device QA: build → tests → apis → all-devices → repeated
+    # enumeration → selftest → monitor. On device-less hosted runners:
+    #   - selftest reports SKIP (no matching device attached, exit 0)
+    #   - monitor runs a 3 s hot-plug smoke
+    # The scripts honor the device-less contract: build/tests/apis/all-devices/monitor
+    # are hard-gated; selftest SKIP/NOTE is the expected device-less outcome and never
+    # fails CI.
+    # <para>tools/test-*.sh / test-windows.ps1 脚本端到端运行真实设备 QA 全路径。在无设备
+    # 托管 runner 上：selftest 报告 SKIP（无匹配设备，退出码 0）；monitor 运行 3 秒冒烟。
+    # 脚本遵循无设备契约：build/tests/apis/all-devices/monitor 为硬门；selftest SKIP/NOTE
+    # 为无设备预期结果，永不失败 CI。</para>
     - name: Run smoke script (Windows, device-less)
       if: runner.os == 'Windows'
       shell: pwsh
