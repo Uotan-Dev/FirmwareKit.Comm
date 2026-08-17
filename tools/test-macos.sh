@@ -133,8 +133,8 @@ if [ "$RC" -eq 0 ]; then
         echo "FAIL	repeated enumeration: second pass failed (exit $RC2)"
         FAILURES=$((FAILURES + 1))
     else
-        SET1="$(echo "$DEVICES" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
-        SET2="$(echo "$DEVICES2" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        SET1="$(echo "$DEVICES" | awk -F'"' '/"vid":/{v=$4} /"pid":/{print v":"$4}' | sort -u)"
+        SET2="$(echo "$DEVICES2" | awk -F'"' '/"vid":/{v=$4} /"pid":/{print v":"$4}' | sort -u)"
         COUNT1=$(echo "$SET1" | grep -c . || true)
         COUNT2=$(echo "$SET2" | grep -c . || true)
         if [ "$SET1" = "$SET2" ]; then

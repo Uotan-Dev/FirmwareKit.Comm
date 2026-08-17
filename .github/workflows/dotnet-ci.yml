@@ -148,25 +148,30 @@ jobs:
     - name: Repeated enumeration stability (native)
       shell: bash
       run: |
-        # NB: the command substitutions must end with `|| true` — the step shell
-        # runs under `set -e`, and `all-devices --json` exits 1 when zero devices
-        # are discovered (it writes the "No USB devices…" hint to stderr). Without
-        # the `|| true`, the substitution aborts the script before RC1=$? can
-        # capture the exit code, failing CI on every device-less runner.
-        # <para>注意：命令替换必须以 `|| true` 结尾——步骤 shell 以 `set -e` 运行，
-        # 而 `all-devices --json` 在零设备时退出码 1（向 stderr 写入 "No USB devices…"）。
-        # 无 `|| true` 则替换会中止脚本，使 RC1=$? 无法捕获退出码，导致每个无设备
-        # runner 上 CI 失败。</para>
-        P1="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)" || true
-        RC1=$?
-        P2="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)" || true
-        RC2=$?
+        # The step shell runs under `set -e -o pipefail`. Capture each pass's real
+        # exit code with `set +e` … `set -e`, so a non-zero `dotnet run` cannot
+        # abort the script before RC1=$? records it (the `cmd || true; RC=$?` form
+        # would leave $? as 0 and silently defeat the guard).
+        # The --json output is pretty-printed, so "vid" and "pid" sit on separate
+        # lines; the awk extractor below pairs them per device and exits 0 even
+        # when no device is present — device-less runners must pass this guard
+        # trivially, and a plain `grep` no-match would abort the step.
+        # <para>步骤 shell 以 `set -e -o pipefail` 运行。用 `set +e`…`set -e` 捕获
+        # 每轮真实的退出码，避免非零的 `dotnet run` 在 RC1=$? 记录前中止脚本
+        # （`cmd || true; RC=$?` 会使 $? 恒为 0，静默失效守卫）。
+        # `--json` 输出为美化缩进格式，"vid"/"pid" 分处两行；下方 awk 按设备配对提取，
+        # 且在无设备时也以 0 退出——无设备 runner 必须平凡通过本守卫，而纯 `grep`
+        # 无匹配会中止步骤。</para>
+        set +e
+        P1="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"; RC1=$?
+        P2="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"; RC2=$?
+        set -e
         if [ "$RC1" -ne 0 ] || [ "$RC2" -ne 0 ]; then
           echo "::error::enumeration pass exited non-zero (pass1=$RC1 pass2=$RC2)"
           exit 1
         fi
-        S1="$(echo "$P1" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
-        S2="$(echo "$P2" | grep -o '"vid": *"[^"]*","pid": *"[^"]*"' | sort -u)"
+        S1="$(echo "$P1" | awk -F'"' '/"vid":/{v=$4} /"pid":/{print v":"$4}' | sort -u)"
+        S2="$(echo "$P2" | awk -F'"' '/"vid":/{v=$4} /"pid":/{print v":"$4}' | sort -u)"
         if [ "$S1" != "$S2" ]; then
           echo "::error::enumeration device set changed between passes"
           echo "pass1: $S1"
