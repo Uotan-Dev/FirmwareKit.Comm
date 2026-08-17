@@ -20,15 +20,15 @@ namespace FirmwareKit.Comm.Backend.MacOS;
 /// <remarks>
 /// The calling shape follows Google adb / fastboot usb_osx.cc: the device-level
 /// <c>USBDeviceOpen</c> is deliberately NOT used — on current macOS it fails with
-/// <c>kIOReturnNoSpace</c> when the system has claimed the device, and adb/fastboot
-/// never call it. Only the interface-level <c>USBInterfaceOpen</c> is required for
-/// pipe I/O. All method pointers are read directly from the interface struct
-/// (IOKit classic interfaces are C structs of function pointers, not COM vtables).
+/// <c>kIOReturnNoSpace</c> when the system has claimed the device. Only the
+/// interface-level <c>USBInterfaceOpen</c> is required for pipe I/O. All method
+/// pointers are read via <c>IOKitUsbAPI.GetDelegate</c> (double indirection,
+/// verified layout). See README "Platform Notes (macOS IOKit backend)".
 /// <para>调用形遵循谷歌 adb / fastboot usb_osx.cc：刻意不使用设备级
 /// <c>USBDeviceOpen</c>——当前 macOS 上系统已声明设备时它会以
-/// <c>kIOReturnNoSpace</c> 失败，且 adb/fastboot 从不调用它。管道 I/O 仅需接口级
-/// <c>USBInterfaceOpen</c>。所有方法指针直接从接口结构体读取（IOKit 经典接口是
-/// 函数指针的 C 结构体，而非 COM vtable）。</para>
+/// <c>kIOReturnNoSpace</c> 失败。管道 I/O 仅需接口级 <c>USBInterfaceOpen</c>。
+/// 所有方法指针经 <c>IOKitUsbAPI.GetDelegate</c> 读取（双重解引用，已验证布局）。
+/// 详见 README「平台注意事项（macOS IOKit 后端）」。</para>
 /// </remarks>
 internal class IOKitUsbDevice : UsbDevice
 {
@@ -334,18 +334,16 @@ internal class IOKitUsbDevice : UsbDevice
                 // vtable）。</para>
                 _pluginInterface = plugin;
 
-                // NOTE: the pre-rewrite backend called device-level USBDeviceOpen
-                // here and failed with kIOReturnNoSpace on current macOS when the
-                // system has claimed the device. Google adb / fastboot (usb_osx.cc)
-                // NEVER open the device — only the interface-level USBInterfaceOpen
-                // (in TryOpenInterface) is required for pipe I/O, and
-                // CreateInterfaceIterator works on a closed device interface. We
-                // therefore do the same: no device-level open.
-                // <para>注意：重写前的后端在此调用设备级 USBDeviceOpen，并在当前 macOS
-                // 上因系统已声明设备而以 kIOReturnNoSpace 失败。谷歌 adb/fastboot
-                // （usb_osx.cc）从不打开设备——管道 I/O 仅需 TryOpenInterface 中的
-                // 接口级 USBInterfaceOpen，而 CreateInterfaceIterator 在未打开的设备
-                // 接口上即可工作。因此此处同样不做设备级打开。</para>
+                // NOTE: no device-level USBDeviceOpen — it fails with
+                // kIOReturnNoSpace when the system claims the device, and adb /
+                // fastboot never open the device; CreateInterfaceIterator works on
+                // a closed device interface. Pipe I/O only needs USBInterfaceOpen
+                // in TryOpenInterface. See README "Platform Notes (macOS IOKit)".
+                // <para>注意：不做设备级 USBDeviceOpen——系统已声明设备时它以
+                // kIOReturnNoSpace 失败，且 adb/fastboot 从不打开设备；
+                // CreateInterfaceIterator 在未打开的设备接口上即可工作。管道 I/O
+                // 仅需 TryOpenInterface 中的 USBInterfaceOpen。
+                // 详见 README「平台注意事项（macOS IOKit 后端）」。</para>
 
                 // Align with adb: ensure Configuration 1 is selected before creating
                 // the interface iterator. Best-effort; a device may legitimately have

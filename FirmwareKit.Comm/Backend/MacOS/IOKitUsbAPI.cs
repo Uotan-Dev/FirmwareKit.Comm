@@ -7,94 +7,23 @@ namespace FirmwareKit.Comm.Backend.MacOS;
 /// <para>IOKit.framework 经典（MIG）API 的 P/Invoke 表面。</para>
 /// </summary>
 /// <remarks>
-/// <b>Migration status — COMPLETE (rewritten on main referencing adb usb_osx.cc).</b>
-/// <para><b>迁移状态——已完成（在 main 上对照 adb usb_osx.cc 重写）。</b></para>
-///
-/// The macOS native backend originally targeted the IOUSBHost.framework
-/// user-space C API (<c>IOUSBLibCopyDevices</c>, <c>IOUSBHostDeviceOpen</c>,
-/// <c>IOUSBHostPipeBulkTransfer</c>, ...). On the current macOS release the
-/// IOUSBHost.framework main binary is absent — only a BridgeSupport stub
-/// remains — so every <c>[DllImport(IOUSBHost)]</c> throws
-/// <c>DllNotFoundException</c>, <c>MacHostUsbFinder.FindDevice</c> silently
-/// returns an empty list, and the CLI reports
-/// <c>copy-devices=False; scanned=0</c>.
-/// <para>macOS 原生后端最初面向 IOUSBHost.framework 用户态 C API
-/// （<c>IOUSBLibCopyDevices</c>、<c>IOUSBHostDeviceOpen</c>、
-/// <c>IOUSBHostPipeBulkTransfer</c>……）。当前 macOS 发行版中
-/// IOUSBHost.framework 主二进制缺失——仅剩 BridgeSupport 桩——因此每个
-/// <c>[DllImport(IOUSBHost)]</c> 都抛 <c>DllNotFoundException</c>，
-/// <c>MacHostUsbFinder.FindDevice</c> 静默返回空列表，CLI 报告
-/// <c>copy-devices=False; scanned=0</c>。</para>
-///
-/// This file declares the replacement surface: the IOKit classic API that
-/// lives in IOKit.framework and is loadable on every macOS release. The
-/// declarations here are validated to P/Invoke correctly
-/// (<c>IOServiceMatching("IOUSBDevice")</c> returns a +1 dictionary;
-/// <c>IOServiceGetMatchingServices</c> returns 0 and yields 10
-/// <c>IOUSBDevice</c> services on the test host).
-/// <para>本文件声明替代表面：位于 IOKit.framework、在每个 macOS 发行版均可加载
-/// 的 IOKit 经典 API。此处的声明已验证 P/Invoke 正确
-/// （<c>IOServiceMatching("IOUSBDevice")</c> 返回 +1 字典；
-/// <c>IOServiceGetMatchingServices</c> 返回 0，并在测试主机上产生 10 个
-/// <c>IOUSBDevice</c> 服务）。</para>
-///
-/// <b>What the rewrite changed (vs. the pre-rewrite SharpFastboot-derived offsets):</b>
-/// <para><b>重写相对旧版（源自 SharpFastboot 的偏移）改了什么：</b></para>
-/// <list type="bullet">
-/// <item><description>
-/// Method pointers are read directly from the interface struct — IOKit classic
-/// interfaces are plain C structs of function pointers, so <c>GetDelegate</c>
-/// uses a single <c>Marshal.ReadIntPtr(self, offset * IntPtr.Size)</c> instead of
-/// the old double indirection through a fake "vtable" pointer.
-/// <para>方法指针直接从接口结构体读取——IOKit 经典接口是函数指针的普通 C 结构体，
-/// 故 <c>GetDelegate</c> 用单次 <c>Marshal.ReadIntPtr(self, offset * IntPtr.Size)</c>
-/// 取代旧版经伪造 "vtable" 指针的双重解引用。</para>
-/// </description></item>
-/// <item><description>
-/// Vtable offsets now match IOUSBLib.h / adb's usb_osx.cc (IUnknown prefix):
-/// QueryInterface=0/AddRef=1/Release=2, <c>DeviceRequest</c>=3,
-/// <c>USBDeviceOpen</c>=4, <c>USBDeviceClose</c>=5, <c>USBDeviceReset</c>=7,
-/// <c>GetDeviceVendor</c>=9, <c>GetDeviceProduct</c>=10,
-/// <c>GetConfigurationValue</c>=20, <c>SetConfigurationValue</c>=21,
-/// <c>GetSerialNumberStringIndex</c>=22, <c>CreateInterfaceIterator</c>=24;
-/// interface <c>USBInterfaceOpen</c>=8, <c>USBInterfaceClose</c>=9,
-/// <c>GetNumEndpoints</c>=10, <c>GetPipeProperties</c>=11,
-/// <c>ClearPipeStall</c>=16, <c>ReadPipeTO</c>=19, <c>WritePipeTO</c>=20.
-/// <para>vtable 偏移现与 IOUSBLib.h / adb 的 usb_osx.cc 一致（IUnknown 前缀）：
-/// QueryInterface=0/AddRef=1/Release=2，<c>DeviceRequest</c>=3、
-/// <c>USBDeviceOpen</c>=4、<c>USBDeviceClose</c>=5、<c>USBDeviceReset</c>=7、
-/// <c>GetDeviceVendor</c>=9、<c>GetDeviceProduct</c>=10、
-/// <c>GetConfigurationValue</c>=20、<c>SetConfigurationValue</c>=21、
-/// <c>GetSerialNumberStringIndex</c>=22、<c>CreateInterfaceIterator</c>=24；
-/// 接口 <c>USBInterfaceOpen</c>=8、<c>USBInterfaceClose</c>=9、
-/// <c>GetNumEndpoints</c>=10、<c>GetPipeProperties</c>=11、
-/// <c>ClearPipeStall</c>=16、<c>ReadPipeTO</c>=19、<c>WritePipeTO</c>=20。</para>
-/// </description></item>
-/// <item><description>
-/// Device open follows adb: the device-level <c>USBDeviceOpen</c> is never
-/// called (it fails with <c>kIOReturnNoSpace</c> on current macOS when the
-/// system claims the device); only the interface-level <c>USBInterfaceOpen</c>
-/// is used, which is all that pipe I/O needs.
-/// <para>设备打开遵循 adb：从不调用设备级 <c>USBDeviceOpen</c>（当前 macOS 上系统
-/// 已声明设备时会以 <c>kIOReturnNoSpace</c> 失败）；仅使用接口级
-/// <c>USBInterfaceOpen</c>——管道 I/O 仅需此打开。</para>
-/// </description></item>
-/// </list>
-/// </remarks>
-/// <remarks>
-/// On the current macOS the IOUSBHost.framework user-space C API
-/// (<c>IOUSBLibCopyDevices</c>, <c>IOUSBHostDeviceOpen</c>, ...) is no longer
-/// loadable — the framework's main binary is absent and only a BridgeSupport
-/// stub remains. This surface falls back to the IOKit classic API, which lives
-/// in IOKit.framework and is available on every macOS release. Device I/O uses
-/// the <c>IOUSBDeviceInterface</c> COM-vtable obtained via
-/// <c>IOCreatePlugInInterfaceForService</c>.
-/// <para>当前 macOS 上 IOUSBHost.framework 用户态 C API
-/// （<c>IOUSBLibCopyDevices</c>、<c>IOUSBHostDeviceOpen</c>……）已不可加载——框架
-/// 主二进制缺失，仅剩 BridgeSupport 桩。本表面回退到 IOKit 经典 API，该 API 位于
-/// IOKit.framework，在每个 macOS 发行版上均可用。设备 I/O 使用通过
-/// <c>IOCreatePlugInInterfaceForService</c> 获取的 <c>IOUSBDeviceInterface</c>
-/// COM-vtable。</para>
+/// The macOS backend targets the IOKit classic API (loadable on every macOS
+/// release) because IOUSBHost.framework is unloadable on current macOS — its
+/// main binary is absent and only a BridgeSupport stub remains. Method
+/// pointers are read via the double indirection validated on real hardware
+/// (vtable pointer, then method slot); the <c>Offset_*</c> constants below
+/// match the verified layout, with IUnknown at offsets 1/3 behind a leading
+/// pseudo-vtable slot. Do NOT "normalize" them to a standard IUnknown 0/1/2
+/// layout — that dereferences the wrong slot and SIGSEGVs the process.
+/// Device-level <c>USBDeviceOpen</c> is deliberately never called (follows
+/// adb usb_osx.cc). See README "Platform Notes (macOS IOKit backend)".
+/// <para>macOS 后端面向 IOKit 经典 API（每个 macOS 发行版均可加载），因为
+/// IOUSBHost.framework 在当前 macOS 上不可加载——主二进制缺失，仅剩 BridgeSupport
+/// 桩。方法指针按真实硬件验证的双重解引用读取（先读 vtable 指针，再读方法槽位）；
+/// 下方 <c>Offset_*</c> 常量与已验证布局一致，IUnknown 位于前导伪 vtable 槽之后的
+/// 偏移 1/3。切勿"规范化"为标准 IUnknown 0/1/2 布局——那会解引用错误槽位并使进程
+/// SIGSEGV。刻意不调用设备级 <c>USBDeviceOpen</c>（遵循 adb usb_osx.cc）。
+/// 详见 README「平台注意事项（macOS IOKit 后端）」。</para>
 /// </remarks>
 internal static class IOKitUsbAPI
 {

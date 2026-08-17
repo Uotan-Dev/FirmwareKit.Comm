@@ -48,6 +48,20 @@ Backend matrix:
 
 HarmonyOS is hidden from `GetAvailableApis()` by default because it cannot be detected reliably with file probes. On macOS the IOKit native backend works on every release; use the `libusb` backend when the native path is not desired.
 
+## Platform Notes (macOS IOKit backend)
+
+The macOS native backend targets the **IOKit.framework classic (MIG) API** because IOUSBHost.framework is unloadable on current macOS — its main binary is absent (only a BridgeSupport stub remains), so every `[DllImport(IOUSBHost)]` throws `DllNotFoundException`. The behaviors below are **verified on current macOS**; do not "fix" them based on the IOKit C headers alone.
+
+- **The COM-vtable layout is not a standard IUnknown 0/1/2 layout.** Plug-in objects from `IOCreatePlugInInterfaceForService` expose a leading pseudo-vtable slot: IUnknown methods sit at offsets 1/3, device/interface methods at the `Offset_*` constants in `IOKitUsbAPI`. `GetDelegate` reads method pointers with **double indirection** (vtable pointer, then slot). Normalizing to 0/1/2 or reading single-indirect dereferences the wrong slot and SIGSEGVs the process (reverted once, see commit `b9d8895`).
+- **Device-level `USBDeviceOpen` is never called.** On current macOS it fails with `kIOReturnNoSpace` when the system has claimed the device; adb/fastboot never call it. Only the interface-level `USBInterfaceOpen` is used — that is all pipe I/O needs.
+- **`IOIteratorNext` returns +0 references.** Do not `IOObjectRelease` a service while iterating: releasing it destroys the service the iterator still points to, and the loop sticks on the same handle forever. Only release the iterator itself.
+- **`IORegistryEntryGetRegistryEntryID` segfaults** against `IOUSBDevice` services on current macOS (native crash, no managed exception). The finder uses the service handle (`uint mach_port_t`) as the identity key instead.
+- **`CFNumberGetValue` requires the exact storage type.** Query `CFNumberGetType` first and dispatch to the matching accessor; a mismatched type returns the low 16 bits with garbage in the high byte (verified: idVendor `0x18D1` read as `0x8000`).
+- **`mach_port_t` is 32-bit.** `IOIteratorNext` returns `uint` and `IORegistryEntryGetRegistryEntryID` takes `uint` — declaring them as `IntPtr` feeds garbage in the high 4 bytes.
+- **Enumeration is metadata-only.** Never call `CreateHandle()` during enumeration: opening the IOKit COM-vtable on a host that only wants a device listing crashes the process with SIGSEGV (exit 139) after the scan. Sessions open the device lazily.
+- **Synthetic paths are list-only.** When `IORegistryEntryGetPath` fails, the finder falls back to `IOKit:{rid}` so the device still appears in enumeration, but that synthetic path cannot be reopened by `IORegistryEntryFromPath` (session open returns -1).
+- **Interface metadata is paired by (vid,pid).** `IOUSBInterface` services inherit `idVendor`/`idProduct` from their parent `IOUSBDevice`, so the finder builds a (vid,pid) → interfaces table without `IORegistryEntryGetParent` (not exported on current macOS) or `IORegistryEntryGetRegistryEntryID` (segfaults).
+
 ## Transfer Timeout Semantics
 
 - The timeout passed to `Read` / `Write` (and their `ReadInto` variants) applies **per chunk**, not to the whole operation: a transfer larger than the backend chunk size is split into multiple chunks, so the total time can reach `chunkCount × timeoutMs`.

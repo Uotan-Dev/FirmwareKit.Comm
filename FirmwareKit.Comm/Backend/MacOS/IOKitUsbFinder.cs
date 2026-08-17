@@ -158,19 +158,14 @@ internal static class IOKitUsbFinder
                     };
 
                     // IMPORTANT: do NOT call dev.CreateHandle() during enumeration.
-                    // Enumeration is metadata discovery only (see UsbProviderProjection
-                    // remarks: "Enumeration does not open handles; open on demand").
-                    // Opening the COM-vtable here — inside a test host that is enumerating
-                    // real devices — crashes the process with SIGSEGV (exit 139) after the
-                    // tests pass, because the IOKit COM interface release path is not safe
-                    // to tear down on a host that only wanted a device listing. Sessions
-                    // open the device lazily in UsbProviderProjection.ToSessions.
-                    // <para>重要：枚举期间切勿调用 dev.CreateHandle()。枚举仅为元数据发现
-                    // （见 UsbProviderProjection 注释："枚举不打开句柄；按需打开"）。在此——
-                    // 在枚举真实设备的测试宿主内——打开 COM-vtable 会在测试通过后使进程
-                    // SIGSEGV 崩溃（退出码 139），因为 IOKit COM 接口释放路径无法在仅需
-                    // 设备列表的宿主上安全拆除。会话在 UsbProviderProjection.ToSessions
-                    // 中惰性打开设备。</para>
+                    // Enumeration is metadata discovery only — opening the IOKit
+                    // COM-vtable on a list-only host SIGSEGVs the process (exit 139)
+                    // at teardown. Sessions open the device lazily.
+                    // See README "Platform Notes (macOS IOKit backend)".
+                    // <para>重要：枚举期间切勿调用 dev.CreateHandle()。枚举仅为元数据
+                    // 发现——在仅需列表的宿主上打开 IOKit COM-vtable 会在拆除时使进程
+                    // SIGSEGV（退出码 139）。会话按需惰性打开设备。
+                    // 详见 README「平台注意事项（macOS IOKit 后端）」。</para>
 
                     devices.Add(dev);
                 }
@@ -178,14 +173,14 @@ internal static class IOKitUsbFinder
                 {
                     // IMPORTANT: do NOT IOObjectRelease(service) here. The iterator
                     // returned a +0 reference (not +1) — releasing it destroys the
-                    // service the iterator still points to, so IOIteratorNext returns
-                    // the same handle forever (verified: the loop stuck on service
-                    // #1 = 4115 repeating). Leave the service ref alone; the iterator
+                    // service the iterator still points to, and IOIteratorNext then
+                    // returns the same handle forever (verified: loop stuck on
+                    // service #1 = 4115). Leave the service ref alone; the iterator
                     // itself is released in the outer finally.
-                    // <para>重要：此处切勿 IOObjectRelease(service)。迭代器返回的是 +0 引用
-                    // （非 +1）——释放之会摧毁迭代器仍指向的服务，使 IOIteratorNext 永远返回
-                    // 同一句柄（已验证：循环卡在 service #1 = 4115 重复）。保持服务引用不动；
-                    // 迭代器本身在外层 finally 中释放。</para>
+                    // <para>重要：此处切勿 IOObjectRelease(service)。迭代器返回 +0 引用
+                    // （非 +1）——释放之会摧毁迭代器仍指向的服务，使 IOIteratorNext 永远
+                    // 返回同一句柄（已验证：循环卡在 service #1 = 4115）。保持服务引用
+                    // 不动；迭代器本身在外层 finally 中释放。</para>
 
                     // Advance the iterator in finally so EVERY path — including the
                     // `continue` statements above (filter mismatch, metadata failure) —
@@ -261,12 +256,15 @@ internal static class IOKitUsbFinder
         // Skip IORegistryEntryGetRegistryEntryID — it segfaults on current macOS
         // when called against an IOUSBDevice service (verified: the native call
         // crashes the process with no managed exception). Use the service handle
-        // itself (uint mach_port_t) as the reopen key, packed into the high bits
-        // of registryEntryId so IOKitUsbDevice.RegistryEntryId stays a ulong.
+        // itself (uint mach_port_t) as the identity key instead, stored in the low
+        // 32 bits of registryEntryId so IOKitUsbDevice.RegistryEntryId stays a
+        // ulong. Note this is only a display/identity hint — reopening is done by
+        // IOService-plane DevicePath, never by this handle value.
         // <para>跳过 IORegistryEntryGetRegistryEntryID——在当前 macOS 上对 IOUSBDevice
-        // 服务调用会段错误（已验证：native 调用崩溃进程且无托管异常）。用服务句柄本身
-        // （uint mach_port_t）作为重开键，打包到 registryEntryId 高位，使
-        // IOKitUsbDevice.RegistryEntryId 保持 ulong。</para>
+        // 服务调用会段错误（已验证：native 调用崩溃进程且无托管异常）。改用服务句柄
+        // 本身（uint mach_port_t）作为标识键，存放于 registryEntryId 低 32 位，使
+        // IOKitUsbDevice.RegistryEntryId 保持 ulong。注意这仅用于展示/标识——重开设备
+        // 始终走 IOService 平面 DevicePath，绝不使用此句柄值。</para>
         UsbTrace.Log($"IOKitUsbFinder: TryReadDeviceMetadata entry, service={service}");
         registryEntryId = (uint)service.ToInt64();
 
@@ -312,7 +310,9 @@ internal static class IOKitUsbFinder
     // property is absent or not a CFNumber.
     // <para>读取 CFNumber 值的注册表属性为 ushort。属性不存在或非 CFNumber 时返回 0。</para>
     private static ushort ReadCFNumberUshort(IntPtr service, string propertyName)
-        => unchecked((ushort)ReadCFNumberRawU32(service, propertyName));
+        => TryReadCFNumberRawU32(service, propertyName, out uint raw)
+            ? unchecked((ushort)raw)
+            : (ushort)0;
 
     // Reads the CFNumber as a uint32 by first querying its actual storage type
     // via CFNumberGetType and dispatching to the matching CFNumberGetValue
@@ -326,14 +326,15 @@ internal static class IOKitUsbFinder
     // uint32 读取 CFNumber。CFNumberGetValue 要求类型参数匹配 CFNumber 的实际存储类型
     // ——对 kCFNumberSInt32Type=3 的 CFNumber 传 kCFNumberShortType=5 会返回低位 16 比特
     // 且高位字节为垃圾（已验证：idVendor=0x18D1 在错误类型下读为 0x8000）。</para>
-    private static uint ReadCFNumberRawU32(IntPtr service, string propertyName)
+    private static bool TryReadCFNumberRawU32(IntPtr service, string propertyName, out uint value)
     {
+        value = 0;
         IntPtr key = IOKitUsbAPI.CFStringCreateWithCString(DefaultAllocator, propertyName, IOKitUsbAPI.kCFStringEncodingUTF8);
-        if (key == IntPtr.Zero) return 0;
+        if (key == IntPtr.Zero) return false;
         try
         {
             IntPtr cfValue = IOKitUsbAPI.IORegistryEntryCreateCFProperty(service, key, DefaultAllocator, 0);
-            if (cfValue == IntPtr.Zero) return 0;
+            if (cfValue == IntPtr.Zero) return false;
             try
             {
                 int cfType = CFNumberGetType(cfValue);
@@ -341,18 +342,26 @@ internal static class IOKitUsbFinder
                 {
                     case 1: // kCFNumberSInt16Type
                         ushort v16 = 0;
-                        return CFNumberGetValueU16(cfValue, 1, ref v16) ? v16 : (ushort)0;
+                        if (!CFNumberGetValueU16(cfValue, 1, ref v16)) return false;
+                        value = v16;
+                        return true;
                     case 3: // kCFNumberSInt32Type
                         uint v32 = 0;
-                        return CFNumberGetValueU32(cfValue, 3, ref v32) ? v32 : 0;
+                        if (!CFNumberGetValueU32(cfValue, 3, ref v32)) return false;
+                        value = v32;
+                        return true;
                     case 4: // kCFNumberSInt64Type
                         ulong v64 = 0;
-                        return CFNumberGetValueU64(cfValue, 4, ref v64) ? unchecked((uint)v64) : 0;
+                        if (!CFNumberGetValueU64(cfValue, 4, ref v64)) return false;
+                        value = unchecked((uint)v64);
+                        return true;
                     default:
                         // Unknown numeric type — fall back to SInt32 widening.
                         // <para>未知数值类型——回退到 SInt32 widening。</para>
                         uint fallback = 0;
-                        return CFNumberGetValueU32(cfValue, 3, ref fallback) ? fallback : 0;
+                        if (!CFNumberGetValueU32(cfValue, 3, ref fallback)) return false;
+                        value = fallback;
+                        return true;
                 }
             }
             finally
@@ -419,22 +428,15 @@ internal static class IOKitUsbFinder
 
     // Builds a (vid,pid) -> interfaces[] table by enumerating the IOUSBInterface
     // plane ONCE. IOUSBInterface services inherit idVendor/idProduct from their
-    // parent IOUSBDevice (verified by probe: every IOUSBInterface service exposes
-    // idVendor/idProduct alongside bInterfaceNumber/bInterfaceClass/
-    // bInterfaceSubClass/bInterfaceProtocol). This lets us pair interfaces to
-    // devices by VID/PID without IORegistryEntryGetParent (not exported on current
-    // macOS) or IORegistryEntryGetRegistryEntryID (segfaults against IOUSBDevice).
-    // For each interface the class/subclass/protocol are read by first querying
-    // CFNumberGetType and dispatching to the matching CFNumberGetValue accessor
-    // (kCFNumberSInt32Type=3 is the common storage type for these byte fields).
+    // parent IOUSBDevice (verified by probe), so interfaces pair to devices by
+    // VID/PID without IORegistryEntryGetParent (not exported on current macOS) or
+    // IORegistryEntryGetRegistryEntryID (segfaults against IOUSBDevice). Class/
+    // subclass/protocol are read via CFNumberGetType dispatch.
     // <para>枚举 IOUSBInterface 平面一次，构建 (vid,pid) -> interfaces[] 表。
-    // IOUSBInterface 服务从父 IOUSBDevice 继承 idVendor/idProduct（已由探针验证：
-    // 每个 IOUSBInterface 服务在 bInterfaceNumber/bInterfaceClass/
-    // bInterfaceSubClass/bInterfaceProtocol 旁暴露 idVendor/idProduct）。由此可按
-    // VID/PID 将接口配对到设备，无需 IORegistryEntryGetParent（当前 macOS 不导出）
-    // 或 IORegistryEntryGetRegistryEntryID（对 IOUSBDevice 段错误）。每个接口的
-    // 类/子类/协议先经 CFNumberGetType 咨询真实类型再派发到匹配的 CFNumberGetValue
-    // 访问器（kCFNumberSInt32Type=3 是这些字节字段的常见存储类型）。</para>
+    // IOUSBInterface 服务从父 IOUSBDevice 继承 idVendor/idProduct（已由探针验证），
+    // 故可按 VID/PID 将接口配对到设备，无需 IORegistryEntryGetParent（当前 macOS
+    // 不导出）或 IORegistryEntryGetRegistryEntryID（对 IOUSBDevice 段错误）。类/
+    // 子类/协议经 CFNumberGetType 派发读取。</para>
     private static Dictionary<(ushort Vid, ushort Pid), List<UsbInterfaceInfo>> BuildInterfaceTable()
     {
         var table = new Dictionary<(ushort Vid, ushort Pid), List<UsbInterfaceInfo>>();
@@ -524,17 +526,23 @@ internal static class IOKitUsbFinder
     }
 
     private static byte? ReadCFNumberByte(IntPtr service, string propertyName)
-        => unchecked((byte?)ReadCFNumberRawU32(service, propertyName)) is byte b ? b : null;
+        => TryReadCFNumberRawU32(service, propertyName, out uint raw)
+            ? unchecked((byte)raw)
+            : null;
 
     // Reads the IOService-plane path of a device service via
     // IORegistryEntryGetPath. This is the path IOKitUsbDevice.CreateHandle feeds
     // to IORegistryEntryFromPath to reopen the device by identity. Returns null
-    // when the path cannot be read (the finder then falls back to a synthetic
-    // "IOKit:{rid}" path so enumeration still reports the device).
+    // when the path cannot be read — the finder then falls back to a synthetic
+    // "IOKit:{rid}" path so enumeration still reports the device, but that
+    // synthetic path is NOT a valid IOService plane path: IORegistryEntryFromPath
+    // cannot reopen it, so such devices are list-only (session open returns -1).
     // <para>经 IORegistryEntryGetPath 读取设备服务的 IOService 平面路径。这正是
     // IOKitUsbDevice.CreateHandle 传给 IORegistryEntryFromPath 以按标识重开设备的
-    // 路径。路径不可读时返回 null（finder 随后回退到合成的 "IOKit:{rid}" 路径，
-    // 使枚举仍能报告设备）。</para>
+    // 路径。路径不可读时返回 null——finder 随后回退到合成的 "IOKit:{rid}" 路径，
+    // 使枚举仍能报告设备；但合成路径不是有效的 IOService 平面路径，
+    // IORegistryEntryFromPath 无法用它重开，因此此类设备只能枚举、无法打开会话
+    // （CreateHandle 返回 -1）。</para>
     private static string? TryGetServicePath(IntPtr service)
     {
         try

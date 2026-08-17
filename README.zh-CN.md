@@ -48,6 +48,20 @@ FirmwareKit.Comm 聚焦跨平台 USB 传输原语：
 
 HarmonyOS 默认从 `GetAvailableApis()` 中隐藏（文件探测无法可靠识别）；需显式开启。macOS 上 IOKit 原生后端在每个发行版均可用；不需要原生路径时使用 `libusb` 后端。
 
+## 平台注意事项（macOS IOKit 后端）
+
+macOS 原生后端面向 **IOKit.framework 经典（MIG）API**，因为 IOUSBHost.framework 在当前 macOS 上不可加载——其主二进制缺失（仅剩 BridgeSupport 桩），每个 `[DllImport(IOUSBHost)]` 都会抛 `DllNotFoundException`。以下行为**均已在当前 macOS 上验证**；切勿仅依据 IOKit C 头文件"修正"它们。
+
+- **COM-vtable 布局不是标准 IUnknown 0/1/2 布局。** `IOCreatePlugInInterfaceForService` 得到的插件对象带一个前导伪 vtable 槽：IUnknown 方法位于偏移 1/3，设备/接口方法位于 `IOKitUsbAPI` 中的 `Offset_*` 常量。`GetDelegate` 以**双重解引用**读取方法指针（先读 vtable 指针，再读槽位）。规范化为 0/1/2 或单层读取会解引用错误槽位并使进程 SIGSEGV（曾回退过一次，见提交 `b9d8895`）。
+- **从不调用设备级 `USBDeviceOpen`。** 当前 macOS 上系统已声明设备时它以 `kIOReturnNoSpace` 失败；adb/fastboot 从不调用它。仅使用接口级 `USBInterfaceOpen`——管道 I/O 仅需此打开。
+- **`IOIteratorNext` 返回 +0 引用。** 迭代期间切勿 `IOObjectRelease` 服务：释放它会摧毁迭代器仍指向的服务，使循环永远卡在同一句柄上。仅释放迭代器本身。
+- **`IORegistryEntryGetRegistryEntryID` 段错误**——当前 macOS 上对 `IOUSBDevice` 服务调用会原生崩溃（无托管异常）。finder 改用服务句柄（`uint mach_port_t`）作为标识键。
+- **`CFNumberGetValue` 要求精确的存储类型。** 先经 `CFNumberGetType` 咨询类型再派发到匹配的访问器；类型不匹配会返回低位 16 比特且高位字节为垃圾（已验证：idVendor `0x18D1` 读为 `0x8000`）。
+- **`mach_port_t` 为 32 位。** `IOIteratorNext` 返回 `uint`、`IORegistryEntryGetRegistryEntryID` 接收 `uint`——声明为 `IntPtr` 会在高 4 字节传入垃圾。
+- **枚举仅做元数据发现。** 枚举期间切勿调用 `CreateHandle()`：在仅需设备列表的宿主上打开 IOKit COM-vtable 会在扫描后使进程 SIGSEGV（退出码 139）。会话按需惰性打开设备。
+- **合成路径只能枚举。** `IORegistryEntryGetPath` 失败时 finder 回退到 `IOKit:{rid}`，设备仍出现在枚举中；但合成路径无法被 `IORegistryEntryFromPath` 重开（会话打开返回 -1）。
+- **接口元数据按 (vid,pid) 配对。** `IOUSBInterface` 服务从父 `IOUSBDevice` 继承 `idVendor`/`idProduct`，故 finder 构建 (vid,pid) → 接口表，无需 `IORegistryEntryGetParent`（当前 macOS 不导出）或 `IORegistryEntryGetRegistryEntryID`（段错误）。
+
 ## 传输超时语义
 
 - 传给 `Read` / `Write`（及 `ReadInto` 变体）的超时**按块生效**而非整个操作：超过后端块大小的传输会被拆分，总耗时可达 `块数 × timeoutMs`。
