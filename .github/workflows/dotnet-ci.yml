@@ -148,9 +148,18 @@ jobs:
     - name: Repeated enumeration stability (native)
       shell: bash
       run: |
-        P1="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"
+        # NB: the command substitutions must end with `|| true` — the step shell
+        # runs under `set -e`, and `all-devices --json` exits 1 when zero devices
+        # are discovered (it writes the "No USB devices…" hint to stderr). Without
+        # the `|| true`, the substitution aborts the script before RC1=$? can
+        # capture the exit code, failing CI on every device-less runner.
+        # <para>注意：命令替换必须以 `|| true` 结尾——步骤 shell 以 `set -e` 运行，
+        # 而 `all-devices --json` 在零设备时退出码 1（向 stderr 写入 "No USB devices…"）。
+        # 无 `|| true` 则替换会中止脚本，使 RC1=$? 无法捕获退出码，导致每个无设备
+        # runner 上 CI 失败。</para>
+        P1="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)" || true
         RC1=$?
-        P2="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)"
+        P2="$(dotnet run --project FirmwareKit.Comm.CLI --no-build -c Release -- all-devices --api native --json 2>&1)" || true
         RC2=$?
         if [ "$RC1" -ne 0 ] || [ "$RC2" -ne 0 ]; then
           echo "::error::enumeration pass exited non-zero (pass1=$RC1 pass2=$RC2)"
