@@ -5,8 +5,12 @@ namespace FirmwareKit.Comm.Backend;
 /// <summary>
 /// Centralizes shared USB transfer policy constants and timeout normalization logic.
 /// <para>集中管理共享的 USB 传输策略常量及超时规范化逻辑。</para>
+/// The class is public so external protocol layers (e.g. FirmwareKit.Comm.EDL) can tune
+/// the process-wide retry policy and timeout normalization without forking the library.
+/// <para>此类公开，使外部协议层（如 FirmwareKit.Comm.EDL）无需分叉本库即可调整进程级
+/// 重试策略与超时规范化。</para>
 /// </summary>
-internal static class UsbTransferPolicies
+public static class UsbTransferPolicies
 {
     /// <summary>
     /// The sentinel timeout value meaning "wait indefinitely".
@@ -60,8 +64,21 @@ internal static class UsbTransferPolicies
     /// <summary>
     /// Gets or sets the process-wide default retry policy for recoverable transfer errors.
     /// <para>获取或设置进程级的可恢复传输错误默认重试策略。</para>
+    /// Setting <c>null</c> restores the built-in default (<see cref="LinuxMaxRetries"/>
+    /// retries, 500 ms apart), so external callers can disable retries with
+    /// <c>new UsbTransferRetryPolicy(0, 0)</c> and later re-enable the default by
+    /// assigning <c>null</c>.
+    /// <para>设为 <c>null</c> 时恢复内置默认值（<see cref="LinuxMaxRetries"/> 次重试、
+    /// 间隔 500 ms）；外部调用方可用 <c>new UsbTransferRetryPolicy(0, 0)</c> 关闭重试，
+    /// 之后再赋 <c>null</c> 恢复默认。</para>
     /// </summary>
-    public static UsbTransferRetryPolicy DefaultRetryPolicy { get; set; } =
+    public static UsbTransferRetryPolicy DefaultRetryPolicy
+    {
+        get => _defaultRetryPolicy;
+        set => _defaultRetryPolicy = value ?? new UsbTransferRetryPolicy(LinuxMaxRetries, retryDelayMs: 500);
+    }
+
+    private static UsbTransferRetryPolicy _defaultRetryPolicy =
         new UsbTransferRetryPolicy(LinuxMaxRetries, retryDelayMs: 500);
 
     /// <summary>

@@ -5,7 +5,6 @@ using FirmwareKit.Comm.Backend.HarmonyOS;
 using FirmwareKit.Comm.Backend.Linux;
 using FirmwareKit.Comm.Backend.MacOS;
 using FirmwareKit.Comm.Backend.Windows;
-using FirmwareKit.Comm.Diagnostics;
 
 namespace FirmwareKit.Comm.Providers;
 
@@ -97,5 +96,27 @@ internal sealed class NativeUsbApiProvider : UsbApiProviderBase
         }
 
         return new List<UsbDevice>();
+    }
+
+    /// <summary>
+    /// Options-aware backend enumeration: forwards <see cref="UsbSessionOptions"/> into the
+    /// WinUSB finder on Windows so timeouts/RAW_IO take effect before a session handle is
+    /// created; other platforms ignore the options (Linux usbfs / macOS IOKit do not expose
+    /// pipe-level policies).
+    /// <para>options 感知的后端枚举：在 Windows 上将 <see cref="UsbSessionOptions"/> 透传给
+    /// WinUSB finder，使超时/RAW_IO 在会话句柄创建前生效；其他平台忽略选项
+    /// （Linux usbfs / macOS IOKit 不暴露管道级策略）。</para>
+    /// </summary>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="options">Optional session tuning options. <para>可选的会话调优选项。</para></param>
+    /// <returns>The discovered backend devices. <para>发现的后端设备。</para></returns>
+    protected override List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter, UsbSessionOptions? options)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return WinUSBFinder.FindDevice(filter, options);
+        }
+
+        return base.EnumerateBackendDevices(filter, options);
     }
 }

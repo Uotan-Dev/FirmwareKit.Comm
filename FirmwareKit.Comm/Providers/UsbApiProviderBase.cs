@@ -31,12 +31,42 @@ internal abstract class UsbApiProviderBase : IUsbApiProvider, IUsbApiDiscoveryPr
     /// <returns>The discovered backend devices. <para>发现的后端设备。</para></returns>
     protected abstract List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter);
 
+    /// <summary>
+    /// Enumerates backend devices applying the optional filter and session options.
+    /// <para>使用可选过滤器与会话选项枚举后端设备。</para>
+    /// The default implementation ignores the options (backends that cannot honour them
+    /// keep the previous behaviour); WinUSB-capable backends override this to forward
+    /// timeouts/RAW_IO into newly created devices.
+    /// <para>默认实现忽略选项（无法兑现选项的后端保持原有行为）；支持 WinUSB 的后端
+    /// 重写此方法，将超时/RAW_IO 透传给新建设备。</para>
+    /// </summary>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="options">Optional session tuning options. <para>可选的会话调优选项。</para></param>
+    /// <returns>The discovered backend devices. <para>发现的后端设备。</para></returns>
+    protected virtual List<UsbDevice> EnumerateBackendDevices(UsbDeviceFilter? filter, UsbSessionOptions? options)
+        => EnumerateBackendDevices(filter);
+
     /// <inheritdoc/>
     public IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter = null)
+        => EnumerateDeviceSessions(filter, options: null);
+
+    /// <summary>
+    /// Enumerates device sessions applying the optional filter and session options.
+    /// <para>使用可选过滤器与会话选项枚举设备会话。</para>
+    /// This internal overload lets the communication layer forward
+    /// <see cref="UsbSessionOptions"/> into the backend without changing the public
+    /// <see cref="IUsbApiProvider"/> contract.
+    /// <para>此内部重载让通信层可在不改变公开 <see cref="IUsbApiProvider"/> 契约的前提下，
+    /// 将 <see cref="UsbSessionOptions"/> 透传给后端。</para>
+    /// </summary>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="options">Optional session tuning options. <para>可选的会话调优选项。</para></param>
+    /// <returns>The discovered device sessions. <para>发现的设备会话。</para></returns>
+    internal IReadOnlyList<IUsbDeviceSession> EnumerateDeviceSessions(UsbDeviceFilter? filter, UsbSessionOptions? options)
     {
         if (!IsSupportedOnCurrentPlatform) return Array.Empty<IUsbDeviceSession>();
 
-        var devices = EnumerateBackendDevices(filter);
+        var devices = EnumerateBackendDevices(filter, options);
         return UsbProviderProjection.ToSessions(ApiName, ApiKind, devices, filter);
     }
 

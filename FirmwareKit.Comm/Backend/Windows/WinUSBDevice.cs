@@ -13,10 +13,29 @@ internal class WinUSBDevice : UsbDevice
     private const int WinUsbDefaultTimeoutMs = UsbTransferPolicies.WinUsbDefaultTimeoutMs;
     private const int ERROR_SEM_TIMEOUT = 121;
     private const int ERROR_TIMEOUT = 146;
+    private const int ERROR_NO_DATA = 232;
     private const int ERROR_DEVICE_NOT_CONNECTED = 1167;
     private const int ERROR_NO_SUCH_DEVICE = 433;
     private const int ERROR_DEVICE_REMOVED = 1617;
-    public override int DefaultTimeoutMs => WinUsbDefaultTimeoutMs;
+
+    /// <summary>
+    /// Session tuning options applied when the handle is created; assigned by the finder
+    /// BEFORE <see cref="CreateHandle"/> so the pipe policies take effect immediately.
+    /// <para>创建句柄时应用的会话调优选项；由 finder 在 <see cref="CreateHandle"/> 之前
+    /// 赋值，使管道策略立即生效。</para>
+    /// </summary>
+    internal UsbSessionOptions? SessionOptions { get; set; }
+
+    public override int DefaultTimeoutMs => SessionOptions?.DefaultTimeoutMs ?? WinUsbDefaultTimeoutMs;
+
+    /// <summary>
+    /// Whether the bulk IN pipe uses WinUSB RAW_IO (opt-in via
+    /// <see cref="UsbSessionOptions.EnableRawIo"/> / <see cref="UsbSessionOptions.AllowPartialReads"/>).
+    /// <para>批量 IN 管道是否使用 WinUSB RAW_IO（通过
+    /// <see cref="UsbSessionOptions.EnableRawIo"/> / <see cref="UsbSessionOptions.AllowPartialReads"/> 开启）。</para>
+    /// </summary>
+    private bool RawIoEnabled =>
+        SessionOptions?.EnableRawIo == true || SessionOptions?.AllowPartialReads == true;
 
     private byte InterfaceNum;
     private byte ReadBulkID, WriteBulkID;
@@ -29,7 +48,8 @@ internal class WinUSBDevice : UsbDevice
     private Win32API.USBDeviceDescriptor USBDeviceDescriptor;
     private Win32API.USBDeviceConfigDescriptor USBDeviceConfigDescriptor;
     private Win32API.USBDeviceInterfaceDescriptor USBDeviceInterfaceDescriptor;
-    private int _configuredPipeTimeoutMs = -1; // accessed via Volatile.Read/Write (S5)
+    private int _configuredReadPipeTimeoutMs = -1; // accessed via Volatile.Read/Write (S5)
+    private int _configuredWritePipeTimeoutMs = -1; // accessed via Volatile.Read/Write (S5)
     public override int CreateHandle()
     {
         // Releases the file/interface handles already acquired when a step fails,
@@ -173,14 +193,26 @@ internal class WinUSBDevice : UsbDevice
         byte bTrue = 1;
         byte bFalse = 0;
 
-        // Policy configuration (60s initial timeout for large flash operations).
+        // Policy configuration (initial timeout from session options, falling back to the
+        // WinUSB 60s default used for large flash operations).
+        // <para>策略配置（初始超时取自会话选项，回退到用于大块刷写操作的 WinUSB 60s 默认值）。</para>
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, AUTO_CLEAR_STALL, 1, ref bTrue);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, AUTO_CLEAR_STALL, 1, ref bTrue);
-        SetPipeTimeout(WinUsbDefaultTimeoutMs);
+        SetReadPipeTimeout(SessionOptions?.ReadPipeTimeoutMs ?? DefaultTimeoutMs);
+        SetWritePipeTimeout(SessionOptions?.WritePipeTimeoutMs ?? DefaultTimeoutMs);
 
         // WinUSB RAW_IO can significantly improve stability for large transfers.
         // It requires that the transfer size is a multiple of the packet size (typically 512).
-        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, RAW_IO, 1, ref bFalse);
+        // When the session opts into RAW_IO (EnableRawIo / AllowPartialReads), the bulk IN
+        // pipe is switched to raw mode so reads return as soon as data is buffered and
+        // report ERROR_NO_DATA immediately when the device has none (no-data reads return 0
+        // instead of blocking until the pipe timeout).
+        // <para>WinUSB RAW_IO 可显著提升大块传输的稳定性，要求传输大小是包大小
+        // （通常 512）的整数倍。会话开启 RAW_IO（EnableRawIo / AllowPartialReads）时，
+        // 批量 IN 管道切换为原始模式：有数据即返回，无数据立即以 ERROR_NO_DATA 报告
+        // （无数据读返回 0 而非阻塞至管道超时）。</para>
+        byte readRawIo = RawIoEnabled ? bTrue : bFalse;
+        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, RAW_IO, 1, ref readRawIo);
         WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, RAW_IO, 1, ref bFalse);
 
         // Align with AOSP host behavior: avoid forcing ZLP from the host side.
@@ -191,7 +223,19 @@ internal class WinUSBDevice : UsbDevice
 
     public IntPtr Handle => !WinUSBHandle.IsInvalid ? WinUSBHandle.DangerousGetHandle() : FileHandle.DangerousGetHandle();
 
-    private void SetPipeTimeout(int timeoutMs)
+    /// <summary>
+    /// Applies the PIPE_TRANSFER_TIMEOUT policy to the bulk IN pipe (cached per direction).
+    /// <para>向批量 IN 管道应用 PIPE_TRANSFER_TIMEOUT 策略（按方向缓存）。</para>
+    /// </summary>
+    private void SetReadPipeTimeout(int timeoutMs) => SetPipeTimeout(ReadBulkID, timeoutMs, ref _configuredReadPipeTimeoutMs);
+
+    /// <summary>
+    /// Applies the PIPE_TRANSFER_TIMEOUT policy to the bulk OUT pipe (cached per direction).
+    /// <para>向批量 OUT 管道应用 PIPE_TRANSFER_TIMEOUT 策略（按方向缓存）。</para>
+    /// </summary>
+    private void SetWritePipeTimeout(int timeoutMs) => SetPipeTimeout(WriteBulkID, timeoutMs, ref _configuredWritePipeTimeoutMs);
+
+    private void SetPipeTimeout(byte pipeId, int timeoutMs, ref int cache)
     {
         if (WinUSBHandle.IsInvalid)
         {
@@ -213,15 +257,14 @@ internal class WinUSBDevice : UsbDevice
         // <para>缓存已配置的值，避免每分块在超时未变化时触发 WinUsb_SetPipePolicy
         // （内核切换）。经 Volatile 读写：ReadChunk 与 WriteChunk 在各自方向门闩上并发，
         // 缓存读写不得撕裂。</para>
-        if (Volatile.Read(ref _configuredPipeTimeoutMs) == effective)
+        if (Volatile.Read(ref cache) == effective)
         {
             return;
         }
 
         uint timeout = (uint)effective;
-        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), ReadBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
-        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), WriteBulkID, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
-        Volatile.Write(ref _configuredPipeTimeoutMs, effective);
+        WinUsb_SetPipePolicy(WinUSBHandle.DangerousGetHandle(), pipeId, PIPE_TRANSFER_TIMEOUT, 4, ref timeout);
+        Volatile.Write(ref cache, effective);
     }
 
     public override void Reset()
@@ -362,7 +405,7 @@ internal class WinUSBDevice : UsbDevice
 
     protected override UsbChunkResult ReadChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        SetPipeTimeout(timeoutMs);
+        SetReadPipeTimeout(timeoutMs);
         uint bytesRead;
         if (WinUsb_ReadPipe(WinUSBHandle.DangerousGetHandle(), ReadBulkID, buffer, (uint)length, out bytesRead, IntPtr.Zero))
         {
@@ -370,12 +413,25 @@ internal class WinUSBDevice : UsbDevice
         }
 
         int err = Marshal.GetLastWin32Error();
+
+        // With RAW_IO enabled the driver fails an empty read with ERROR_NO_DATA (232)
+        // instead of blocking until the pipe timeout. Treat it as a successful 0-byte
+        // read (no data yet) — NOT a fatal error — so the caller's polling loop can
+        // spin quickly while keeping its own timeout budget.
+        // <para>开启 RAW_IO 后，空读由驱动以 ERROR_NO_DATA (232) 失败，而非阻塞至管道
+        // 超时。将其视为成功的 0 字节读（暂无数据）——而不是致命错误——使调用方的轮询
+        // 循环可快速空转，同时自持超时预算。</para>
+        if (err == ERROR_NO_DATA && RawIoEnabled)
+        {
+            return UsbChunkResult.Success(0);
+        }
+
         return err == ERROR_SEM_TIMEOUT || err == ERROR_TIMEOUT ? UsbChunkResult.Timeout(err) : UsbChunkResult.Fatal(err);
     }
 
     protected override UsbChunkResult WriteChunk(IntPtr buffer, int length, int timeoutMs)
     {
-        SetPipeTimeout(timeoutMs);
+        SetWritePipeTimeout(timeoutMs);
         uint bytesWritten;
         if (WinUsb_WritePipe(WinUSBHandle.DangerousGetHandle(), WriteBulkID, buffer, (uint)length, out bytesWritten, IntPtr.Zero))
         {
@@ -407,7 +463,7 @@ internal class WinUSBDevice : UsbDevice
             throw new UsbDeviceHandleClosedException("Device handle is closed.");
         }
 
-        SetPipeTimeout(timeoutMs);
+        SetWritePipeTimeout(timeoutMs);
         uint bytesWritten;
         // A zero-length bulk OUT write transmits a ZLP, ending a transfer whose length is an
         // exact multiple of the endpoint max packet size.
@@ -489,8 +545,17 @@ internal class WinUSBDevice : UsbDevice
         try
         {
             uint transferred = await OverlappedTransferAsync(buffer, length, ReadBulkID, effectiveTimeoutMs, cancellationToken).ConfigureAwait(false);
-            return transferred > 0
-                ? UsbChunkResult.Success((int)transferred)
+            if (transferred > 0)
+            {
+                return UsbChunkResult.Success((int)transferred);
+            }
+
+            // With RAW_IO a completed 0-byte read means "no data buffered yet", not a
+            // timeout — the driver reports ERROR_NO_DATA via the overlapped completion.
+            // <para>开启 RAW_IO 后，完成的 0 字节读表示"暂无缓冲数据"，而非超时——
+            // 驱动通过 overlapped 完成报告 ERROR_NO_DATA。</para>
+            return RawIoEnabled
+                ? UsbChunkResult.Success(0)
                 : UsbChunkResult.Timeout(ERROR_SEM_TIMEOUT);
         }
         catch (Win32Exception ex)
@@ -629,6 +694,11 @@ internal class WinUSBDevice : UsbDevice
             if (err != ERROR_IO_PENDING)
             {
                 if (err == ERROR_SEM_TIMEOUT) return 0;
+                // RAW_IO empty read: the driver fails immediately with ERROR_NO_DATA when
+                // no data is buffered — return 0 instead of surfacing a Win32Exception.
+                // <para>RAW_IO 空读：无缓冲数据时驱动立即以 ERROR_NO_DATA 失败——
+                // 返回 0 而非抛出 Win32Exception。</para>
+                if (err == ERROR_NO_DATA && RawIoEnabled) return 0;
                 throw new Win32Exception(err);
             }
 

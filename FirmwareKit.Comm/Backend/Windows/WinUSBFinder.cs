@@ -34,7 +34,19 @@ namespace FirmwareKit.Comm.Backend.Windows
         /// </summary>
         public static int LastMatchedDeviceCount { get; private set; }
 
-        public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null)
+        /// <summary>
+        /// Enumerates WinUSB/Legacy devices, optionally applying the filter and session options.
+        /// <para>枚举 WinUSB/Legacy 设备，可选地应用过滤器与会话选项。</para>
+        /// Session options (timeouts, RAW_IO) are assigned to each newly created
+        /// <see cref="WinUSBDevice"/> BEFORE its handle is created, so the pipe policies
+        /// take effect for the session.
+        /// <para>会话选项（超时、RAW_IO）会在句柄创建前赋给每个新建的
+        /// <see cref="WinUSBDevice"/>，使管道策略对会话生效。</para>
+        /// </summary>
+        /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+        /// <param name="options">Optional session tuning options. <para>可选的会话调优选项。</para></param>
+        /// <returns>The discovered backend devices. <para>发现的后端设备。</para></returns>
+        public static List<UsbDevice> FindDevice(UsbDeviceFilter? filter = null, UsbSessionOptions? options = null)
         {
             var devices = new List<UsbDevice>();
             var uniqueKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -98,7 +110,7 @@ namespace FirmwareKit.Comm.Backend.Windows
                         }
 
                         UsbTrace.Log($"WinUSBFinder:   interface GUID {guid}");
-                        EnumerateInterfacesForGuid(guid, filter, devices, uniqueKeys);
+                        EnumerateInterfacesForGuid(guid, filter, options, devices, uniqueKeys);
                     }
                 }
             }
@@ -333,6 +345,7 @@ namespace FirmwareKit.Comm.Backend.Windows
         private static void EnumerateInterfacesForGuid(
             Guid guid,
             UsbDeviceFilter? filter,
+            UsbSessionOptions? options,
             List<UsbDevice> devices,
             HashSet<string> uniqueKeys)
         {
@@ -347,7 +360,7 @@ namespace FirmwareKit.Comm.Backend.Windows
 
             try
             {
-                EnumerateInterfaces(devInfo, ref apiGuid, filter, devices, uniqueKeys);
+                EnumerateInterfaces(devInfo, ref apiGuid, filter, options, devices, uniqueKeys);
             }
             finally
             {
@@ -361,6 +374,7 @@ namespace FirmwareKit.Comm.Backend.Windows
             IntPtr devInfo,
             ref Win32API.GUID interfaceClassGuid,
             UsbDeviceFilter? filter,
+            UsbSessionOptions? options,
             List<UsbDevice> devices,
             HashSet<string> uniqueKeys)
         {
@@ -370,13 +384,14 @@ namespace FirmwareKit.Comm.Backend.Windows
             bool Enumerate(uint index, ref Win32API.SpDeviceInterfaceData iface)
                 => Win32API.SetupDiEnumDeviceInterfaces(devInfo, IntPtr.Zero, ref guid, index, ref iface);
 
-            EnumerateInterfacesCore(devInfo, Enumerate, filter, devices, uniqueKeys);
+            EnumerateInterfacesCore(devInfo, Enumerate, filter, options, devices, uniqueKeys);
         }
 
         private static void EnumerateInterfacesCore(
             IntPtr devInfo,
             InterfaceEnumerator enumerator,
             UsbDeviceFilter? filter,
+            UsbSessionOptions? options,
             List<UsbDevice> devices,
             HashSet<string> uniqueKeys)
         {
@@ -417,12 +432,12 @@ namespace FirmwareKit.Comm.Backend.Windows
                         if (isGoogleWinUsb)
                         {
                             UsbTrace.Log($"Prefers WinUSB for Google device: {path}");
-                            device = TryOpenWinUSB(path);
+                            device = TryOpenWinUSB(path, options);
                         }
 
                         if (device == null)
                         {
-                            device = ProbeDevice(path);
+                            device = ProbeDevice(path, options);
                         }
 
                         if (device != null)
@@ -504,7 +519,7 @@ namespace FirmwareKit.Comm.Backend.Windows
             return (vid, pid);
         }
 
-        private static UsbDevice? ProbeDevice(string path)
+        private static UsbDevice? ProbeDevice(string path, UsbSessionOptions? options)
         {
             (ushort? vid, ushort? pid) = TryParseVidPid(path);
 
@@ -560,7 +575,8 @@ namespace FirmwareKit.Comm.Backend.Windows
             {
                 DevicePath = path,
                 VendorId = vid ?? 0,
-                ProductId = pid ?? 0
+                ProductId = pid ?? 0,
+                SessionOptions = options
             };
             if (winDev.CreateHandle() == 0) return winDev;
 
@@ -570,14 +586,15 @@ namespace FirmwareKit.Comm.Backend.Windows
             return winDev;
         }
 
-        private static UsbDevice? TryOpenWinUSB(string path)
+        private static UsbDevice? TryOpenWinUSB(string path, UsbSessionOptions? options)
         {
             (ushort? vid, ushort? pid) = TryParseVidPid(path);
             var dev = new WinUSBDevice
             {
                 DevicePath = path,
                 VendorId = vid ?? 0,
-                ProductId = pid ?? 0
+                ProductId = pid ?? 0,
+                SessionOptions = options
             };
             if (dev.CreateHandle() == 0) return dev;
 

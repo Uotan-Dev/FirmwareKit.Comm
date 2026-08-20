@@ -118,6 +118,20 @@ public sealed class FirmwareKitComm : IFirmwareKitComm
     public IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind = UsbApiKind.Auto, UsbDeviceFilter? filter = null) => _usb.OpenDeviceSession(apiKind, filter);
 
     /// <summary>
+    /// Opens the first matching USB device session for direct read/write operations,
+    /// applying per-session tuning options.
+    /// <para>打开第一个匹配的 USB 设备会话，用于直接读写操作，并应用按会话生效的调优选项。</para>
+    /// Options (timeouts, RAW_IO) are forwarded to the backend before the session handle is
+    /// created; backends that cannot honour them ignore the options.
+    /// <para>选项（超时、RAW_IO）在会话句柄创建前透传给后端；无法兑现选项的后端会忽略它们。</para>
+    /// </summary>
+    /// <param name="apiKind">The USB API selection mode. <para>USB API 选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="options">Optional session tuning options; <c>null</c> keeps backend defaults. <para>可选的会话调优选项；<c>null</c> 保持后端默认值。</para></param>
+    /// <returns>The first matching session, or <c>null</c> if none was found. <para>第一个匹配会话；如果没有则返回 <c>null</c>。</para></returns>
+    public IUsbDeviceSession? OpenUsbDeviceSession(UsbApiKind apiKind, UsbDeviceFilter? filter, UsbSessionOptions? options) => _usb.OpenDeviceSession(apiKind, filter, options);
+
+    /// <summary>
     /// Opens the session whose <see cref="UsbDeviceInfo.DeviceKey"/> matches the specified key.
     /// <para>打开 <see cref="UsbDeviceInfo.DeviceKey"/> 与指定键匹配的设备会话。</para>
     /// </summary>

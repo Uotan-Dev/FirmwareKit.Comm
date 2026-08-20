@@ -1,5 +1,4 @@
 using FirmwareKit.Comm.Backend.Linux;
-using Xunit;
 
 namespace FirmwareKit.Comm.IntegrationTests;
 

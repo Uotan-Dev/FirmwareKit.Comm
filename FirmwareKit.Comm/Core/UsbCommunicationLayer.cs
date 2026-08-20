@@ -440,6 +440,24 @@ public sealed class UsbCommunicationLayer
     public IUsbDeviceSession? OpenDeviceSession(
         UsbApiKind apiKind = UsbApiKind.Auto,
         UsbDeviceFilter? filter = null)
+        => OpenDeviceSession(apiKind, filter, options: null);
+
+    /// <summary>
+    /// Opens the first matching USB device session for the selected backend, applying
+    /// per-session tuning options.
+    /// <para>打开选定后端中第一个匹配的 USB 设备会话，并应用按会话生效的调优选项。</para>
+    /// Options (timeouts, RAW_IO) are forwarded to the backend before the session handle is
+    /// created; backends that cannot honour them ignore the options.
+    /// <para>选项（超时、RAW_IO）在会话句柄创建前透传给后端；无法兑现选项的后端会忽略它们。</para>
+    /// </summary>
+    /// <param name="apiKind">The backend selection mode. <para>后端选择模式。</para></param>
+    /// <param name="filter">Optional device filter. <para>可选设备过滤器。</para></param>
+    /// <param name="options">Optional session tuning options; <c>null</c> keeps backend defaults. <para>可选的会话调优选项；<c>null</c> 保持后端默认值。</para></param>
+    /// <returns>The first matching session, or <c>null</c> if none was found. <para>返回第一个匹配会话；如果没有则返回 <c>null</c>。</para></returns>
+    public IUsbDeviceSession? OpenDeviceSession(
+        UsbApiKind apiKind,
+        UsbDeviceFilter? filter,
+        UsbSessionOptions? options)
     {
         var providers = ResolveProviders(apiKind);
 
@@ -450,7 +468,14 @@ public sealed class UsbCommunicationLayer
                 continue;
             }
 
-            var sessions = provider.EnumerateDeviceSessions(filter);
+            // Forward the session options through the internal provider overload so the
+            // WinUSB backend can apply timeouts/RAW_IO before creating the handle; custom
+            // (third-party) providers keep the plain contract and ignore the options.
+            // <para>通过内部提供器重载透传会话选项，使 WinUSB 后端可在创建句柄前应用
+            // 超时/RAW_IO；自定义（第三方）提供器保持普通契约并忽略选项。</para>
+            var sessions = provider is UsbApiProviderBase baseProvider
+                ? baseProvider.EnumerateDeviceSessions(filter, options)
+                : provider.EnumerateDeviceSessions(filter);
             if (sessions.Count == 0)
             {
                 continue;
