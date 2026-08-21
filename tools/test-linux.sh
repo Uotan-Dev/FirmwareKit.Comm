@@ -71,19 +71,26 @@ fi
 
 # --- Stage 1: Build (hard gate) ------------------------------------------
 echo "Building Release..."
-if ! dotnet build FirmwareKit.Comm.slnx -c Release --nologo >/dev/null 2>&1; then
+BUILD_LOG="$(mktemp)"
+if ! dotnet build FirmwareKit.Comm.slnx -c Release --nologo >"$BUILD_LOG" 2>&1; then
     echo "FAIL	build"
+    cat "$BUILD_LOG"
+    rm -f "$BUILD_LOG"
     exit 1
 fi
+rm -f "$BUILD_LOG"
 echo "PASS	build"
 
 # --- Stage 2: Unit tests (hard gate) ------------------------------------
-if ! dotnet test FirmwareKit.Comm.slnx -c Release --no-build --nologo >/dev/null 2>&1; then
+TEST_LOG="$(mktemp)"
+if ! dotnet test FirmwareKit.Comm.slnx -c Release --no-build --nologo >"$TEST_LOG" 2>&1; then
     echo "FAIL	unit tests"
+    cat "$TEST_LOG"
     FAILURES=$((FAILURES + 1))
 else
     echo "PASS	unit tests"
 fi
+rm -f "$TEST_LOG"
 
 # --- Stage 3: Backend registration (hard gate) --------------------------
 APIS="$(dotnet run --project FirmwareKit.Comm.CLI -c Release --no-build -- apis 2>/dev/null)"
