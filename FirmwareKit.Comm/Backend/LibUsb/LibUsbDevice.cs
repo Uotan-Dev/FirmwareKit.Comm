@@ -298,7 +298,12 @@ internal class LibUsbDevice : global::FirmwareKit.Comm.Backend.UsbDevice
             writer = usbDevice.OpenEndpointWriter((WriteEndpointID)outEndpoint);
         }
 
-        reader?.ReadFlush();
+        // Do NOT flush the IN endpoint at session open: protocol devices that greet
+        // immediately (e.g. Qualcomm EDL's Sahara HELLO) would have their first
+        // packet consumed here. The WinUSB backend has no flush, so libusb must match.
+        // <para>会话打开时不要冲刷 IN 端点：对"打开即主动上报"的协议设备
+        // （如 Qualcomm EDL 的 Sahara HELLO），此处会恰好吞掉首包。WinUSB 后端
+        // 无冲刷，libusb 应保持一致。</para>
 
         // A session is usable as long as every direction it was asked to bind actually
         // opened. IN-only (HID interrupt) and OUT-only devices are valid; the missing
